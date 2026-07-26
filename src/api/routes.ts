@@ -208,12 +208,12 @@ api.get('/player/transactions', requireAuth, requireLinked, async (c) => {
 
 /* ---------------------------------------------------------------- Public */
 
-/** GET /api/leaderboards/:type — top 20 by denarius | blocks | prestige. */
+/** GET /api/leaderboards/:type — top 20 by denarius | blocks | prestige | playtime. */
 api.get('/leaderboards/:type', async (c) => {
   const type: string = c.req.param("type") ?? "";
-  if (type !== 'denarius' && type !== 'blocks' && type !== 'prestige') {
+  if (type !== 'denarius' && type !== 'blocks' && type !== 'prestige' && type !== 'playtime') {
     return c.json(
-      { error: "Invalid leaderboard type; must be 'denarius', 'blocks', or 'prestige'" },
+      { error: "Invalid leaderboard type; must be 'denarius', 'blocks', 'prestige', or 'playtime'" },
       400,
     );
   }

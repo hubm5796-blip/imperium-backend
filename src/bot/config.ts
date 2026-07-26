@@ -108,3 +108,28 @@ export function getBotConfig() {
   const devGuildId = process.env.DISCORD_DEV_GUILD_ID;
   return { token, apiBase, clientId, linkedRoleId, devGuildId };
 }
+
+/**
+ * Resolve the bot token + client id from the shared `env` module when present,
+ * falling back to process.env. Imported lazily to avoid a hard dependency on
+ * `../env.js` (which throws if required vars are missing during a standalone
+ * bot-only run).
+ */
+export async function getCredentials(): Promise<{
+  token: string | undefined;
+  clientId: string | undefined;
+}> {
+  // Prefer the shared env module; it loads dotenv and centralizes validation.
+  try {
+    const mod = (await import('../env.js')) as {
+      env?: { discord?: { botToken?: string; clientId?: string } };
+    };
+    return {
+      token: mod.env?.discord?.botToken,
+      clientId: mod.env?.discord?.clientId,
+    };
+  } catch {
+    // env.js throws if required web vars are unset; fall back to process.env.
+    return { token: process.env.DISCORD_BOT_TOKEN, clientId: process.env.DISCORD_CLIENT_ID };
+  }
+}

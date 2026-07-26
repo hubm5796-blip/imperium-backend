@@ -219,7 +219,7 @@ export async function getPlayerTransactions(
 
 /** Top 20 players by the requested ranking type. */
 export async function getLeaderboard(
-  type: 'denarius' | 'blocks' | 'prestige',
+  type: 'denarius' | 'blocks' | 'prestige' | 'playtime',
   limit = 20,
 ): Promise<
   Array<{
@@ -257,6 +257,20 @@ export async function getLeaderboard(
     return result.rows.map((row) => ({
       uuid: row.uuid,
       value: minorUnitsToDisplay(row.blocks_mined),
+    }));
+  }
+
+  if (type === 'playtime') {
+    const result = await query<{ uuid: string; play_time: string }>(
+      `SELECT uuid, play_time
+         FROM player_stats
+        ORDER BY play_time DESC
+        LIMIT $1`,
+      [cap],
+    );
+    return result.rows.map((row) => ({
+      uuid: row.uuid,
+      value: Number(row.play_time),
     }));
   }
 
