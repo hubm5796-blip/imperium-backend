@@ -1,0 +1,110 @@
+/**
+ * Shared configuration and constants for the ImperiumMC Discord bot.
+ */
+
+/** Roman-themed color palette (hex literals for EmbedBuilder). */
+export const COLORS = {
+  gold: 0xffd700,
+  darkGray: 0x2c2c2c,
+  deepRed: 0x8b0000,
+  green: 0x2ecc71,
+  red: 0xe74c3c,
+} as const;
+
+/** Themed emojis used across embeds and command output. */
+export const EMOJI = {
+  eagle: '⚔',
+  colosseum: '🏛',
+  crown: '👑',
+  coin: '🪙',
+  blocks: '⛏',
+  helm: '⎈',
+  chart: '📊',
+  shield: '🛡',
+  trophy: '🏆',
+  clock: '⏱',
+  gem: '💎',
+  scroll: '📜',
+  cross: '❌',
+  check: '✅',
+  user: '👤',
+  star: '⭐',
+} as const;
+
+/** Currency display names (order matters for balance cards). */
+export const CURRENCIES = {
+  denarius: { name: 'Denarius', emoji: EMOJI.coin, blurb: 'Money' },
+  auctoritas: { name: 'Auctoritas', emoji: EMOJI.gem, blurb: 'Tokens' },
+  civitas: { name: 'Civitas', emoji: EMOJI.colosseum, blurb: 'Beacons' },
+  aureus: { name: 'Aureus', emoji: EMOJI.crown, blurb: 'Premium' },
+} as const;
+
+export const BRANDING = {
+  serverName: 'ImperiumMC',
+  serverIp: 'imperiummc.net',
+  storeUrl: 'https://imperiummc.net/store',
+  siteUrl: 'https://imperiummc.net',
+  inviteBlurb: 'Forge your empire.',
+} as const;
+
+/** Roman numeral conversion for rank display (supports I..XXV+). */
+export function toRoman(num: number): string {
+  if (!Number.isFinite(num) || num < 1) return '0';
+  if (num > 3999) return String(num);
+  const table: [number, string][] = [
+    [1000, 'M'],
+    [900, 'CM'],
+    [500, 'D'],
+    [400, 'CD'],
+    [100, 'C'],
+    [90, 'XC'],
+    [50, 'L'],
+    [40, 'XL'],
+    [10, 'X'],
+    [9, 'IX'],
+    [5, 'V'],
+    [4, 'IV'],
+    [1, 'I'],
+  ];
+  let n = Math.floor(num);
+  let out = '';
+  for (const [value, symbol] of table) {
+    while (n >= value) {
+      out += symbol;
+      n -= value;
+    }
+  }
+  return out;
+}
+
+/** Format large integers with thousands separators. */
+export function formatNumber(n: number | undefined | null): string {
+  if (n === undefined || n === null || !Number.isFinite(n)) return '0';
+  return Math.floor(n).toLocaleString('en-US');
+}
+
+/** Format seconds of playtime into a compact human string. */
+export function formatPlaytime(seconds: number | undefined | null): string {
+  const s = Math.floor(Number(seconds) || 0);
+  if (s <= 0) return '0m';
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const parts: string[] = [];
+  if (d) parts.push(`${d}d`);
+  if (h) parts.push(`${h}h`);
+  if (m && !d) parts.push(`${m}m`);
+  return parts.join(' ') || '0m';
+}
+
+/** Load env-derived runtime config (read lazily so dotenv can run first). */
+export function getBotConfig() {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const apiBase = (process.env.BACKEND_API_BASE ?? 'http://localhost:3001').replace(/\/$/, '');
+  const clientId = process.env.DISCORD_CLIENT_ID;
+  /** Optional: role to grant when a Discord account is linked. */
+  const linkedRoleId = process.env.DISCORD_LINKED_ROLE_ID;
+  /** Optional: guild id for fast (per-guild) command registration during dev. */
+  const devGuildId = process.env.DISCORD_DEV_GUILD_ID;
+  return { token, apiBase, clientId, linkedRoleId, devGuildId };
+}
