@@ -59,11 +59,7 @@ export async function startBot(): Promise<Client | null> {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMembers,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
     ],
-    partials: [Partials.Channel, Partials.GuildMember],
   });
 
   // Register slash commands once ready, then log.

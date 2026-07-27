@@ -41,8 +41,8 @@ export const redisSubscriber = new Redis({
   lazyConnect: false,
 });
 
-redisPublisher.on('error', (err) => logger.error({ err }, 'Redis publisher error'));
-redisSubscriber.on('error', (err) => logger.error({ err }, 'Redis subscriber error'));
+redisPublisher.on('error', (err) => logger.warn({ err: { message: err.message } }, 'Redis publisher unavailable — in-game actions will be disabled until Redis is running'));
+redisSubscriber.on('error', (err) => logger.warn({ err: { message: err.message } }, 'Redis subscriber unavailable — response polling disabled until Redis is running'));
 
 /** In-flight response promises keyed by request_id. */
 const pendingResponses = new Map<
