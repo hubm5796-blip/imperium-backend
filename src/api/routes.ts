@@ -219,7 +219,12 @@ api.get('/leaderboards/:type', async (c) => {
   }
   const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
   const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
-  const rows = await getLeaderboard(type, limit);
+  let rows;
+  try {
+    rows = await getLeaderboard(type, limit);
+  } catch {
+    return c.json({ type, entries: [], error: 'Database unavailable' }, 503);
+  }
   // Add 1-based rank and a display username for the bot's embeds.
   const entries = rows.map((row, i) => ({
     rank: i + 1,
@@ -233,14 +238,24 @@ api.get('/leaderboards/:type', async (c) => {
 
 /** GET /api/server/status — online player count from Redis (live) or DB. */
 api.get('/server/status', async (c) => {
-  const online = await getOnlinePlayerCount();
-  return c.json({
-    online: online === null ? false : online > 0,
-    playerCount: online ?? 0,
-    maxPlayers: 200,
-    timestamp: Date.now(),
-    source: online === null ? 'unknown' : 'redis',
-  });
+  try {
+    const online = await getOnlinePlayerCount();
+    return c.json({
+      online: online === null ? false : online > 0,
+      playerCount: online ?? 0,
+      maxPlayers: 200,
+      timestamp: Date.now(),
+      source: online === null ? 'unknown' : 'redis',
+    });
+  } catch {
+    return c.json({
+      online: false,
+      playerCount: 0,
+      maxPlayers: 200,
+      timestamp: Date.now(),
+      source: 'unavailable',
+    });
+  }
 });
 
 /* -------------------------------------------------------------- Linking */

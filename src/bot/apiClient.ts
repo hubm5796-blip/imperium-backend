@@ -2,7 +2,7 @@
  * API client for the ImperiumMC backend.
  *
  * The bot never talks to the Minecraft plugin or the database directly.
- * All data is fetched over HTTP from the backend API (default localhost:3001).
+ * All data is fetched over HTTP from the backend API (default api.imperiummc.net).
  */
 import { getBotConfig } from './config.js';
 
