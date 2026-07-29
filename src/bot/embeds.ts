@@ -20,7 +20,8 @@ import type {
   ServerStatus,
 } from './apiClient.js';
 
-const FOOTER = { text: `${BRANDING.serverName} • ${BRANDING.serverIp}` };
+// Design-system footer (01-DESIGN-SYSTEM §11): site URL + the locked tagline.
+const FOOTER = { text: `${BRANDING.serverIp} • ${BRANDING.inviteBlurb}` };
 
 /** Apply shared chrome (color + footer + timestamp) to an embed. */
 function chrome(embed: EmbedBuilder, color: number = COLORS.gold): EmbedBuilder {

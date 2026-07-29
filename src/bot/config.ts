@@ -2,9 +2,11 @@
  * Shared configuration and constants for the ImperiumMC Discord bot.
  */
 
-/** Roman-themed color palette (hex literals for EmbedBuilder). */
+/** Roman-themed color palette (hex literals for EmbedBuilder).
+ *  Aligned to the locked design-system tokens (01-DESIGN-SYSTEM §2): gold is
+ *  #D4AF37, the same value used on the web frontend and the plugin GUI theme. */
 export const COLORS = {
-  gold: 0xffd700,
+  gold: 0xd4af37,
   darkGray: 0x2c2c2c,
   deepRed: 0x8b0000,
   green: 0x2ecc71,
@@ -31,12 +33,15 @@ export const EMOJI = {
   star: '⭐',
 } as const;
 
-/** Currency display names (order matters for balance cards). */
+/** Currency display names (order matters for balance cards).
+ *  Glyphs are the design-system unicode marks (01-DESIGN-SYSTEM §2/§5) — the same
+ *  shapes the web frontend renders as SVG. Discord can't render SVG, so these
+ *  unicode fallbacks match by design: ◈ Denarius, ⛁ Auctoritas, ⎈ Civitas, ✦ Aureus. */
 export const CURRENCIES = {
-  denarius: { name: 'Denarius', emoji: EMOJI.coin, blurb: 'Money' },
-  auctoritas: { name: 'Auctoritas', emoji: EMOJI.gem, blurb: 'Tokens' },
-  civitas: { name: 'Civitas', emoji: EMOJI.colosseum, blurb: 'Beacons' },
-  aureus: { name: 'Aureus', emoji: EMOJI.crown, blurb: 'Premium' },
+  denarius: { name: 'Denarius', emoji: '◈', blurb: 'Money' },
+  auctoritas: { name: 'Auctoritas', emoji: '⛁', blurb: 'Tokens' },
+  civitas: { name: 'Civitas', emoji: '⎈', blurb: 'Beacons' },
+  aureus: { name: 'Aureus', emoji: '✦', blurb: 'Premium' },
 } as const;
 
 export const BRANDING = {
