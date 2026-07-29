@@ -119,15 +119,26 @@ api.post('/auth/logout', (c) => {
 api.get('/player/profile', async (c) => {
   const queryDiscordId = c.req.query('discord_id');
   const queryUuid = c.req.query('uuid');
-  const hasQuery = Boolean(queryDiscordId || queryUuid);
 
   let uuid: string | null;
   if (queryUuid) {
     uuid = queryUuid;
   } else if (queryDiscordId) {
-    uuid = await getUuidByDiscordId(queryDiscordId);
+    // Try PostgreSQL first, then SQLite fallback
+    try {
+      uuid = await getUuidByDiscordId(queryDiscordId);
+    } catch {
+      uuid = null;
+    }
+    if (!uuid) {
+      try {
+        const { getUuidByDiscordId: sqliteLookup } = await import('../db/sqlite.js');
+        uuid = sqliteLookup(queryDiscordId);
+      } catch {
+        uuid = null;
+      }
+    }
   } else if (c.var.user) {
-    // No query param: require an authenticated, linked session.
     uuid = c.var.mcUuid;
     if (!uuid) {
       return c.json({ error: 'Minecraft account not linked', linkRequired: true }, 403);
@@ -136,39 +147,54 @@ api.get('/player/profile', async (c) => {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
-  // hasQuery path is anonymous (bot); otherwise the auth middleware already
-  // validated the cookie. requireLinked semantics handled inline above.
-  void hasQuery;
-
   if (!uuid) {
     return c.json({ error: 'Player not linked' }, 404);
   }
 
-  const profile = await getPlayerProfile(uuid);
-  if (!profile) {
-    return c.json({ error: 'Player not found' }, 404);
+  // Try PostgreSQL first, fall back to SQLite
+  let profile: any = null;
+  try {
+    profile = await getPlayerProfile(uuid);
+  } catch {
+    profile = null;
   }
 
-  const balances = await getPlayerBalances(uuid);
+  if (!profile) {
+    try {
+      const { getPlayerProfile: sqliteProfile } = await import('../db/sqlite.js');
+      profile = sqliteProfile(uuid);
+    } catch {
+      profile = null;
+    }
+  }
+
+  if (!profile) {
+    return c.json({ uuid, error: 'Profile data not available yet' }, 200);
+  }
+
+  // Get balances from PG, fall back to SQLite profile values
+  let balances: any = { denarius: 0, tokens: 0, beacons: 0, goldenCoins: 0 };
+  try {
+    balances = await getPlayerBalances(uuid);
+  } catch {
+    // PG not available — balances come from SQLite profile
+  }
 
   return c.json({
-    // Structured (spec) shape.
-    ...profile,
-    // Flat fields consumed by the bot's embeds.
-    uuid: profile.uuid,
-    username: profile.uuid,
+    uuid,
+    username: (profile as any).username ?? `Player`,
     discordId: queryDiscordId ?? c.var.user?.discordId ?? null,
-    rank: profile.rank?.level ?? 0,
-    prestigeLevel: profile.prestige?.level ?? 0,
-    denarius: balances.denarius,
-    auctoritas: balances.tokens,
-    civitas: balances.beacons,
-    aureus: balances.goldenCoins,
-    blocksMined: profile.stats?.blocksMined ?? 0,
-    playtimeSeconds: Number(profile.stats?.playTime ?? 0),
-    pvpKills: profile.stats?.pvpKills ?? 0,
-    pvpDeaths: profile.stats?.pvpDeaths ?? 0,
-    trophies: profile.stats?.pvpTrophies ?? 0,
+    rank: (profile as any).rank ?? (profile as any).rank_level ?? 0,
+    prestigeLevel: (profile as any).prestigeLevel ?? (profile as any).prestige_level ?? 0,
+    denarius: (profile as any).denarius ?? balances.denarius ?? 0,
+    auctoritas: (profile as any).auctoritas ?? balances.tokens ?? 0,
+    civitas: (profile as any).civitas ?? balances.beacons ?? 0,
+    aureus: (profile as any).aureus ?? balances.goldenCoins ?? 0,
+    blocksMined: (profile as any).blocksMined ?? (profile as any).blocks_mined ?? 0,
+    playtimeSeconds: Number((profile as any).playtimeSeconds ?? (profile as any).play_time ?? 0),
+    pvpKills: (profile as any).pvpKills ?? (profile as any).pvp_kills ?? 0,
+    pvpDeaths: (profile as any).pvpDeaths ?? (profile as any).pvp_deaths ?? 0,
+    trophies: (profile as any).trophies ?? (profile as any).pvp_trophies ?? 0,
   });
 });
 
@@ -282,39 +308,55 @@ api.post('/link/confirm', async (c) => {
   }
 
   const code = (body.code ?? '').toUpperCase();
+  const discordId = body.discordId ?? '';
   if (!code) {
     return c.json({ error: 'Missing code' }, 400);
   }
-
-  const record = await consumeLinkCode(code);
-  if (!record) {
-    return c.json({ error: 'Invalid or expired link code' }, 404);
+  if (!discordId) {
+    return c.json({ error: 'Missing discordId' }, 400);
   }
 
-  // Reconcile identities: the code may carry discordId or uuid, and the
-  // caller may supply the other half. The bot confirms with {discordId, code}
-  // (its in-game /link generates a code keyed by uuid).
-  const discordId = body.discordId ?? record.discordId;
-  const uuid = body.uuid ?? record.uuid;
-  if (!discordId || !uuid) {
-    return c.json(
-      { error: 'Cannot complete link: need both discordId and uuid' },
-      400,
-    );
+  // Step 1: Verify the code against the plugin's SQLite database (link_codes table).
+  // This is the code the player got from /discord link in-game.
+  const { verifyLinkCode } = await import('../db/sqlite.js');
+  const codeRecord = verifyLinkCode(code);
+  if (!codeRecord) {
+    // Fall back to Redis-based verification if SQLite isn't available
+    const redisRecord = await consumeLinkCode(code);
+    if (!redisRecord) {
+      return c.json({ error: 'Invalid or expired code. Run /discord link in-game for a fresh one.' }, 404);
+    }
+    // Redis path
+    const uuid = body.uuid ?? redisRecord.uuid;
+    if (!uuid || !discordId) {
+      return c.json({ error: 'Cannot complete link' }, 400);
+    }
+    try {
+      await upsertDiscordLink(uuid, discordId);
+      return c.json({ ok: true, linked: true, discordId, uuid, username: 'Player' });
+    } catch {
+      return c.json({ error: 'Failed to persist link' }, 500);
+    }
   }
 
-  try {
-    await upsertDiscordLink(uuid, discordId);
-    // The bot's embed reads username/uuid/linked from the response.
+  // SQLite path: code is valid, now write the link directly to SQLite.
+  const uuid = codeRecord.uuid;
+  const { upsertDiscordLinkSqlite } = await import('../db/sqlite.js');
+  const written = upsertDiscordLinkSqlite(uuid, discordId);
+  if (written) {
     return c.json({
       ok: true,
       linked: true,
       discordId,
       uuid,
-      username: uuid,
+      username: `Player`,
     });
-  } catch (err) {
-    logger.error({ err }, 'Failed to persist discord link');
+  }
+  // Fallback: try PostgreSQL
+  try {
+    await upsertDiscordLink(uuid, discordId);
+    return c.json({ ok: true, linked: true, discordId, uuid, username: 'Player' });
+  } catch {
     return c.json({ error: 'Failed to persist link' }, 500);
   }
 });

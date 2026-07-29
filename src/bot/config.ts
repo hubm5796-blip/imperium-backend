@@ -100,7 +100,7 @@ export function formatPlaytime(seconds: number | undefined | null): string {
 /** Load env-derived runtime config (read lazily so dotenv can run first). */
 export function getBotConfig() {
   const token = process.env.DISCORD_BOT_TOKEN;
-  const apiBase = (process.env.BACKEND_API_BASE ?? 'https://api.imperiummc.net').replace(/\/$/, '');
+  const apiBase = (process.env.BACKEND_API_BASE ?? 'http://localhost:3001').replace(/\/$/, '');
   const clientId = process.env.DISCORD_CLIENT_ID;
   /** Optional: role to grant when a Discord account is linked. */
   const linkedRoleId = process.env.DISCORD_LINKED_ROLE_ID;

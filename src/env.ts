@@ -45,6 +45,8 @@ export const env = {
   port: optionalInt('PORT', 3001),
   nodeEnv: optional('NODE_ENV', 'development'),
   isProduction: optional('NODE_ENV', 'development') === 'production',
+  /** Path to the plugin's SQLite database (for link code verification when Redis is not available). */
+  sqlitePath: optional('SQLITE_PATH', ''),
 } as const;
 
 export type Env = typeof env;

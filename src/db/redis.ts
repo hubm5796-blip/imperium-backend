@@ -73,6 +73,11 @@ function ensureResponsesSubscribed(): void {
       logger.warn({ message }, 'Could not parse response envelope');
       return;
     }
+    // The plugin publishes `status` ("OK"|"ERROR"), not `ok`. Derive `ok` so
+    // callers can use the boolean regardless of which envelope shape arrived.
+    if (typeof parsed.ok !== 'boolean') {
+      parsed.ok = parsed.status === 'OK';
+    }
     const entry = pendingResponses.get(parsed.request_id);
     if (!entry) return; // not waiting on this id (or already timed out)
     pendingResponses.delete(parsed.request_id);
@@ -82,9 +87,12 @@ function ensureResponsesSubscribed(): void {
 }
 
 /**
- * HMAC-SHA256 signature of `"$type|$timestamp|$nonce|$requestId"` using the
- * shared WEBPANEL_HMAC_SECRET. The plugin computes the same signature on
- * receipt and rejects mismatches.
+ * HMAC-SHA256 signature of `"$type|$ts|$nonce|$requestId"` using the shared
+ * WEBPANEL_HMAC_SECRET, where `ts` is unix SECONDS (matching the plugin's
+ * `WebPanelCommandHandler.verifyCommandSignature`, which signs
+ * `"$type|$ts|$nonce|$requestId"` with `ts = currentTimeMillis()/1000` and a
+ * 30s freshness window). The plugin computes the same signature on receipt and
+ * rejects mismatches.
  */
 export function signCommand(
   type: string,
@@ -128,16 +136,20 @@ export async function sendCommand(
   payload: Record<string, unknown>,
 ): Promise<CommandEnvelope> {
   const requestId = nanoid(16);
-  const timestamp = Date.now();
+  // Unix SECONDS — the plugin verifies a 30s window against seconds and signs
+  // the message with the seconds value. Sending milliseconds broke the bus.
+  const timestamp = Math.floor(Date.now() / 1000);
   const nonce = crypto.randomBytes(16).toString('hex');
   const signature = signCommand(type, timestamp, nonce, requestId);
 
   const envelope: CommandEnvelope = {
     type,
     request_id: requestId,
-    timestamp,
+    ts: timestamp,
     nonce,
-    signature,
+    // Field name MUST be `sig` to match the plugin's `json.get("sig")` read.
+    // Sending `signature` was rejected at the plugin's presence guard.
+    sig: signature,
     payload,
   };
 

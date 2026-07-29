@@ -104,18 +104,31 @@ export type AppContext = Context<{
 export interface CommandEnvelope {
   type: string;
   request_id: string;
-  timestamp: number;
+  /** Unix SECONDS (plugin verifies a 30s window against seconds). */
+  ts: number;
   nonce: string;
-  signature: string;
+  /** Hex HMAC-SHA256 — field name MUST be `sig` to match the plugin. */
+  sig: string;
   payload: Record<string, unknown>;
 }
 
-/** Response envelope published to the ImperiumMC:responses channel. */
+/**
+ * Response envelope published to the ImperiumMC:responses channel.
+ * The plugin's `publishResponse` sends `request_id` + `status` ("OK"|"ERROR")
+ * + optional `error` + `timestamp`; some command handlers (REQUEST_CONFIGS,
+ * COMPENSATE_PLAYER) publish richer raw envelopes via `publishRaw`. Callers
+ * should prefer `ok` (derived from status) and fall back to the raw fields.
+ */
 export interface ResponseEnvelope {
   request_id: string;
+  /** Derived from the plugin's `status` field: ok = (status === 'OK'). */
   ok: boolean;
+  /** Raw plugin status when present ("OK" | "ERROR"). */
+  status?: string;
   data?: unknown;
   error?: string;
+  /** Other fields the plugin may include (action, timestamp, payload...). */
+  [key: string]: unknown;
 }
 
 /** Mapping from internal currency label to legacy db column name. */
