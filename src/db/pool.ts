@@ -302,3 +302,218 @@ export async function getOnlinePlayerCountSnapshot(): Promise<number | null> {
     return null;
   }
 }
+
+/* ----------------------------------------------------------- Skill tree */
+
+/**
+ * A skill tree branch in the shape consumed by the dashboard. `nodes` are the
+ * player's unlocked node ids for that branch.
+ */
+export interface SkillBranchSummary {
+  name: string;
+  nodes: string[];
+}
+
+/**
+ * Fetch a player's skill tree: the unlocked nodes grouped by branch, plus the
+ * points available/spent. The plugin stores unlocked nodes in `player_skills`
+ * as (uuid, branch, node_id). Points come from the player_skills table joined
+ * against ranks/prestige, but since the "points earned" formula lives in the
+ * plugin (rank × per-rank + prestige × per-prestige), we compute spent here
+ * (count of unlocked rows) and available from earned-spent where earned is
+ * derived from rank/prestige tables. Returns zeros if the player has no row.
+ */
+export async function getPlayerSkills(
+  uuid: string,
+): Promise<{ branches: SkillBranchSummary[]; available_points: number; spent_points: number }> {
+  // Unlocked nodes grouped by branch.
+  const skillsResult = await query<{ branch: string; node_id: string }>(
+    'SELECT branch, node_id FROM player_skills WHERE uuid = $1 ORDER BY branch, node_id',
+    [uuid],
+  );
+  const byBranch = new Map<string, string[]>();
+  for (const row of skillsResult.rows) {
+    const list = byBranch.get(row.branch) ?? [];
+    list.push(row.node_id);
+    byBranch.set(row.branch, list);
+  }
+  const branches: SkillBranchSummary[] = Array.from(byBranch.entries()).map(([name, nodes]) => ({
+    name,
+    nodes,
+  }));
+
+  // Points spent = number of unlocked nodes (each node costs >=1 point).
+  const spent_points = skillsResult.rowCount ?? 0;
+
+  // Points earned follows the plugin's formula: rank_level * 1 + prestige_level * 5.
+  // Read from the same tables getPlayerProfile uses; degrade to 0 if absent.
+  let earned = 0;
+  try {
+    const rankResult = await query<{ rank_level: string }>(
+      'SELECT rank_level FROM player_ranks WHERE uuid = $1',
+      [uuid],
+    );
+    const prestigeResult = await query<{ prestige_level: string }>(
+      'SELECT prestige_level FROM prestige_data WHERE uuid = $1',
+      [uuid],
+    );
+    const rank = Number(rankResult.rows[0]?.rank_level ?? 0);
+    const prestige = Number(prestigeResult.rows[0]?.prestige_level ?? 0);
+    earned = rank + prestige * 5;
+  } catch {
+    earned = 0;
+  }
+
+  const available_points = Math.max(earned - spent_points, 0);
+  return { branches, available_points, spent_points };
+}
+
+/* ----------------------------------------------------- Faction reputation */
+
+/** A faction reputation entry for the dashboard. */
+export interface PlayerFactionRep {
+  id: string;
+  name: string;
+  rep: number;
+  tier: string;
+}
+
+/** Reputation tier thresholds (mirror of FactionService's rep_tiers in factions.yml). */
+const FACTION_REP_TIERS: Array<{ min: number; name: string }> = [
+  { min: 10000, name: 'Exalted' },
+  { min: 5000, name: 'Honored' },
+  { min: 1000, name: 'Friendly' },
+  { min: 1, name: 'Neutral' },
+];
+
+/** Map a raw reputation value to its tier name. */
+function factionTierFor(rep: number): string {
+  for (const tier of FACTION_REP_TIERS) {
+    if (rep >= tier.min) return tier.name;
+  }
+  return 'Hostile';
+}
+
+/**
+ * Fetch a player's reputation across all factions. The plugin stores raw rep
+ * in `player_faction_rep`; faction display names come from the player's rows
+ * (we fall back to the id as the name since faction definitions live in a
+ * plugin-side YAML the backend doesn't read).
+ */
+export async function getPlayerFactions(uuid: string): Promise<{ factions: PlayerFactionRep[] }> {
+  const result = await query<{ faction_id: string; reputation: string }>(
+    'SELECT faction_id, reputation FROM player_faction_rep WHERE uuid = $1 ORDER BY reputation DESC',
+    [uuid],
+  );
+  const factions: PlayerFactionRep[] = result.rows.map((row) => {
+    const rep = Number(row.reputation ?? 0);
+    return {
+      id: row.faction_id,
+      name: row.faction_id,
+      rep,
+      tier: factionTierFor(rep),
+    };
+  });
+  return { factions };
+}
+
+/* ------------------------------------------------------------- Parkour */
+
+/** A parkour record for one course for the linked player. */
+export interface ParkourRecord {
+  course: string;
+  best_time_ms: number;
+  completions: number;
+}
+
+/** Fetch all of a player's parkour records, ordered by best time. */
+export async function getPlayerParkour(uuid: string): Promise<{ records: ParkourRecord[] }> {
+  const result = await query<{ course_id: string; best_time_ms: string; completions: string }>(
+    'SELECT course_id, best_time_ms, completions FROM parkour_records WHERE player_uuid = $1 ORDER BY best_time_ms ASC',
+    [uuid],
+  );
+  const records: ParkourRecord[] = result.rows.map((row) => ({
+    course: row.course_id,
+    best_time_ms: Number(row.best_time_ms ?? 0),
+    completions: Number(row.completions ?? 0),
+  }));
+  return { records };
+}
+
+/** A single parkour leaderboard entry (1-based rank added by the caller). */
+export interface ParkourLeaderboardEntry {
+  uuid: string;
+  best_time_ms: number;
+  completions: number;
+}
+
+/** Top completions for a course, fastest first. */
+export async function getParkourLeaderboard(
+  courseId: string,
+  limit = 20,
+): Promise<ParkourLeaderboardEntry[]> {
+  const cap = Math.min(Math.max(limit, 1), 100);
+  const result = await query<{ player_uuid: string; best_time_ms: string; completions: string }>(
+    'SELECT player_uuid, best_time_ms, completions FROM parkour_records WHERE course_id = $1 ORDER BY best_time_ms ASC LIMIT $2',
+    [courseId, cap],
+  );
+  return result.rows.map((row) => ({
+    uuid: row.player_uuid,
+    best_time_ms: Number(row.best_time_ms ?? 0),
+    completions: Number(row.completions ?? 0),
+  }));
+}
+
+/* ----------------------------------------------------- ELO / wave leaderboards */
+
+/** A single ELO leaderboard entry (1-based rank added by the caller). */
+export interface EloLeaderboardEntry {
+  uuid: string;
+  elo: number;
+  wins: number;
+  losses: number;
+  peak_elo: number;
+}
+
+/** Top players by Arena Ranking (ELO). */
+export async function getEloLeaderboard(limit = 20): Promise<EloLeaderboardEntry[]> {
+  const cap = Math.min(Math.max(limit, 1), 100);
+  const result = await query<{
+    uuid: string;
+    elo: string;
+    wins: string;
+    losses: string;
+    peak_elo: string;
+  }>(
+    'SELECT uuid, elo, wins, losses, peak_elo FROM player_elo ORDER BY elo DESC, peak_elo DESC LIMIT $1',
+    [cap],
+  );
+  return result.rows.map((row) => ({
+    uuid: row.uuid,
+    elo: Number(row.elo ?? 0),
+    wins: Number(row.wins ?? 0),
+    losses: Number(row.losses ?? 0),
+    peak_elo: Number(row.peak_elo ?? 0),
+  }));
+}
+
+/** A single endless-wave leaderboard entry (1-based rank added by the caller). */
+export interface WaveLeaderboardEntry {
+  uuid: string;
+  highest_wave: number;
+  total_sessions: number;
+}
+
+/** Top players by highest wave survived. */
+export async function getWaveLeaderboard(limit = 20): Promise<WaveLeaderboardEntry[]> {
+  const cap = Math.min(Math.max(limit, 1), 100);
+  const result = await query<{ uuid: string; highest_wave: string; total_sessions: string }>(
+    'SELECT uuid, highest_wave, total_sessions FROM endless_wave_records ORDER BY highest_wave DESC, total_sessions DESC LIMIT $1',
+    [cap],
+  );
+  return result.rows.map((row) => ({
+    uuid: row.uuid,
+    highest_wave: Number(row.highest_wave ?? 0),
+    total_sessions: Number(row.total_sessions ?? 0),
+  }));
+}

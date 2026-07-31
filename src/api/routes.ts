@@ -16,12 +16,18 @@ import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
 import { authRateLimit, globalRateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
+  getEloLeaderboard,
   getLeaderboard,
+  getParkourLeaderboard,
   getPlayerBalances,
+  getPlayerFactions,
+  getPlayerParkour,
   getPlayerProfile,
+  getPlayerSkills,
   getPlayerStats,
   getPlayerTransactions,
   getUuidByDiscordId,
+  getWaveLeaderboard,
   upsertDiscordLink,
 } from '../db/pool.js';
 import {
@@ -232,6 +238,27 @@ api.get('/player/transactions', requireAuth, requireLinked, async (c) => {
   });
 });
 
+/** GET /api/player/skills — Roman skill tree (Virtus/Mercatura/Divinitas). */
+api.get('/player/skills', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  const skills = await getPlayerSkills(uuid);
+  return c.json(skills);
+});
+
+/** GET /api/player/factions — faction reputation across the 8 Roman factions. */
+api.get('/player/factions', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  const factions = await getPlayerFactions(uuid);
+  return c.json(factions);
+});
+
+/** GET /api/player/parkour — best times per parkour course. */
+api.get('/player/parkour', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  const parkour = await getPlayerParkour(uuid);
+  return c.json(parkour);
+});
+
 /* ---------------------------------------------------------------- Public */
 
 /** GET /api/leaderboards/:type — top 20 by denarius | blocks | prestige | playtime. */
@@ -262,6 +289,85 @@ api.get('/leaderboards/:type', async (c) => {
   return c.json({ type, entries });
 });
 
+/**
+ * GET /api/leaderboards/parkour/:course — fastest completions for a course.
+ * Public (no auth). The plugin stores records in `parkour_records`; names aren't
+ * persisted, so each entry carries the uuid and a best-effort display name.
+ */
+api.get('/leaderboards/parkour/:course', async (c) => {
+  const course = c.req.param('course') ?? '';
+  if (!course) {
+    return c.json({ error: 'Missing course parameter' }, 400);
+  }
+  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
+  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
+
+  let rows;
+  try {
+    rows = await getParkourLeaderboard(course, limit);
+  } catch {
+    return c.json({ course, entries: [], error: 'Database unavailable' }, 503);
+  }
+  const entries = rows.map((row, i) => ({
+    rank: i + 1,
+    uuid: row.uuid,
+    username: row.uuid,
+    best_time_ms: row.best_time_ms,
+    completions: row.completions,
+  }));
+  return c.json({ course, entries });
+});
+
+/**
+ * GET /api/leaderboards/elo — Arena Ranking (ELO) leaderboard.
+ * Public. Ordered by ELO desc, ties broken by peak ELO.
+ */
+api.get('/leaderboards/elo', async (c) => {
+  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
+  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
+
+  let rows;
+  try {
+    rows = await getEloLeaderboard(limit);
+  } catch {
+    return c.json({ entries: [], error: 'Database unavailable' }, 503);
+  }
+  const entries = rows.map((row, i) => ({
+    rank: i + 1,
+    uuid: row.uuid,
+    username: row.uuid,
+    elo: row.elo,
+    wins: row.wins,
+    losses: row.losses,
+    peak_elo: row.peak_elo,
+  }));
+  return c.json({ entries });
+});
+
+/**
+ * GET /api/leaderboards/waves — endless-wave survival leaderboard.
+ * Public. Ordered by highest wave reached desc.
+ */
+api.get('/leaderboards/waves', async (c) => {
+  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
+  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
+
+  let rows;
+  try {
+    rows = await getWaveLeaderboard(limit);
+  } catch {
+    return c.json({ entries: [], error: 'Database unavailable' }, 503);
+  }
+  const entries = rows.map((row, i) => ({
+    rank: i + 1,
+    uuid: row.uuid,
+    username: row.uuid,
+    highest_wave: row.highest_wave,
+    total_sessions: row.total_sessions,
+  }));
+  return c.json({ entries });
+});
+
 /** GET /api/server/status — online player count from Redis (live) or DB. */
 api.get('/server/status', async (c) => {
   try {
@@ -282,6 +388,31 @@ api.get('/server/status', async (c) => {
       source: 'unavailable',
     });
   }
+});
+
+/**
+ * GET /api/server/features — static feature catalog shown on the website's
+ * landing/marketing pages. These are curated counts (not live DB figures) that
+ * describe the breadth of the server's content; they only change at release
+ * boundaries, so they're served as a constant rather than queried per-request.
+ */
+api.get('/server/features', (c) => {
+  return c.json({
+    enchants: 201,
+    pets: 52,
+    crystals: 38,
+    crates: 30,
+    mines: 100,
+    dungeons: 12,
+    bosses: 8,
+    story_chapters: 50,
+    challenges: 102,
+    achievements: 194,
+    languages: 45,
+    festivals: 10,
+    ranks: 100,
+    prestiges: 25,
+  });
 });
 
 /* -------------------------------------------------------------- Linking */
