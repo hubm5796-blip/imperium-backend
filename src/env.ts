@@ -24,6 +24,15 @@ function optionalInt(key: string, fallback: number): number {
   return parsed;
 }
 
+// M2: HS256 security relies on a strong secret. Reject short secrets at boot so
+// misconfiguration fails loudly instead of silently weakening token signing.
+const jwtSecret = required('JWT_SECRET');
+if (jwtSecret.length < 32) {
+  throw new Error(
+    'Environment variable JWT_SECRET must be at least 32 characters long.',
+  );
+}
+
 export const env = {
   discord: {
     clientId: required('DISCORD_CLIENT_ID'),
@@ -34,7 +43,8 @@ export const env = {
     ),
     botToken: optional('DISCORD_BOT_TOKEN'),
   },
-  jwtSecret: required('JWT_SECRET'),
+  jwtSecret: jwtSecret,
+  trustProxy: process.env.TRUST_PROXY === 'true',
   databaseUrl: required('DATABASE_URL'),
   redis: {
     host: optional('REDIS_HOST', 'localhost'),

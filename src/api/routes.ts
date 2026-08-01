@@ -106,14 +106,18 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
 
   // CSRF protection: the state echoed in the cookie must match the query param.
   if (!state || !cookieState || state !== cookieState) {
+    // L2: clear the single-use state cookie even on the error path.
+    setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
     return c.json({ error: 'Invalid state' }, 400);
   }
 
   if (error) {
     logger.warn({ error }, 'Discord OAuth2 returned an error');
+    setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
     return c.redirect('/login?error=oauth_denied', 302);
   }
   if (!code) {
+    setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
     return c.redirect('/login?error=missing_code', 302);
   }
 
@@ -128,9 +132,11 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     });
 
     setCookie(c, AUTH_COOKIE_NAME, jwt, authCookieOptions());
+    setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
     return c.redirect('/dashboard', 302);
   } catch (err) {
     logger.error({ err }, 'Discord OAuth2 callback failed');
+    setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
     return c.redirect('/login?error=callback_failed', 302);
   }
 });

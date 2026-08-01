@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 import type { AppContextVariables } from '../types/index.js';
+import { env } from '../env.js';
 
 type RL = { Variables: AppContextVariables };
 
@@ -10,6 +11,33 @@ interface SlidingWindow {
 
 /** Global in-memory map of IP -> sliding window per limit-name. */
 const buckets = new Map<string, Map<string, SlidingWindow>>();
+
+/** M4: once the map grows past this, sweep idle buckets on the next request. */
+const SWEEP_THRESHOLD = 10_000;
+
+/**
+ * M4: Drop every bucket whose newest hit predates `now - windowMs`. This bounds
+ * memory growth: a spoofed-IP storm can otherwise seed one bucket per request
+ * and they never get freed otherwise. Returns the count removed (for logging).
+ */
+function sweepIdle(now: number): number {
+  let removed = 0;
+  for (const [bucketKey, perLimit] of buckets) {
+    let newest = 0;
+    for (const w of perLimit.values()) {
+      if (w.hits.length > 0) {
+        const tail = w.hits[w.hits.length - 1] as number;
+        if (tail > newest) newest = tail;
+      }
+    }
+    // No hits, or every hit is older than the largest supported window (1 min).
+    if (newest === 0 || newest <= now - 60_000) {
+      buckets.delete(bucketKey);
+      removed++;
+    }
+  }
+  return removed;
+}
 
 /**
  * Build a sliding-window rate limiter middleware.
@@ -27,10 +55,28 @@ export function rateLimit(
   const now = () => Date.now();
 
   return async (c, next) => {
-    const ip =
-      c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
-      c.req.header('x-real-ip') ??
-      'unknown';
+    // H1: X-Forwarded-For / X-Real-IP are client-controlled. Only trust them
+    // when an explicit TRUST_PROXY=true is set (i.e. the deployment sits behind
+    // a known reverse proxy that overwrites these headers). Otherwise key on the
+    // raw TCP socket remote address, which cannot be spoofed by the client.
+    let ip: string;
+    if (env.trustProxy) {
+      ip =
+        c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+        c.req.header('x-real-ip') ??
+        'unknown';
+    } else {
+      // @hono/node-server exposes the underlying Node request via c.env.incoming.
+      const incoming = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })
+        .incoming;
+      ip = incoming?.socket?.remoteAddress ?? 'unknown';
+    }
+
+    // M4: opportunistically evict idle buckets once the map gets large. This
+    // runs only past the threshold so it's free in the common case.
+    if (buckets.size > SWEEP_THRESHOLD) {
+      sweepIdle(Date.now());
+    }
 
     const bucketKey = `${keyPrefix}:${ip}`;
     let bucket = buckets.get(bucketKey);
