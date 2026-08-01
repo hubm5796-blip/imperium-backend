@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import {
   AUTH_COOKIE_NAME,
@@ -6,6 +6,7 @@ import {
   clearAuthCookieOptions,
   signJwt,
 } from '../auth/jwt.js';
+import { env } from '../env.js';
 import {
   buildAvatarUrl,
   buildAuthorizeUrl,
@@ -49,12 +50,32 @@ api.use('*', attachUser);
 // Apply a default sliding-window limit to everything.
 api.use('*', globalRateLimit);
 
+/**
+ * Shared-secret bot authentication. The Discord bot sends the
+ * `X-Bot-Token` header (matching BOT_API_TOKEN) on bot-only requests.
+ * Returns true when the token matches; false otherwise (including when the
+ * token is unset in dev). Callers decide how to treat a failure: 401 for
+ * bot-only endpoints, or fall through to cookie auth for mixed endpoints.
+ */
+function requireBotAuth(c: Context): boolean {
+  const token = c.req.header('X-Bot-Token');
+  return !!env.botApiToken && token === env.botApiToken;
+}
+
 /* ------------------------------------------------------------------ Auth */
 
 /** GET /api/auth/discord — redirect to Discord OAuth2 authorize URL. */
 api.get('/auth/discord', (c) => {
-  // A simple state token to mitigate CSRF on the callback.
-  const state = Math.random().toString(36).slice(2);
+  // Cryptographically random state to mitigate CSRF on the callback.
+  const state = crypto.randomUUID();
+  // Echo the state back via an httpOnly cookie so the callback can verify it.
+  setCookie(c, 'oauth_state', state, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    maxAge: 600,
+    path: '/',
+    secure: env.isProduction,
+  });
   const url = buildAuthorizeUrl(state);
   return c.redirect(url, 302);
 });
@@ -63,6 +84,13 @@ api.get('/auth/discord', (c) => {
 api.get('/auth/discord/callback', authRateLimit, async (c) => {
   const code = c.req.query('code');
   const error = c.req.query('error');
+  const state = c.req.query('state');
+  const cookieState = getCookie(c, 'oauth_state');
+
+  // CSRF protection: the state echoed in the cookie must match the query param.
+  if (!state || !cookieState || state !== cookieState) {
+    return c.json({ error: 'Invalid state' }, 400);
+  }
 
   if (error) {
     logger.warn({ error }, 'Discord OAuth2 returned an error');
@@ -125,6 +153,13 @@ api.post('/auth/logout', (c) => {
 api.get('/player/profile', async (c) => {
   const queryDiscordId = c.req.query('discord_id');
   const queryUuid = c.req.query('uuid');
+
+  // Targeted lookups (?uuid= / ?discord_id=) are bot-only. Without a valid
+  // bot token, anyone could read any player's data, so fall through to the
+  // cookie-based "self" path (which is the only thing a browser may do).
+  if ((queryUuid || queryDiscordId) && !requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
 
   let uuid: string | null;
   if (queryUuid) {
@@ -431,6 +466,10 @@ api.post('/link/initiate', requireAuth, async (c) => {
 
 /** POST /api/link/confirm — validate a code and persist the link. Called by the bot. */
 api.post('/link/confirm', async (c) => {
+  // Bot-only: persisting arbitrary account links must be authenticated.
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   let body: { code?: string; uuid?: string; discordId?: string };
   try {
     body = (await c.req.json()) as { code?: string; uuid?: string; discordId?: string };
@@ -497,6 +536,10 @@ api.post('/link/confirm', async (c) => {
  * Called by the bot's /unlink command. Returns 404 if no link existed.
  */
 api.delete('/link', async (c) => {
+  // Bot-only: unlinking arbitrary accounts must be authenticated.
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   const discordId = c.req.query('discord_id');
   if (!discordId) {
     return c.json({ error: 'Missing discord_id query parameter' }, 400);

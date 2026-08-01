@@ -58,6 +58,17 @@ app.get('/health', (c) => c.json({ status: 'ok' }));
 
 app.route('/api', api);
 
+/* ---------------------------------------------------- Error handling */
+
+// Catch any uncaught exception from a route handler so we never leak a stack
+// trace or hang the request; log the real error and return a generic 500.
+app.onError((err, c) => {
+  logger.error({ err }, 'Unhandled error');
+  return c.json({ error: 'Internal Server Error' }, 500);
+});
+// Consistent JSON 404 for unmatched routes.
+app.notFound((c) => c.json({ error: 'Not Found' }, 404));
+
 /* ------------------------------------------------------------ Lifecycle */
 
 async function shutdown(signal: string): Promise<void> {

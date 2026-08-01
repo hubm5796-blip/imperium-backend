@@ -13,6 +13,7 @@ type SignPayload = Omit<JwtPayload, 'iat' | 'exp'>;
 /** Create a signed JWT containing the Discord identity. */
 export function signJwt(payload: SignPayload): string {
   return jwt.sign(payload, env.jwtSecret, {
+    algorithm: 'HS256',
     expiresIn: JWT_EXPIRY_SECONDS,
   });
 }
@@ -24,7 +25,11 @@ export function signJwt(payload: SignPayload): string {
 export function verifyJwt(token: string | undefined | null): JwtPayload | null {
   if (!token) return null;
   try {
-    const decoded = jwt.verify(token, env.jwtSecret) as LibJwtPayload & SignPayload;
+    // Pin the algorithm to HS256 to block alg-confusion attacks (e.g. forging
+    // a token with alg=none or an asymmetric alg against the symmetric secret).
+    const decoded = jwt.verify(token, env.jwtSecret, {
+      algorithms: ['HS256'],
+    }) as LibJwtPayload & SignPayload;
     return {
       discordId: decoded.discordId,
       discordUsername: decoded.discordUsername,

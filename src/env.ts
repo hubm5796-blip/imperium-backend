@@ -42,6 +42,12 @@ export const env = {
     password: optional('REDIS_PASSWORD'),
   },
   webpanelHmacSecret: required('WEBPANEL_HMAC_SECRET'),
+  /**
+   * Shared secret required on bot-only endpoints (/link/confirm, DELETE /link,
+   * /player/profile with ?uuid=/?discord_id=). The bot sends it in the
+   * `X-Bot-Token` header. Optional in dev; if unset, bot-auth-only checks fail.
+   */
+  botApiToken: optional('BOT_API_TOKEN'),
   port: optionalInt('PORT', 3001),
   nodeEnv: optional('NODE_ENV', 'development'),
   isProduction: optional('NODE_ENV', 'development') === 'production',

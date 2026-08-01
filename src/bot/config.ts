@@ -107,11 +107,17 @@ export function getBotConfig() {
   const token = process.env.DISCORD_BOT_TOKEN;
   const apiBase = (process.env.BACKEND_API_BASE ?? 'http://localhost:3001').replace(/\/$/, '');
   const clientId = process.env.DISCORD_CLIENT_ID;
+  /**
+   * Shared secret sent as the `X-Bot-Token` header to authenticate bot-only
+   * backend endpoints (/link/confirm, DELETE /link, /player/profile with
+   * ?uuid= or ?discord_id=). MUST match the backend's BOT_API_TOKEN.
+   */
+  const apiToken = process.env.BACKEND_API_TOKEN;
   /** Optional: role to grant when a Discord account is linked. */
   const linkedRoleId = process.env.DISCORD_LINKED_ROLE_ID;
   /** Optional: guild id for fast (per-guild) command registration during dev. */
   const devGuildId = process.env.DISCORD_DEV_GUILD_ID;
-  return { token, apiBase, clientId, linkedRoleId, devGuildId };
+  return { token, apiBase, apiToken, clientId, linkedRoleId, devGuildId };
 }
 
 /**

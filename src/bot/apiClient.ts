@@ -82,12 +82,21 @@ async function request<T>(
   path: string,
   body?: unknown,
 ): Promise<ApiResult<T>> {
-  const { apiBase } = getBotConfig();
+  const { apiBase, apiToken } = getBotConfig();
   const url = `${apiBase}${path}`;
   try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+    // Authenticate bot-only endpoints (/link/confirm, DELETE /link,
+    // /player/profile with ?uuid= or ?discord_id=).
+    if (apiToken) {
+      headers['X-Bot-Token'] = apiToken;
+    }
     const res = await fetch(url, {
       method,
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
 
