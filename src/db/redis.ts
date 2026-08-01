@@ -130,21 +130,27 @@ export function verifyCommand(
  * Send a command to the plugin via the commands channel. The command envelope
  * is HMAC-signed. Does NOT wait for a response — use sendCommandWithResponse
  * for that.
+ *
+ * A pre-generated `requestId` may be passed so the caller can register a
+ * pending-response waiter BEFORE the command is published (avoids the race
+ * where a fast plugin response arrives before the waiter exists). When omitted,
+ * a fresh id is generated here.
  */
 export async function sendCommand(
   type: string,
   payload: Record<string, unknown>,
+  requestId?: string,
 ): Promise<CommandEnvelope> {
-  const requestId = nanoid(16);
+  const id = requestId ?? nanoid(16);
   // Unix SECONDS — the plugin verifies a 30s window against seconds and signs
   // the message with the seconds value. Sending milliseconds broke the bus.
   const timestamp = Math.floor(Date.now() / 1000);
   const nonce = crypto.randomBytes(16).toString('hex');
-  const signature = signCommand(type, timestamp, nonce, requestId);
+  const signature = signCommand(type, timestamp, nonce, id);
 
   const envelope: CommandEnvelope = {
     type,
-    request_id: requestId,
+    request_id: id,
     ts: timestamp,
     nonce,
     // Field name MUST be `sig` to match the plugin's `json.get("sig")` read.
@@ -160,6 +166,11 @@ export async function sendCommand(
 /**
  * Send a command and wait for the matching response on the responses channel.
  * Rejects if no response arrives within timeoutMs.
+ *
+ * Ordering: the pending-response entry is registered BEFORE the command is
+ * published. Otherwise a fast plugin response could arrive (and be silently
+ * dropped by the subscriber) before the waiter exists, causing spurious
+ * timeouts.
  */
 export async function sendCommandWithResponse(
   type: string,
@@ -168,8 +179,8 @@ export async function sendCommandWithResponse(
 ): Promise<ResponseEnvelope> {
   ensureResponsesSubscribed();
 
-  const envelope = await sendCommand(type, payload);
-  const requestId = envelope.request_id;
+  // Generate the request_id up front so the waiter can be registered first.
+  const requestId = nanoid(16);
 
   return new Promise<ResponseEnvelope>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -177,10 +188,22 @@ export async function sendCommandWithResponse(
       reject(new Error(`Timed out waiting for response to ${type} (${requestId})`));
     }, timeoutMs);
 
+    // Register the waiter BEFORE publishing so a fast response is never dropped.
     pendingResponses.set(requestId, {
       resolve,
       reject,
       timer,
+    });
+
+    // Publish now that the waiter exists. Swallow errors: if the publish fails
+    // we must clean up the pending entry we just registered.
+    sendCommand(type, payload, requestId).catch((err) => {
+      const entry = pendingResponses.get(requestId);
+      if (entry) {
+        pendingResponses.delete(requestId);
+        clearTimeout(entry.timer);
+      }
+      reject(err instanceof Error ? err : new Error(String(err)));
     });
   });
 }
@@ -252,13 +275,37 @@ export async function createLinkCode(
 /**
  * Look up and consume (single-use delete) a link code. Returns the stored
  * record, or null if the code was not found / already consumed / expired.
+ *
+ * Uses GETDEL (Redis 6.2+) so the read and the delete happen in a single
+ * atomic step. Two concurrent confirmations can no longer both observe the
+ * code before either deletes it. If GETDEL is unavailable on the server, a Lua
+ * `EVAL` equivalent is used as a fallback.
  */
+const GETDEL_LUA = `return redis.call('GETDEL', KEYS[1])`;
+// EVALSHA cache: avoid re-sending the script body on every call after the first.
+let getdelSha: string | null = null;
+
 export async function consumeLinkCode(code: string): Promise<LinkCodeRecord | null> {
   const key = `${LINK_CODE_PREFIX}${code.toUpperCase()}`;
-  const raw = await redisPublisher.get(key);
-  if (raw === null) return null;
-  // Delete immediately so the code is single-use.
-  await redisPublisher.del(key);
+
+  let raw: string | null;
+  try {
+    raw = await redisPublisher.getdel(key);
+  } catch (err) {
+    // Older Redis (<6.2) or command disabled: fall back to atomic Lua GETDEL.
+    logger.warn({ err: { message: (err as Error).message } }, 'GETDEL unavailable, falling back to Lua');
+    if (!getdelSha) {
+      getdelSha = (await redisPublisher.script('LOAD', GETDEL_LUA).catch(() => null)) as
+        | string
+        | null;
+    }
+    raw =
+      getdelSha !== null
+        ? ((await redisPublisher.evalsha(getdelSha, 1, key)) as string | null)
+        : ((await redisPublisher.eval(GETDEL_LUA, 1, key)) as string | null);
+  }
+
+  if (raw === null || raw === undefined) return null;
   try {
     return JSON.parse(raw) as LinkCodeRecord;
   } catch {

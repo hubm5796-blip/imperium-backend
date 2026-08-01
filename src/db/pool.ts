@@ -55,6 +55,20 @@ export async function getDiscordIdByUuid(uuid: string): Promise<string | null> {
   return result.rows[0]?.discord_id ?? null;
 }
 
+/**
+ * Return the Discord id currently linked to a Minecraft UUID, or null if the
+ * UUID has no link. Used as the hijack guard before {@link upsertDiscordLink}:
+ * callers must reject (409) when a UUID is already bound to a DIFFERENT Discord
+ * account, so a confirmation can never silently rebind an existing link.
+ */
+export async function isAlreadyLinked(uuid: string): Promise<string | null> {
+  const result = await query<Pick<DiscordLinkRow, 'discord_id'>>(
+    'SELECT discord_id FROM discord_links WHERE uuid = $1',
+    [uuid],
+  );
+  return result.rows[0]?.discord_id ?? null;
+}
+
 /** Insert (or upsert) a Discord <-> Minecraft link. Called by the bot. */
 export async function upsertDiscordLink(uuid: string, discordId: string): Promise<void> {
   await query(
@@ -96,7 +110,8 @@ export async function getPlayerProfile(uuid: string): Promise<PlayerProfile | nu
   const row = result.rows[0];
   if (!row) return null;
 
-  const blocksMined = minorUnitsToDisplay(row.blocks_mined as unknown as string);
+  // blocks_mined is a raw COUNT, not minor-unit currency; do NOT divide by 100.
+  const blocksMined = Number(row.blocks_mined ?? 0);
   const pvpKills = Number(row.pvp_kills ?? 0);
   const pvpDeaths = Number(row.pvp_deaths ?? 0);
 
@@ -256,7 +271,8 @@ export async function getLeaderboard(
     );
     return result.rows.map((row) => ({
       uuid: row.uuid,
-      value: minorUnitsToDisplay(row.blocks_mined),
+      // blocks_mined is a raw COUNT, not minor-unit currency; do NOT divide.
+      value: Number(row.blocks_mined ?? 0),
     }));
   }
 

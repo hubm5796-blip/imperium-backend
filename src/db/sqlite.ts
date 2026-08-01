@@ -1,7 +1,9 @@
 /**
  * Direct SQLite reader for the plugin's database.
  * Used for link code verification when Redis is not available.
- * READ-ONLY — never writes to the game database.
+ *
+ * NOTE: the read-only handle (getDb) is used for SELECTs. Code consumption and
+ * link writes need read-write access, so those open a short-lived RW handle.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { env } from '../env.js';
@@ -23,7 +25,63 @@ function getDb(): DatabaseSync | null {
   return db;
 }
 
-/** Verify a link code and return the Minecraft UUID it belongs to, or null if invalid/expired. */
+/** Open a short-lived read-write handle to the plugin's SQLite database. */
+function getRwDb(): DatabaseSync | null {
+  if (!env.sqlitePath) return null;
+  try {
+    return new DatabaseSync(env.sqlitePath);
+  } catch (err) {
+    logger.error({ err: { message: (err as Error).message } }, 'Failed to open SQLite database (read-write)');
+    return null;
+  }
+}
+
+/** Result of consuming a link code: the Minecraft UUID the code was bound to. */
+export interface ConsumedLinkCode {
+  uuid: string;
+}
+
+/**
+ * Atomically verify AND consume a link code in a single statement, so two
+ * concurrent confirmations can't both redeem the same code. Returns the UUID
+ * the code was bound to, or null if the code was invalid/expired/already used.
+ *
+ * This uses `DELETE ... RETURNING` which, under SQLite's serialized writes, is
+ * atomic: the row is removed at the same instant it's read, so a second caller
+ * racing on the same code will find nothing to delete.
+ *
+ * Note: the plugin's `link_codes` table is `(code, uuid, created_at,
+ * expires_at)` — it has NO discord_id column (codes are generated in-game bound
+ * only to the UUID). The Discord id is therefore supplied by the bot at confirm
+ * time. Callers that DO have a stored discord_id (the Redis web flow) must
+ * validate it themselves.
+ */
+export function consumeLinkCode(code: string): ConsumedLinkCode | null {
+  const upper = code.toUpperCase();
+
+  // The read-only handle cannot DELETE; open an RW handle for the operation.
+  const rwDb = getRwDb();
+  if (!rwDb) return null;
+
+  try {
+    const row = rwDb.prepare(
+      `DELETE FROM link_codes WHERE code = ? AND expires_at > datetime('now') RETURNING uuid`
+    ).get(upper) as { uuid: string } | undefined;
+    return row ? { uuid: row.uuid } : null;
+  } catch {
+    // Table might not exist yet, or DELETE...RETURNING unsupported.
+    return null;
+  } finally {
+    rwDb.close();
+  }
+}
+
+/**
+ * Verify a link code WITHOUT consuming it. Prefer {@link consumeLinkCode} for
+ * the actual confirmation flow — this non-destructive check is retained only for
+ * pre-flight "is the code still valid?" lookups. Returns the Minecraft UUID the
+ * code belongs to, or null if invalid/expired.
+ */
 export function verifyLinkCode(code: string): { uuid: string } | null {
   const sqlite = getDb();
   if (!sqlite) return null;
@@ -134,26 +192,65 @@ export function getPlayerProfile(uuid: string): {
   }
 }
 
-/** Write a discord link directly to the SQLite database (for environments without PostgreSQL). */
-export function upsertDiscordLinkSqlite(uuid: string, discordId: string): boolean {
-  // We need read-write access for this. Reopen the DB in read-write mode.
-  if (!env.sqlitePath) return false;
+/**
+ * Look up the Discord id currently linked to a Minecraft UUID via SQLite, or
+ * null if the UUID is not linked (or SQLite is unavailable). Read-only. Used as
+ * the hijack guard before {@link upsertDiscordLinkSqlite}.
+ */
+export function getLinkedDiscordIdSqlite(uuid: string): string | null {
+  const sqlite = getDb();
+  if (!sqlite) return null;
+  try {
+    const row = sqlite.prepare(
+      `SELECT discord_id FROM discord_links WHERE uuid = ?`
+    ).get(uuid) as { discord_id: string } | undefined;
+    return row?.discord_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a discord link directly to the SQLite database (for environments without
+ * PostgreSQL). The caller is responsible for the hijack guard (see {@link
+ * getLinkedDiscordIdSqlite}): this function intentionally does NOT silently
+ * rebind a UUID that is already linked to a different Discord account.
+ *
+ * Returns:
+ *  - `true` if the link was written (new link, or re-link to the SAME Discord).
+ *  - `false` if SQLite is unavailable or the write failed.
+ *  - `'conflict'` if the UUID is already linked to a DIFFERENT Discord id.
+ */
+export function upsertDiscordLinkSqlite(
+  uuid: string,
+  discordId: string,
+): boolean | 'conflict' {
+  const rwDb = getRwDb();
+  if (!rwDb) return false;
 
   try {
-    const rwDb = new DatabaseSync(env.sqlitePath);
+    // Hijack guard: refuse to silently rebind to a different Discord account.
+    try {
+      const existing = rwDb.prepare(
+        `SELECT discord_id FROM discord_links WHERE uuid = ?`
+      ).get(uuid) as { discord_id: string } | undefined;
+      if (existing && existing.discord_id && existing.discord_id !== discordId) {
+        return 'conflict';
+      }
+    } catch {
+      // discord_links table may not exist yet — fall through to the INSERT.
+    }
+
     rwDb.prepare(
       `INSERT INTO discord_links (uuid, discord_id, linked_at) VALUES (?, ?, datetime('now'))
        ON CONFLICT(uuid) DO UPDATE SET discord_id = excluded.discord_id, linked_at = datetime('now')`
     ).run(uuid, discordId);
-    // Also delete the consumed link code
-    try {
-      rwDb.prepare(`DELETE FROM link_codes WHERE uuid = ?`).run(uuid);
-    } catch {}
-    rwDb.close();
     return true;
   } catch (err) {
     logger.error({ err: { message: (err as Error).message } }, 'Failed to write discord link to SQLite');
     return false;
+  } finally {
+    rwDb.close();
   }
 }
 

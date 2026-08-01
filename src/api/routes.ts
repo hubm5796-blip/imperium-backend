@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import {
@@ -29,6 +30,7 @@ import {
   getPlayerTransactions,
   getUuidByDiscordId,
   getWaveLeaderboard,
+  isAlreadyLinked,
   upsertDiscordLink,
 } from '../db/pool.js';
 import {
@@ -56,10 +58,25 @@ api.use('*', globalRateLimit);
  * Returns true when the token matches; false otherwise (including when the
  * token is unset in dev). Callers decide how to treat a failure: 401 for
  * bot-only endpoints, or fall through to cookie auth for mixed endpoints.
+ *
+ * Compared with `timingSafeEqual` to avoid leaking the secret via timing
+ * side-channels (early-exit string comparison can be exploited to recover the
+ * token byte-by-byte).
  */
 function requireBotAuth(c: Context): boolean {
   const token = c.req.header('X-Bot-Token');
-  return !!env.botApiToken && token === env.botApiToken;
+  if (!env.botApiToken || !token) return false;
+  try {
+    const a = Buffer.from(env.botApiToken);
+    const b = Buffer.from(token);
+    // Length must match before timingSafeEqual (it throws on mismatched
+    // lengths); the length check itself is constant-time-safe because the
+    // secret length is not sensitive.
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 /* ------------------------------------------------------------------ Auth */
@@ -221,21 +238,31 @@ api.get('/player/profile', async (c) => {
     // PG not available — balances come from SQLite profile
   }
 
+  // Two profile shapes flow through here:
+  //  - PostgreSQL (getPlayerProfile): nested object
+  //      { rank: {level,name,progress}, prestige: {level,points}|null,
+  //        stats: {blocksMined,playTime,pvpKills,pvpDeaths,pvpTrophies,kdRatio}|null }
+  //  - SQLite fallback: flat fields
+  //      { rank, prestige, blocks_mined, play_time, pvp_kills, pvp_deaths, denarius, ... }
+  // Each accessor below prefers the nested PG path, then falls back to the flat
+  // SQLite field, then 0. Currency always comes from getPlayerBalances (above).
+  const p = profile as any;
+
   return c.json({
     uuid,
-    username: (profile as any).username ?? `Player`,
+    username: p.username ?? `Player`,
     discordId: queryDiscordId ?? c.var.user?.discordId ?? null,
-    rank: (profile as any).rank ?? (profile as any).rank_level ?? 0,
-    prestigeLevel: (profile as any).prestigeLevel ?? (profile as any).prestige_level ?? 0,
-    denarius: (profile as any).denarius ?? balances.denarius ?? 0,
-    auctoritas: (profile as any).auctoritas ?? balances.tokens ?? 0,
-    civitas: (profile as any).civitas ?? balances.beacons ?? 0,
-    aureus: (profile as any).aureus ?? balances.goldenCoins ?? 0,
-    blocksMined: (profile as any).blocksMined ?? (profile as any).blocks_mined ?? 0,
-    playtimeSeconds: Number((profile as any).playtimeSeconds ?? (profile as any).play_time ?? 0),
-    pvpKills: (profile as any).pvpKills ?? (profile as any).pvp_kills ?? 0,
-    pvpDeaths: (profile as any).pvpDeaths ?? (profile as any).pvp_deaths ?? 0,
-    trophies: (profile as any).trophies ?? (profile as any).pvp_trophies ?? 0,
+    rank: p.rank?.level ?? p.rank_level ?? p.rank ?? 0,
+    prestigeLevel: p.prestige?.level ?? p.prestige_level ?? p.prestige ?? 0,
+    denarius: balances.denarius ?? 0,
+    auctoritas: balances.tokens ?? 0,
+    civitas: balances.beacons ?? 0,
+    aureus: balances.goldenCoins ?? 0,
+    blocksMined: p.stats?.blocksMined ?? p.blocksMined ?? p.blocks_mined ?? 0,
+    playtimeSeconds: Number(p.stats?.playTime ?? p.playTime ?? p.play_time ?? 0),
+    pvpKills: p.stats?.pvpKills ?? p.pvpKills ?? p.pvp_kills ?? 0,
+    pvpDeaths: p.stats?.pvpDeaths ?? p.pvpDeaths ?? p.pvp_deaths ?? 0,
+    trophies: p.stats?.pvpTrophies ?? p.pvpTrophies ?? p.pvp_trophies ?? 0,
   });
 });
 
@@ -464,7 +491,25 @@ api.post('/link/initiate', requireAuth, async (c) => {
   });
 });
 
-/** POST /api/link/confirm — validate a code and persist the link. Called by the bot. */
+/**
+ * POST /api/link/confirm — validate a code and persist the link. Called by the bot.
+ *
+ * Security model (do NOT trust caller-supplied identity):
+ *  - The `code` is the only thing the caller must supply truthfully. It is a
+ *    single-use, time-limited secret minted by either the web flow (Redis,
+ *    carries the authenticated user's discordId) or the in-game flow (SQLite,
+ *    carries only the Minecraft UUID).
+ *  - For the Redis/web flow, the `discordId` comes from the stored code record
+ *    (set at `/link/initiate` by the authenticated user), NOT from the request
+ *    body. A body-supplied discordId that disagrees with the stored one is a
+ *    403. This prevents an attacker with the bot token from linking an
+ *    arbitrary Discord to an arbitrary Minecraft account.
+ *  - For the SQLite/in-game flow, the plugin's `link_codes` table has no
+ *    discord_id column, so the bot legitimately supplies discordId. The code is
+ *    consumed atomically (DELETE...RETURNING) so it can't be replayed.
+ *  - Either way, a hijack guard (409) prevents a UUID already linked to a
+ *    DIFFERENT Discord account from being silently rebound.
+ */
 api.post('/link/confirm', async (c) => {
   // Bot-only: persisting arbitrary account links must be authenticated.
   if (!requireBotAuth(c)) {
@@ -478,29 +523,59 @@ api.post('/link/confirm', async (c) => {
   }
 
   const code = (body.code ?? '').toUpperCase();
-  const discordId = body.discordId ?? '';
   if (!code) {
     return c.json({ error: 'Missing code' }, 400);
   }
-  if (!discordId) {
-    return c.json({ error: 'Missing discordId' }, 400);
-  }
 
-  // Step 1: Verify the code against the plugin's SQLite database (link_codes table).
-  // This is the code the player got from /discord link in-game.
-  const { verifyLinkCode } = await import('../db/sqlite.js');
-  const codeRecord = verifyLinkCode(code);
+  // Step 1: Atomically consume the code from the plugin's SQLite database
+  // (link_codes table). This is the code the player got from `/discord link`
+  // in-game. consumeLinkCode does a DELETE...RETURNING so two concurrent
+  // confirms can't both redeem the same code.
+  const { consumeLinkCode: consumeSqliteLinkCode, upsertDiscordLinkSqlite } =
+    await import('../db/sqlite.js');
+  const codeRecord = consumeSqliteLinkCode(code);
+
   if (!codeRecord) {
-    // Fall back to Redis-based verification if SQLite isn't available
+    // Fall back to Redis-based verification (web flow) if SQLite isn't available.
     const redisRecord = await consumeLinkCode(code);
     if (!redisRecord) {
-      return c.json({ error: 'Invalid or expired code. Run /discord link in-game for a fresh one.' }, 404);
+      return c.json(
+        { error: 'Invalid or expired code. Run /discord link in-game for a fresh one.' },
+        404,
+      );
     }
-    // Redis path
+
+    // Redis/web flow: the discordId was bound to the code at /link/initiate by
+    // the authenticated user. Use the STORED value — do NOT trust the body.
+    const discordId = redisRecord.discordId;
+    if (!discordId) {
+      // The code exists but carries no discordId (shouldn't happen for the web
+      // flow). Refuse rather than guess.
+      return c.json({ error: 'Code is not bound to a Discord account' }, 400);
+    }
+    // If the caller bothered to send a discordId, it MUST match the stored one.
+    if (body.discordId && body.discordId !== discordId) {
+      return c.json({ error: 'discordId does not match the code holder' }, 403);
+    }
+
     const uuid = body.uuid ?? redisRecord.uuid;
-    if (!uuid || !discordId) {
-      return c.json({ error: 'Cannot complete link' }, 400);
+    if (!uuid) {
+      return c.json({ error: 'Cannot complete link: missing uuid' }, 400);
     }
+
+    // Hijack guard: refuse to silently rebind an already-linked UUID.
+    try {
+      const existing = await isAlreadyLinked(uuid);
+      if (existing && existing !== discordId) {
+        return c.json(
+          { error: 'Minecraft account already linked to a different Discord' },
+          409,
+        );
+      }
+    } catch {
+      // PG unavailable — fall through; upsert will fail loudly if needed.
+    }
+
     try {
       await upsertDiscordLink(uuid, discordId);
       return c.json({ ok: true, linked: true, discordId, uuid, username: 'Player' });
@@ -509,10 +584,21 @@ api.post('/link/confirm', async (c) => {
     }
   }
 
-  // SQLite path: code is valid, now write the link directly to SQLite.
+  // SQLite/in-game flow: the code's discord_id column doesn't exist, so the bot
+  // supplies the Discord account to bind. The code is already consumed above.
   const uuid = codeRecord.uuid;
-  const { upsertDiscordLinkSqlite } = await import('../db/sqlite.js');
+  const discordId = body.discordId ?? '';
+  if (!discordId) {
+    return c.json({ error: 'Missing discordId' }, 400);
+  }
+
   const written = upsertDiscordLinkSqlite(uuid, discordId);
+  if (written === 'conflict') {
+    return c.json(
+      { error: 'Minecraft account already linked to a different Discord' },
+      409,
+    );
+  }
   if (written) {
     return c.json({
       ok: true,
@@ -522,7 +608,19 @@ api.post('/link/confirm', async (c) => {
       username: `Player`,
     });
   }
-  // Fallback: try PostgreSQL
+
+  // SQLite write unavailable — fall back to PostgreSQL (with hijack guard).
+  try {
+    const existing = await isAlreadyLinked(uuid);
+    if (existing && existing !== discordId) {
+      return c.json(
+        { error: 'Minecraft account already linked to a different Discord' },
+        409,
+      );
+    }
+  } catch {
+    // PG guard failed; attempt the write anyway.
+  }
   try {
     await upsertDiscordLink(uuid, discordId);
     return c.json({ ok: true, linked: true, discordId, uuid, username: 'Player' });
