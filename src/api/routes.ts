@@ -17,9 +17,11 @@ import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
 import { authRateLimit, globalRateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
+  getCachedSubscription,
   getEloLeaderboard,
   getLeaderboard,
   getParkourLeaderboard,
+  getPaynowCustomerId,
   getPlayerBalances,
   getPlayerFactions,
   getPlayerParkour,
@@ -28,7 +30,10 @@ import {
   getPlayerStats,
   getPlayerTransactions,
   getUuidByDiscordId,
+  getUuidByPaynowCustomerId,
   getWaveLeaderboard,
+  setPaynowCustomerId,
+  upsertCachedSubscription,
   upsertDiscordLink,
 } from '../db/pool.js';
 import {
@@ -37,6 +42,17 @@ import {
   getOnlinePlayerCount,
   sendCommandWithResponse,
 } from '../db/redis.js';
+import {
+  applyTierChange,
+  createCheckoutSession,
+  createCustomerToken,
+  findOrCreatePaynowCustomer,
+  getCustomerSubscriptions,
+  PaynowApiError,
+  previewTierChange,
+} from '../paynow/client.js';
+import { isDonorSubscriptionProduct } from '../paynow/constants.js';
+import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
 import type { AppContextVariables } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
@@ -549,6 +565,235 @@ api.delete('/link', async (c) => {
     return c.json({ error: 'No link found for this Discord account' }, 404);
   }
   return c.json({ discordId, unlinked: true });
+});
+
+/* ------------------------------------------------------------------ Store */
+
+const FRONTEND_URL = env.isProduction ? 'https://imperiummc.net' : 'http://localhost:3000';
+
+/** Resolve (and lazily create) the PayNow customer id for the calling player. */
+async function resolvePaynowCustomerId(uuid: string): Promise<string> {
+  const existing = await getPaynowCustomerId(uuid);
+  if (existing) return existing;
+  const customerId = await findOrCreatePaynowCustomer(uuid);
+  await setPaynowCustomerId(uuid, customerId);
+  return customerId;
+}
+
+/**
+ * GET /api/store/subscription — the caller's current donor subscription, if any.
+ * Reads from our webhook-fed cache first (fast, no PayNow round trip); falls
+ * back to a live Storefront API call if we've never seen a webhook for this
+ * player yet (e.g. their very first purchase, before the webhook lands).
+ */
+api.get('/store/subscription', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+
+  const cached = await getCachedSubscription(uuid);
+  if (cached) {
+    return c.json({
+      subscriptionId: cached.subscription_id,
+      productId: cached.product_id,
+      status: cached.status,
+    });
+  }
+
+  const customerId = await getPaynowCustomerId(uuid);
+  if (!customerId) {
+    return c.json({ subscription: null });
+  }
+
+  try {
+    const token = await createCustomerToken(customerId);
+    const subs = await getCustomerSubscriptions(token);
+    const active = subs.find((s) => isDonorSubscriptionProduct(String(s.product_id ?? '')));
+    if (!active) {
+      return c.json({ subscription: null });
+    }
+    return c.json({
+      subscriptionId: active.id,
+      productId: active.product_id,
+      status: active.status,
+    });
+  } catch (err) {
+    logger.error({ err, uuid }, 'Failed to fetch live PayNow subscription');
+    return c.json({ subscription: null });
+  }
+});
+
+/**
+ * POST /api/store/checkout — create a checkout session for one product and
+ * return the URL to redirect the browser to. `subscription` must match how
+ * the target product is configured in PayNow (subscription vs one-time).
+ */
+api.post('/store/checkout', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  let body: { productId?: string; subscription?: boolean };
+  try {
+    body = (await c.req.json()) as { productId?: string; subscription?: boolean };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body.productId) {
+    return c.json({ error: 'Missing productId' }, 400);
+  }
+
+  try {
+    const customerId = await resolvePaynowCustomerId(uuid);
+    const session = await createCheckoutSession({
+      customerId,
+      productId: body.productId,
+      subscription: Boolean(body.subscription),
+      returnUrl: `${FRONTEND_URL}/dashboard/subscription?checkout=success`,
+      cancelUrl: `${FRONTEND_URL}/store?checkout=canceled`,
+    });
+    return c.json({ url: session.url });
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      logger.warn({ err: err.body, status: err.status, uuid }, 'PayNow checkout creation failed');
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, uuid }, 'Checkout creation failed');
+    return c.json({ error: 'Failed to create checkout session' }, 500);
+  }
+});
+
+/**
+ * POST /api/store/subscription/preview-change — proration preview for
+ * switching the caller's active donor subscription to a different tier.
+ * No charge, no side effects.
+ */
+api.post('/store/subscription/preview-change', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  let body: { targetProductId?: string };
+  try {
+    body = (await c.req.json()) as { targetProductId?: string };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body.targetProductId || !isDonorSubscriptionProduct(body.targetProductId)) {
+    return c.json({ error: 'Invalid or unknown targetProductId' }, 400);
+  }
+
+  const customerId = await getPaynowCustomerId(uuid);
+  if (!customerId) {
+    return c.json({ error: 'No PayNow customer on record for this account' }, 404);
+  }
+
+  try {
+    const token = await createCustomerToken(customerId);
+    const result = await previewTierChange(token, body.targetProductId);
+    return c.json(result);
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, uuid }, 'Tier change preview failed');
+    return c.json({ error: 'Failed to preview tier change' }, 500);
+  }
+});
+
+/**
+ * POST /api/store/subscription/change — apply a tier change (upgrade or
+ * downgrade) to the caller's active donor subscription, with proration.
+ * Pass `verificationCode` when a prior call returned `pending_verification`.
+ */
+api.post('/store/subscription/change', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  let body: { targetProductId?: string; verificationCode?: string };
+  try {
+    body = (await c.req.json()) as { targetProductId?: string; verificationCode?: string };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body.targetProductId || !isDonorSubscriptionProduct(body.targetProductId)) {
+    return c.json({ error: 'Invalid or unknown targetProductId' }, 400);
+  }
+
+  const customerId = await getPaynowCustomerId(uuid);
+  if (!customerId) {
+    return c.json({ error: 'No PayNow customer on record for this account' }, 404);
+  }
+
+  try {
+    const token = await createCustomerToken(customerId);
+    const result = await applyTierChange(token, body.targetProductId, body.verificationCode);
+    return c.json(result);
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, uuid }, 'Tier change failed');
+    return c.json({ error: 'Failed to change tier' }, 500);
+  }
+});
+
+/* ---------------------------------------------------------- PayNow webhook */
+
+/**
+ * POST /api/webhooks/paynow — receives order/subscription/delivery events
+ * from PayNow. Signature-verified (HMAC-SHA256 over `timestamp.body`), not
+ * cookie/bot-token authenticated. Keeps `paynow_subscriptions` in sync so
+ * the dashboard can read current-tier state without calling PayNow live.
+ */
+api.post('/webhooks/paynow', async (c) => {
+  const rawBody = await c.req.text();
+  const verification = verifyPaynowWebhook({
+    rawBody,
+    signatureHeader: c.req.header('PayNow-Signature'),
+    timestampHeader: c.req.header('PayNow-Timestamp'),
+  });
+  if (!verification.valid) {
+    logger.warn({ reason: verification.reason }, 'Rejected PayNow webhook');
+    return c.json({ error: 'Invalid signature' }, 401);
+  }
+
+  let event: { event_type?: string; data?: Record<string, unknown> };
+  try {
+    event = JSON.parse(rawBody) as { event_type?: string; data?: Record<string, unknown> };
+  } catch {
+    return c.json({ error: 'Invalid JSON payload' }, 400);
+  }
+
+  const eventType = event.event_type ?? '';
+  const data = event.data ?? {};
+
+  try {
+    switch (eventType) {
+      case 'OnSubscriptionActivated':
+      case 'OnSubscriptionRenewed': {
+        const customerId = String(data['customer_id'] ?? (data['customer'] as { id?: string })?.id ?? '');
+        const subscriptionId = String(data['id'] ?? '');
+        const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
+        const status = String(data['status'] ?? 'active');
+        const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
+        if (uuid && subscriptionId && productId) {
+          await upsertCachedSubscription(uuid, subscriptionId, productId, status);
+        }
+        break;
+      }
+      case 'OnSubscriptionCanceled': {
+        const customerId = String(data['customer_id'] ?? (data['customer'] as { id?: string })?.id ?? '');
+        const subscriptionId = String(data['id'] ?? '');
+        const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
+        const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
+        if (uuid && subscriptionId && productId) {
+          await upsertCachedSubscription(uuid, subscriptionId, productId, 'canceled');
+        }
+        break;
+      }
+      default:
+        // Other event types (orders, refunds, chargebacks) don't need caching —
+        // rank grant/revoke is already handled by PayNow's product commands.
+        break;
+    }
+  } catch (err) {
+    // Log but still 200 — PayNow retries on non-2xx, and a cache-write failure
+    // isn't worth a retry storm; the next renewal event will self-heal it.
+    logger.error({ err, eventType }, 'Failed to process PayNow webhook');
+  }
+
+  return c.json({ ok: true });
 });
 
 /* --------------------------------------------------------------- Actions */

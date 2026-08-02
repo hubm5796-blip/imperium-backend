@@ -53,6 +53,21 @@ export const env = {
   isProduction: optional('NODE_ENV', 'development') === 'production',
   /** Path to the plugin's SQLite database (for link code verification when Redis is not available). */
   sqlitePath: optional('SQLITE_PATH', ''),
+  paynow: {
+    apiKey: required('PAYNOW_API_KEY'),
+    storeId: required('PAYNOW_STORE_ID'),
+    /**
+     * PayNow issues a distinct secret per webhook subscription (one per event
+     * type), so we register several (activated/renewed/canceled) all pointing
+     * at the same endpoint. Comma-separated; a valid signature against ANY of
+     * them is accepted.
+     */
+    webhookSecrets: required('PAYNOW_WEBHOOK_SECRETS')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    baseUrl: optional('PAYNOW_BASE_URL', 'https://api.paynow.gg'),
+  },
 } as const;
 
 export type Env = typeof env;

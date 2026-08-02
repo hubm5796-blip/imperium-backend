@@ -23,6 +23,16 @@ export interface DiscordLinkRow {
   uuid: string;
   discord_id: string;
   linked_at: Date;
+  paynow_customer_id: string | null;
+}
+
+/** Row in the `paynow_subscriptions` table — a cache of a player's active donor subscription. */
+export interface PaynowSubscriptionRow {
+  uuid: string;
+  subscription_id: string;
+  product_id: string;
+  status: string;
+  updated_at: Date;
 }
 
 /** Row in the `player_ranks` table. */

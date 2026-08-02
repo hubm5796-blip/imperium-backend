@@ -6,6 +6,7 @@ import {
   type CurrencyBalanceRow,
   type DiscordLinkRow,
   type EconomyTransactionRow,
+  type PaynowSubscriptionRow,
   type PlayerRankRow,
   type PlayerStatsRow,
   type PlayerProfile,
@@ -74,6 +75,66 @@ export async function deleteDiscordLinkByDiscordId(discordId: string): Promise<b
     [discordId],
   );
   return (result.rowCount ?? 0) > 0;
+}
+
+/* --------------------------------------------------------------- PayNow */
+
+/** Look up the PayNow customer id linked to a player, if we've seen them at checkout before. */
+export async function getPaynowCustomerId(uuid: string): Promise<string | null> {
+  const result = await query<Pick<DiscordLinkRow, 'paynow_customer_id'>>(
+    'SELECT paynow_customer_id FROM discord_links WHERE uuid = $1',
+    [uuid],
+  );
+  return result.rows[0]?.paynow_customer_id ?? null;
+}
+
+/** Persist the PayNow customer id for a linked player (set once found/created). */
+export async function setPaynowCustomerId(uuid: string, customerId: string): Promise<void> {
+  await query(
+    'UPDATE discord_links SET paynow_customer_id = $2 WHERE uuid = $1',
+    [uuid, customerId],
+  );
+}
+
+/**
+ * Cached view of a player's active donor subscription, kept in sync by the
+ * PayNow webhook handler. Used for fast dashboard reads without calling out
+ * to PayNow on every page load.
+ */
+export async function getCachedSubscription(uuid: string): Promise<PaynowSubscriptionRow | null> {
+  const result = await query<PaynowSubscriptionRow>(
+    'SELECT uuid, subscription_id, product_id, status, updated_at FROM paynow_subscriptions WHERE uuid = $1',
+    [uuid],
+  );
+  return result.rows[0] ?? null;
+}
+
+/** Upsert the cached subscription row for a player (called from the webhook handler). */
+export async function upsertCachedSubscription(
+  uuid: string,
+  subscriptionId: string,
+  productId: string,
+  status: string,
+): Promise<void> {
+  await query(
+    `INSERT INTO paynow_subscriptions (uuid, subscription_id, product_id, status, updated_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (uuid) DO UPDATE
+       SET subscription_id = EXCLUDED.subscription_id,
+           product_id = EXCLUDED.product_id,
+           status = EXCLUDED.status,
+           updated_at = EXCLUDED.updated_at`,
+    [uuid, subscriptionId, productId, status],
+  );
+}
+
+/** Look up a player's uuid by their PayNow customer id (webhooks carry customer id, not uuid). */
+export async function getUuidByPaynowCustomerId(customerId: string): Promise<string | null> {
+  const result = await query<Pick<DiscordLinkRow, 'uuid'>>(
+    'SELECT uuid FROM discord_links WHERE paynow_customer_id = $1',
+    [customerId],
+  );
+  return result.rows[0]?.uuid ?? null;
 }
 
 /**
