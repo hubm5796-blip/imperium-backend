@@ -14,6 +14,12 @@ export const RESPONSES_CHANNEL = 'ImperiumMC:responses';
 export const ONLINE_COUNT_KEY = 'ImperiumMC:online_count';
 /** Redis key prefix for link codes (link:initiate). */
 export const LINK_CODE_PREFIX = 'ImperiumMC:link_code:';
+/**
+ * Redis key prefix for in-game website-login codes. Written directly by the
+ * plugin's `/webcode` command (same Redis instance, shared credentials) —
+ * the backend only ever reads/consumes these, never generates them.
+ */
+export const LOGIN_CODE_PREFIX = 'ImperiumMC:login_code:';
 
 /**
  * Publisher client (used for sending commands). Kept separate from the
@@ -261,6 +267,28 @@ export async function consumeLinkCode(code: string): Promise<LinkCodeRecord | nu
   await redisPublisher.del(key);
   try {
     return JSON.parse(raw) as LinkCodeRecord;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Look up and consume (single-use delete) an in-game website-login code.
+ * The plugin stores the record as JSON `{uuid, username, createdAt}` under
+ * `ImperiumMC:login_code:<CODE>` with a 900s (15min) TTL. Returns null if the
+ * code was not found, already used, or expired.
+ */
+export async function consumeLoginCode(
+  code: string,
+): Promise<{ uuid: string; username?: string } | null> {
+  const key = `${LOGIN_CODE_PREFIX}${code.trim()}`;
+  const raw = await redisPublisher.get(key);
+  if (raw === null) return null;
+  await redisPublisher.del(key);
+  try {
+    const parsed = JSON.parse(raw) as { uuid?: string; username?: string };
+    if (!parsed.uuid) return null;
+    return { uuid: parsed.uuid, username: parsed.username };
   } catch {
     return null;
   }

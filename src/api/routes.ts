@@ -14,10 +14,11 @@ import {
   fetchDiscordUser,
 } from '../auth/discord.js';
 import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
-import { authRateLimit, globalRateLimit } from '../middleware/rateLimit.js';
+import { authRateLimit, globalRateLimit, webcodeRateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
   getCachedSubscription,
+  getDiscordIdByUuid,
   getEloLeaderboard,
   getLeaderboard,
   getParkourLeaderboard,
@@ -38,6 +39,7 @@ import {
 } from '../db/pool.js';
 import {
   consumeLinkCode,
+  consumeLoginCode,
   createLinkCode,
   getOnlinePlayerCount,
   sendCommandWithResponse,
@@ -121,6 +123,7 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     const discordUser = await fetchDiscordUser(token.access_token);
 
     const jwt = signJwt({
+      authMethod: 'discord',
       discordId: discordUser.id,
       discordUsername: discordUser.global_name ?? discordUser.username,
       discordAvatar: buildAvatarUrl(discordUser),
@@ -134,15 +137,77 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
   }
 });
 
-/** GET /api/auth/me — return the current Discord user + MC link status. */
+/**
+ * GET /api/auth/me — the current session, however it was established.
+ * A successful (2xx) response always means "logged in" — callers should
+ * branch on HTTP status, not on the presence of any particular field, since
+ * `discord` is legitimately null for an mc_code session with no linked
+ * Discord account.
+ */
 api.get('/auth/me', requireAuth, async (c) => {
   const user = c.var.user!;
   return c.json({
-    discordId: user.discordId,
-    username: user.discordUsername,
-    avatar: user.discordAvatar,
+    authMethod: user.authMethod,
+    discord: user.discordId
+      ? {
+          id: user.discordId,
+          username: user.discordUsername ?? null,
+          avatar: user.discordAvatar ?? null,
+        }
+      : null,
     mcLinked: c.var.mcUuid !== null,
     mcUuid: c.var.mcUuid,
+  });
+});
+
+/**
+ * POST /api/auth/webcode/verify — exchange an in-game 6-digit login code for
+ * a session. The code is generated and stored directly in Redis by the
+ * plugin's `/webcode` command (15min TTL, single-use); this endpoint just
+ * consumes it. If the underlying Minecraft account happens to already be
+ * linked to Discord, the resulting session carries that Discord identity too
+ * — otherwise it's a plain mc_code session (still usable everywhere except
+ * Discord-specific features, since `requireLinked` only cares about mcUuid).
+ */
+api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
+  let body: { code?: string };
+  try {
+    body = (await c.req.json()) as { code?: string };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const code = (body.code ?? '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    return c.json({ error: 'Code must be 6 digits' }, 400);
+  }
+
+  const record = await consumeLoginCode(code);
+  if (!record) {
+    return c.json({ error: 'Invalid or expired code' }, 404);
+  }
+
+  let discordId: string | null = null;
+  try {
+    discordId = await getDiscordIdByUuid(record.uuid);
+  } catch {
+    // Database hiccup — proceed as an unlinked mc_code session rather than
+    // failing the login outright; the player already proved MC ownership.
+    discordId = null;
+  }
+
+  const jwt = signJwt({
+    authMethod: 'mc_code',
+    mcUuid: record.uuid,
+    ...(discordId ? { discordId } : {}),
+  });
+  setCookie(c, AUTH_COOKIE_NAME, jwt, authCookieOptions());
+
+  return c.json({
+    ok: true,
+    uuid: record.uuid,
+    username: record.username ?? null,
+    linkedToDiscord: discordId !== null,
   });
 });
 
@@ -471,6 +536,9 @@ api.get('/server/features', (c) => {
 /** POST /api/link/initiate — generate a 6-char code stored in Redis (10 min TTL). */
 api.post('/link/initiate', requireAuth, async (c) => {
   const user = c.var.user!;
+  if (!user.discordId) {
+    return c.json({ error: 'This account has no Discord identity to link. Sign in with Discord first.' }, 400);
+  }
   const code = await createLinkCode({ discordId: user.discordId }, 600);
   return c.json({
     code,

@@ -10,7 +10,7 @@ export const JWT_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
 
 type SignPayload = Omit<JwtPayload, 'iat' | 'exp'>;
 
-/** Create a signed JWT containing the Discord identity. */
+/** Create a signed JWT for either a Discord session or an in-game-code session. */
 export function signJwt(payload: SignPayload): string {
   return jwt.sign(payload, env.jwtSecret, {
     algorithm: 'HS256',
@@ -30,10 +30,18 @@ export function verifyJwt(token: string | undefined | null): JwtPayload | null {
     const decoded = jwt.verify(token, env.jwtSecret, {
       algorithms: ['HS256'],
     }) as LibJwtPayload & SignPayload;
+    // authMethod is required on every token we sign; a token missing it was
+    // signed before this field existed (or is malformed) — treat as invalid
+    // rather than guessing a default that could mis-authorize a request.
+    if (decoded.authMethod !== 'discord' && decoded.authMethod !== 'mc_code') {
+      return null;
+    }
     return {
+      authMethod: decoded.authMethod,
       discordId: decoded.discordId,
       discordUsername: decoded.discordUsername,
       discordAvatar: decoded.discordAvatar ?? null,
+      mcUuid: decoded.mcUuid,
       iat: decoded.iat,
       exp: decoded.exp,
     };

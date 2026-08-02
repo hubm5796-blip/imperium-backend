@@ -21,7 +21,11 @@ export const attachUser: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const user = verifyJwt(token);
   c.set('user', user);
 
-  if (user) {
+  if (user?.authMethod === 'mc_code') {
+    // The UUID was baked into the token at login (the player proved it
+    // in-game); no DB lookup needed.
+    c.set('mcUuid', user.mcUuid ?? null);
+  } else if (user?.authMethod === 'discord' && user.discordId) {
     try {
       const uuid = await getUuidByDiscordId(user.discordId);
       c.set('mcUuid', uuid);

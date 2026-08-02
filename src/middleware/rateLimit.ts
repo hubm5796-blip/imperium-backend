@@ -76,3 +76,11 @@ export const globalRateLimit = rateLimit(60, 60_000, 'global');
 
 /** Stricter 10 req/min for auth endpoints. */
 export const authRateLimit = rateLimit(10, 60_000, 'auth');
+
+/**
+ * Very strict limit for the in-game login-code verification endpoint: a
+ * 6-digit code is only a 1,000,000-value keyspace, so this endpoint needs
+ * tighter protection than a normal auth route to keep brute-force guessing
+ * infeasible within a code's 15-minute lifetime.
+ */
+export const webcodeRateLimit = rateLimit(8, 5 * 60_000, 'webcode');
