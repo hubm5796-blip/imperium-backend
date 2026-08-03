@@ -160,11 +160,11 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
   if (error) {
     logger.warn({ error }, 'Discord OAuth2 returned an error');
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
-    return c.redirect('/login?error=oauth_denied', 302);
+    return c.redirect(`${frontendUrl()}/login?error=oauth_denied`, 302);
   }
   if (!code) {
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
-    return c.redirect('/login?error=missing_code', 302);
+    return c.redirect(`${frontendUrl()}/login?error=missing_code`, 302);
   }
 
   try {
@@ -182,7 +182,7 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
       discordAvatar: buildAvatarUrl(discordUser),
     });
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
-    return c.redirect(`${frontendUrl()}/auth/callback?session=${sessionCode}`, 302);
+    return c.redirect(`${frontendUrl()}/api/auth/callback?session=${sessionCode}`, 302);
   } catch (err) {
     logger.error({ err }, 'Discord OAuth2 callback failed');
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
