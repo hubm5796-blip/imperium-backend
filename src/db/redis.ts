@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
-import { Redis } from 'ioredis';
 import { nanoid } from 'nanoid';
 import { env } from '../env.js';
 import { logger } from '../utils/logger.js';
+import { redisCommand, redisSubscribeOnce, type RedisSocketConfig } from './redisSocket.js';
 import type { CommandEnvelope, ResponseEnvelope } from '../types/index.js';
 
 /** Redis channel used to push commands from the web panel to the plugin. */
@@ -21,75 +20,12 @@ export const LINK_CODE_PREFIX = 'ImperiumMC:link_code:';
  */
 export const LOGIN_CODE_PREFIX = 'ImperiumMC:login_code:';
 
-/**
- * Publisher client (used for sending commands). Kept separate from the
- * subscriber client because ioredis blocks a connection in subscribe mode.
- */
-export const redisPublisher = new Redis({
-  host: env.redis.host,
-  port: env.redis.port,
-  password: env.redis.password || undefined,
-  maxRetriesPerRequest: 3,
-  enableReadyCheck: true,
-  lazyConnect: false,
-});
-
-/**
- * Subscriber client (used for receiving responses). Lazily subscribed to the
- * responses channel on first use.
- */
-export const redisSubscriber = new Redis({
-  host: env.redis.host,
-  port: env.redis.port,
-  password: env.redis.password || undefined,
-  maxRetriesPerRequest: null,
-  enableReadyCheck: true,
-  lazyConnect: false,
-});
-
-redisPublisher.on('error', (err) => logger.warn({ err: { message: err.message } }, 'Redis publisher unavailable — in-game actions will be disabled until Redis is running'));
-redisSubscriber.on('error', (err) => logger.warn({ err: { message: err.message } }, 'Redis subscriber unavailable — response polling disabled until Redis is running'));
-
-/** In-flight response promises keyed by request_id. */
-const pendingResponses = new Map<
-  string,
-  {
-    resolve: (env: ResponseEnvelope) => void;
-    reject: (err: Error) => void;
-    timer: NodeJS.Timeout;
-  }
->();
-
-let responsesSubscribed = false;
-
-function ensureResponsesSubscribed(): void {
-  if (responsesSubscribed) return;
-  responsesSubscribed = true;
-  redisSubscriber.subscribe(RESPONSES_CHANNEL).catch((err) => {
-    logger.error({ err }, 'Failed to subscribe to responses channel');
-    responsesSubscribed = false;
-  });
-
-  redisSubscriber.on('message', (channel, message) => {
-    if (channel !== RESPONSES_CHANNEL) return;
-    let parsed: ResponseEnvelope;
-    try {
-      parsed = JSON.parse(message) as ResponseEnvelope;
-    } catch {
-      logger.warn({ message }, 'Could not parse response envelope');
-      return;
-    }
-    // The plugin publishes `status` ("OK"|"ERROR"), not `ok`. Derive `ok` so
-    // callers can use the boolean regardless of which envelope shape arrived.
-    if (typeof parsed.ok !== 'boolean') {
-      parsed.ok = parsed.status === 'OK';
-    }
-    const entry = pendingResponses.get(parsed.request_id);
-    if (!entry) return; // not waiting on this id (or already timed out)
-    pendingResponses.delete(parsed.request_id);
-    clearTimeout(entry.timer);
-    entry.resolve(parsed);
-  });
+function socketConfig(): RedisSocketConfig {
+  return {
+    host: env.redis.host,
+    port: env.redis.port,
+    password: env.redis.password || undefined,
+  };
 }
 
 /**
@@ -159,36 +95,64 @@ export async function sendCommand(
     payload,
   };
 
-  await redisPublisher.publish(COMMANDS_CHANNEL, JSON.stringify(envelope));
+  await redisCommand(socketConfig(), ['PUBLISH', COMMANDS_CHANNEL, JSON.stringify(envelope)]);
   return envelope;
+}
+
+function parseResponse(message: string): ResponseEnvelope | null {
+  let parsed: ResponseEnvelope;
+  try {
+    parsed = JSON.parse(message) as ResponseEnvelope;
+  } catch {
+    logger.warn({ message }, 'Could not parse response envelope');
+    return null;
+  }
+  // The plugin publishes `status` ("OK"|"ERROR"), not `ok`. Derive `ok` so
+  // callers can use the boolean regardless of which envelope shape arrived.
+  if (typeof parsed.ok !== 'boolean') {
+    parsed.ok = parsed.status === 'OK';
+  }
+  return parsed;
 }
 
 /**
  * Send a command and wait for the matching response on the responses channel.
  * Rejects if no response arrives within timeoutMs.
+ *
+ * Subscribes first, THEN publishes (via `onSubscribed`) — avoids the race
+ * where the plugin could respond before we're listening. Each call owns its
+ * own subscribe connection scoped to this one request/response pair, rather
+ * than a shared long-lived subscriber multiplexing by request_id (that model
+ * doesn't fit Workers' per-request execution well).
  */
 export async function sendCommandWithResponse(
   type: string,
   payload: Record<string, unknown>,
   timeoutMs = 5_000,
 ): Promise<ResponseEnvelope> {
-  ensureResponsesSubscribed();
+  let requestId = '';
+  const message = await redisSubscribeOnce(
+    socketConfig(),
+    RESPONSES_CHANNEL,
+    (raw) => {
+      const parsed = parseResponse(raw);
+      return parsed !== null && parsed.request_id === requestId;
+    },
+    timeoutMs,
+    async () => {
+      const envelope = await sendCommand(type, payload);
+      requestId = envelope.request_id;
+    },
+  );
 
-  const envelope = await sendCommand(type, payload);
-  const requestId = envelope.request_id;
-
-  return new Promise<ResponseEnvelope>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingResponses.delete(requestId);
-      reject(new Error(`Timed out waiting for response to ${type} (${requestId})`));
-    }, timeoutMs);
-
-    pendingResponses.set(requestId, {
-      resolve,
-      reject,
-      timer,
-    });
-  });
+  if (message === null) {
+    throw new Error(`Timed out waiting for response to ${type}`);
+  }
+  const parsed = parseResponse(message);
+  if (parsed === null) {
+    throw new Error(`Received unparseable response to ${type}`);
+  }
+  return parsed;
 }
 
 /**
@@ -199,28 +163,22 @@ export async function waitForResponse(
   requestId: string,
   timeoutMs = 5_000,
 ): Promise<ResponseEnvelope | null> {
-  ensureResponsesSubscribed();
-
-  // If the response already arrived it would already be resolved; this helper
-  // is for the waiting-from-scratch case.
-  return new Promise<ResponseEnvelope | null>((resolve) => {
-    const timer = setTimeout(() => {
-      pendingResponses.delete(requestId);
-      resolve(null);
-    }, timeoutMs);
-
-    pendingResponses.set(requestId, {
-      resolve: (env) => resolve(env),
-      reject: (err) => resolve(null),
-      timer,
-    });
-  });
+  const message = await redisSubscribeOnce(
+    socketConfig(),
+    RESPONSES_CHANNEL,
+    (raw) => {
+      const parsed = parseResponse(raw);
+      return parsed !== null && parsed.request_id === requestId;
+    },
+    timeoutMs,
+  );
+  return message === null ? null : parseResponse(message);
 }
 
 /** Online player count as published by the plugin, or null if unset. */
 export async function getOnlinePlayerCount(): Promise<number | null> {
-  const raw = await redisPublisher.get(ONLINE_COUNT_KEY);
-  if (raw === null) return null;
+  const raw = await redisCommand(socketConfig(), ['GET', ONLINE_COUNT_KEY]);
+  if (raw === null || typeof raw !== 'string') return null;
   const parsed = Number.parseInt(raw, 10);
   return Number.isNaN(parsed) ? null : parsed;
 }
@@ -246,12 +204,13 @@ export async function createLinkCode(
 ): Promise<string> {
   const code = generateLinkCode();
   const record: LinkCodeRecord = { ...partial, createdAt: Date.now() };
-  await redisPublisher.set(
+  await redisCommand(socketConfig(), [
+    'SET',
     `${LINK_CODE_PREFIX}${code}`,
     JSON.stringify(record),
     'EX',
     ttlSeconds,
-  );
+  ]);
   return code;
 }
 
@@ -261,10 +220,10 @@ export async function createLinkCode(
  */
 export async function consumeLinkCode(code: string): Promise<LinkCodeRecord | null> {
   const key = `${LINK_CODE_PREFIX}${code.toUpperCase()}`;
-  const raw = await redisPublisher.get(key);
-  if (raw === null) return null;
+  const raw = await redisCommand(socketConfig(), ['GET', key]);
+  if (raw === null || typeof raw !== 'string') return null;
   // Delete immediately so the code is single-use.
-  await redisPublisher.del(key);
+  await redisCommand(socketConfig(), ['DEL', key]);
   try {
     return JSON.parse(raw) as LinkCodeRecord;
   } catch {
@@ -282,9 +241,9 @@ export async function consumeLoginCode(
   code: string,
 ): Promise<{ uuid: string; username?: string } | null> {
   const key = `${LOGIN_CODE_PREFIX}${code.trim()}`;
-  const raw = await redisPublisher.get(key);
-  if (raw === null) return null;
-  await redisPublisher.del(key);
+  const raw = await redisCommand(socketConfig(), ['GET', key]);
+  if (raw === null || typeof raw !== 'string') return null;
+  await redisCommand(socketConfig(), ['DEL', key]);
   try {
     const parsed = JSON.parse(raw) as { uuid?: string; username?: string };
     if (!parsed.uuid) return null;
@@ -303,14 +262,4 @@ function generateLinkCode(length = 6): string {
     out += LINK_CODE_ALPHABET[bytes[i]! % LINK_CODE_ALPHABET.length];
   }
   return out;
-}
-
-/** Used only by tests/helpers to flush in-flight state. */
-export async function __flushPendingForTests(): Promise<void> {
-  for (const [, entry] of pendingResponses) {
-    clearTimeout(entry.timer);
-    entry.reject(new Error('flushed'));
-  }
-  pendingResponses.clear();
-  await delay(0);
 }

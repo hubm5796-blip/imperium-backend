@@ -6,7 +6,6 @@ import { env } from './env.js';
 import { api } from './api/routes.js';
 import { startBot } from './bot/index.js';
 import { pool } from './db/pool.js';
-import { redisPublisher, redisSubscriber } from './db/redis.js';
 import { logger } from './utils/logger.js';
 import type { AppContextVariables } from './types/index.js';
 
@@ -74,11 +73,9 @@ app.notFound((c) => c.json({ error: 'Not Found' }, 404));
 async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'Shutting down...');
   try {
-    await Promise.all([
-      pool.end(),
-      redisPublisher.quit(),
-      redisSubscriber.quit(),
-    ]);
+    // Redis is now a per-call connection (db/redisSocket.ts) — nothing
+    // persistent to close there. Only the Postgres pool needs draining.
+    await pool.end();
   } catch (err) {
     logger.error({ err }, 'Error during shutdown');
   }
