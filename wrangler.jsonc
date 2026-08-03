@@ -1,7 +1,11 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"main": "src/worker.ts",
-	"name": "imperium-backend",
+	// Matches the existing "imperium-backend-prod" Worker (dashboard name) so
+	// Cloudflare's Git integration deploys new commits to that same Worker —
+	// it already owns the api.imperiummc.net custom domain route, so nothing
+	// else needs to change there once this connects.
+	"name": "imperium-backend-prod",
 	"compatibility_date": "2026-08-01",
 	"compatibility_flags": [
 		"nodejs_compat"
@@ -14,16 +18,10 @@
 			"binding": "HYPERDRIVE",
 			"id": "REPLACE_WITH_REAL_HYPERDRIVE_ID"
 		}
-	],
-	// Custom domain — once this Worker is verified against its *.workers.dev
-	// URL, reassign api.imperiummc.net here (replacing the stale
-	// imperium-backend-prod Worker's route) to cut production traffic over.
-	"routes": [
-		{
-			"pattern": "api.imperiummc.net",
-			"custom_domain": true
-		}
 	]
+	// Routes/custom domain are already configured on imperium-backend-prod in
+	// the dashboard (api.imperiummc.net) — left there rather than duplicated
+	// here, since this file no longer needs to declare or change them.
 	// All other config (DISCORD_CLIENT_ID, JWT_SECRET, PAYNOW_API_KEY, etc.)
 	// is set via `wrangler secret put <NAME>` — never committed here.
 }
