@@ -42,11 +42,23 @@ export interface WorkerBindings {
 const app = createApp();
 
 export default {
-  async fetch(request: Request, bindings: WorkerBindings): Promise<Response> {
+  async fetch(
+    request: Request,
+    bindings: WorkerBindings,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
     // Idempotent per warm isolate — only the first request on a given
     // isolate actually builds env/opens the pool; later ones reuse both.
     initEnvFromBindings(bindings as unknown as Record<string, unknown>);
     initPool(bindings.HYPERDRIVE.connectionString);
-    return app.fetch(request);
+    // Forwarding bindings+ctx is required, not cosmetic: without a real
+    // ExecutionContext, c.executionCtx.waitUntil() in interactions.ts has
+    // nothing to attach to. Its catch block assumes that means "running
+    // under Node" and silently no-ops — but under real Workers it means the
+    // isolate tears down all in-flight work the instant this response
+    // returns, killing any deferred command (deferReply + later editReply)
+    // before the editReply ever runs. That's what left every data-backed
+    // slash command stuck on Discord's "thinking..." forever.
+    return app.fetch(request, bindings, ctx);
   },
 };
