@@ -12,25 +12,52 @@ interface SlidingWindow {
 const buckets = new Map<string, Map<string, SlidingWindow>>();
 
 /**
+ * Default IP resolution: `CF-Connecting-IP` is set by Cloudflare's edge and
+ * cannot be spoofed by the client — Cloudflare strips any client-supplied
+ * value for this header before it reaches the origin. `X-Forwarded-For`/
+ * `X-Real-IP`, by contrast, are plain client-controlled headers unless a
+ * trusted proxy in front of this server is known to overwrite them; trusting
+ * the first hop of an unauthenticated X-Forwarded-For lets an attacker claim
+ * a fresh IP on every request and bypass rate limiting entirely. Prefer the
+ * Cloudflare header; only fall back to the spoofable ones as a weaker
+ * heuristic when it's absent (e.g. local dev, or a non-Cloudflare deploy —
+ * in which case rate limiting is only as strong as whatever sits in front of
+ * this process actually sanitizing those headers).
+ */
+function defaultResolveIp(c: { req: { header: (name: string) => string | undefined } }): string {
+  return (
+    c.req.header('cf-connecting-ip') ??
+    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+    c.req.header('x-real-ip') ??
+    'unknown'
+  );
+}
+
+/**
  * Build a sliding-window rate limiter middleware.
  *
  * @param limit      Max requests allowed in the window.
  * @param windowMs   Window duration in milliseconds.
  * @param keyPrefix  Namespaces the counter so different limits don't collide
  *                   (e.g. "auth" vs "global").
+ * @param resolveIp  Optional override for how the caller's IP is determined.
+ *                    Only pass a custom resolver for routes that themselves
+ *                    verify the header it trusts is authentic (e.g. a
+ *                    bot/service-auth-gated route trusting a header only its
+ *                    known caller sets) — never widen trust on a publicly
+ *                    reachable route, that just re-opens the spoofing gap
+ *                    the default resolver exists to close.
  */
 export function rateLimit(
   limit: number,
   windowMs: number,
   keyPrefix: string,
+  resolveIp: (c: Parameters<MiddlewareHandler<RL>>[0]) => string = defaultResolveIp,
 ): MiddlewareHandler<RL> {
   const now = () => Date.now();
 
   return async (c, next) => {
-    const ip =
-      c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
-      c.req.header('x-real-ip') ??
-      'unknown';
+    const ip = resolveIp(c);
 
     const bucketKey = `${keyPrefix}:${ip}`;
     let bucket = buckets.get(bucketKey);

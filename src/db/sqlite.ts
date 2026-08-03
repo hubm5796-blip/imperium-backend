@@ -1,7 +1,9 @@
 /**
- * Direct SQLite reader for the plugin's database.
- * Used for link code verification when Redis is not available.
- * READ-ONLY — never writes to the game database.
+ * Direct SQLite reader for the plugin's database, used as a fallback data
+ * source for profile/leaderboard reads when Postgres is unavailable.
+ * READ-ONLY — never writes to the game database. (Link-code verification
+ * used to have its own SQL table here; that's gone — both the in-game and
+ * website linking flows go through Redis now, see src/db/redis.ts.)
  */
 import { DatabaseSync } from 'node:sqlite';
 import { env } from '../env.js';
@@ -21,23 +23,6 @@ function getDb(): DatabaseSync | null {
     }
   }
   return db;
-}
-
-/** Verify a link code and return the Minecraft UUID it belongs to, or null if invalid/expired. */
-export function verifyLinkCode(code: string): { uuid: string } | null {
-  const sqlite = getDb();
-  if (!sqlite) return null;
-
-  try {
-    const row = sqlite.prepare(
-      `SELECT uuid FROM link_codes WHERE code = ? AND expires_at > datetime('now')`
-    ).get(code.toUpperCase()) as { uuid: string } | undefined;
-
-    return row ? { uuid: row.uuid } : null;
-  } catch {
-    // Table might not exist yet
-    return null;
-  }
 }
 
 /** Check if a Minecraft UUID is already linked to a Discord account. */
@@ -131,29 +116,6 @@ export function getPlayerProfile(uuid: string): {
   } catch (err) {
     logger.error({ err: { message: (err as Error).message } }, 'SQLite profile query failed');
     return null;
-  }
-}
-
-/** Write a discord link directly to the SQLite database (for environments without PostgreSQL). */
-export function upsertDiscordLinkSqlite(uuid: string, discordId: string): boolean {
-  // We need read-write access for this. Reopen the DB in read-write mode.
-  if (!env.sqlitePath) return false;
-
-  try {
-    const rwDb = new DatabaseSync(env.sqlitePath);
-    rwDb.prepare(
-      `INSERT INTO discord_links (uuid, discord_id, linked_at) VALUES (?, ?, datetime('now'))
-       ON CONFLICT(uuid) DO UPDATE SET discord_id = excluded.discord_id, linked_at = datetime('now')`
-    ).run(uuid, discordId);
-    // Also delete the consumed link code
-    try {
-      rwDb.prepare(`DELETE FROM link_codes WHERE uuid = ?`).run(uuid);
-    } catch {}
-    rwDb.close();
-    return true;
-  } catch (err) {
-    logger.error({ err: { message: (err as Error).message } }, 'Failed to write discord link to SQLite');
-    return false;
   }
 }
 

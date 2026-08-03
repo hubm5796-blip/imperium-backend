@@ -1,4 +1,4 @@
-import { Hono, type Context } from 'hono';
+import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import {
   AUTH_COOKIE_NAME,
@@ -14,7 +14,7 @@ import {
   fetchDiscordUser,
 } from '../auth/discord.js';
 import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
-import { authRateLimit, globalRateLimit, webcodeRateLimit } from '../middleware/rateLimit.js';
+import { authRateLimit, globalRateLimit, rateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
   getCachedSubscription,
@@ -79,6 +79,31 @@ function requireBotAuth(c: Context): boolean {
   const token = c.req.header('X-Bot-Token');
   return !!env.botApiToken && token === env.botApiToken;
 }
+
+/**
+ * Rate limiter for /auth/webcode/verify. This route is bot-token-gated (only
+ * imperium-frontend's own edge proxy can call it — see the route below), so
+ * `X-Original-Client-IP` is trustworthy here specifically: an attacker can't
+ * reach this route at all without the bot token, and the only party that
+ * holds it (our own frontend) sets that header from the *real* incoming
+ * request's Cloudflare-verified `CF-Connecting-IP`, not from anything an end
+ * user controls directly. Falls back to the normal spoofable-header chain
+ * for requests that (somehow) reach here without valid bot auth — they'll be
+ * rejected by the route handler anyway, but still get bucketed sanely rather
+ * than colliding into a single 'unknown' bucket.
+ */
+const webcodeRateLimit = rateLimit(8, 5 * 60_000, 'webcode', (c) => {
+  if (requireBotAuth(c)) {
+    const forwarded = c.req.header('x-original-client-ip');
+    if (forwarded) return forwarded;
+  }
+  return (
+    c.req.header('cf-connecting-ip') ??
+    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+    c.req.header('x-real-ip') ??
+    'unknown'
+  );
+});
 
 /* ------------------------------------------------------------------ Auth */
 
@@ -168,8 +193,19 @@ api.get('/auth/me', requireAuth, async (c) => {
  * linked to Discord, the resulting session carries that Discord identity too
  * — otherwise it's a plain mc_code session (still usable everywhere except
  * Discord-specific features, since `requireLinked` only cares about mcUuid).
+ *
+ * Bot-token gated: only imperium-frontend's own edge proxy
+ * (src/app/api/auth/webcode/verify) calls this directly. It doesn't set a
+ * browser cookie of its own consequence — the frontend signs the session
+ * that actually matters, on the domain that actually matters, from this
+ * response. Gating it this way also means the strict rate limit above can
+ * trust the caller-forwarded real client IP instead of just seeing "the
+ * frontend" for every request.
  */
 api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   let body: { code?: string };
   try {
     body = (await c.req.json()) as { code?: string };
@@ -207,7 +243,11 @@ api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
     ok: true,
     uuid: record.uuid,
     username: record.username ?? null,
-    linkedToDiscord: discordId !== null,
+    // The real id, not just a boolean — the frontend's edge auth route builds
+    // its own session from this response (see imperium-frontend's
+    // src/app/api/auth/webcode/verify/route.ts), so it needs the value, not
+    // just whether one exists.
+    discordId,
   });
 });
 
@@ -570,46 +610,16 @@ api.post('/link/confirm', async (c) => {
     return c.json({ error: 'Missing discordId' }, 400);
   }
 
-  // Step 1: Verify the code against the plugin's SQLite database (link_codes table).
-  // This is the code the player got from /discord link in-game.
-  const { verifyLinkCode } = await import('../db/sqlite.js');
-  const codeRecord = verifyLinkCode(code);
-  if (!codeRecord) {
-    // Fall back to Redis-based verification if SQLite isn't available
-    const redisRecord = await consumeLinkCode(code);
-    if (!redisRecord) {
-      return c.json({ error: 'Invalid or expired code. Run /discord link in-game for a fresh one.' }, 404);
-    }
-    // Redis path
-    const uuid = body.uuid ?? redisRecord.uuid;
-    if (!uuid || !discordId) {
-      return c.json({ error: 'Cannot complete link' }, 400);
-    }
-    try {
-      await upsertDiscordLink(uuid, discordId);
-      return c.json({ ok: true, linked: true, discordId, uuid, username: 'Player' });
-    } catch {
-      return c.json({ error: 'Failed to persist link' }, 500);
-    }
+  // The code was written to Redis by the plugin's `/discord link` command
+  // (ImperiumMC:link_code:<CODE> -> {uuid}, 10min TTL) — GET+DEL, single-use.
+  const record = await consumeLinkCode(code);
+  if (!record?.uuid) {
+    return c.json({ error: 'Invalid or expired code. Run /discord link in-game for a fresh one.' }, 404);
   }
 
-  // SQLite path: code is valid, now write the link directly to SQLite.
-  const uuid = codeRecord.uuid;
-  const { upsertDiscordLinkSqlite } = await import('../db/sqlite.js');
-  const written = upsertDiscordLinkSqlite(uuid, discordId);
-  if (written) {
-    return c.json({
-      ok: true,
-      linked: true,
-      discordId,
-      uuid,
-      username: `Player`,
-    });
-  }
-  // Fallback: try PostgreSQL
   try {
-    await upsertDiscordLink(uuid, discordId);
-    return c.json({ ok: true, linked: true, discordId, uuid, username: 'Player' });
+    await upsertDiscordLink(record.uuid, discordId);
+    return c.json({ ok: true, linked: true, discordId, uuid: record.uuid });
   } catch {
     return c.json({ error: 'Failed to persist link' }, 500);
   }
@@ -639,6 +649,34 @@ api.delete('/link', async (c) => {
 
 const FRONTEND_URL = env.isProduction ? 'https://imperiummc.net' : 'http://localhost:3000';
 
+/**
+ * Auth gate for /store/* routes. Real browser traffic never carries this
+ * backend's own session cookie — the live session lives on imperium-frontend's
+ * edge-native cookie (a different domain, a different JWT implementation
+ * entirely). imperium-frontend verifies that session and the caller's linked
+ * status itself, then calls in here with the bot token plus the
+ * already-verified `X-Mc-Uuid` header. Session-cookie auth is kept only as a
+ * fallback so these routes remain directly testable against the backend.
+ */
+const storeAuth: MiddlewareHandler<ApiEnv> = async (c, next) => {
+  if (requireBotAuth(c)) {
+    const uuid = c.req.header('x-mc-uuid');
+    if (!uuid) {
+      return c.json({ error: 'Missing X-Mc-Uuid header' }, 400);
+    }
+    c.set('mcUuid', uuid);
+    await next();
+    return;
+  }
+  if (!c.var.user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  if (!c.var.mcUuid) {
+    return c.json({ error: 'Minecraft account not linked', linkRequired: true }, 403);
+  }
+  await next();
+};
+
 /** Resolve (and lazily create) the PayNow customer id for the calling player. */
 async function resolvePaynowCustomerId(uuid: string): Promise<string> {
   const existing = await getPaynowCustomerId(uuid);
@@ -654,7 +692,7 @@ async function resolvePaynowCustomerId(uuid: string): Promise<string> {
  * back to a live Storefront API call if we've never seen a webhook for this
  * player yet (e.g. their very first purchase, before the webhook lands).
  */
-api.get('/store/subscription', requireAuth, requireLinked, async (c) => {
+api.get('/store/subscription', storeAuth, async (c) => {
   const uuid = c.var.mcUuid!;
 
   const cached = await getCachedSubscription(uuid);
@@ -694,7 +732,7 @@ api.get('/store/subscription', requireAuth, requireLinked, async (c) => {
  * return the URL to redirect the browser to. `subscription` must match how
  * the target product is configured in PayNow (subscription vs one-time).
  */
-api.post('/store/checkout', requireAuth, requireLinked, async (c) => {
+api.post('/store/checkout', storeAuth, async (c) => {
   const uuid = c.var.mcUuid!;
   let body: { productId?: string; subscription?: boolean };
   try {
@@ -731,7 +769,7 @@ api.post('/store/checkout', requireAuth, requireLinked, async (c) => {
  * switching the caller's active donor subscription to a different tier.
  * No charge, no side effects.
  */
-api.post('/store/subscription/preview-change', requireAuth, requireLinked, async (c) => {
+api.post('/store/subscription/preview-change', storeAuth, async (c) => {
   const uuid = c.var.mcUuid!;
   let body: { targetProductId?: string };
   try {
@@ -766,7 +804,7 @@ api.post('/store/subscription/preview-change', requireAuth, requireLinked, async
  * downgrade) to the caller's active donor subscription, with proration.
  * Pass `verificationCode` when a prior call returned `pending_verification`.
  */
-api.post('/store/subscription/change', requireAuth, requireLinked, async (c) => {
+api.post('/store/subscription/change', storeAuth, async (c) => {
   const uuid = c.var.mcUuid!;
   let body: { targetProductId?: string; verificationCode?: string };
   try {

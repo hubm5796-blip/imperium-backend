@@ -18,7 +18,7 @@ export const linkCommand: BotCommand = {
       .addStringOption((o) =>
         o
           .setName('code')
-          .setDescription('The 6-character code from /link in-game')
+          .setDescription('The 6-character code from /discord link in-game')
           .setRequired(true)
           .setMinLength(6)
           .setMaxLength(6),
@@ -34,7 +34,7 @@ export const linkCommand: BotCommand = {
     const result = await confirmLink(discordId, code);
     if (!result.ok) {
       let message = result.message;
-      if (result.status === 404) message = 'Invalid or expired code. Run `/link` in-game for a fresh one.';
+      if (result.status === 404) message = 'Invalid or expired code. Run `/discord link` in-game for a fresh one.';
       else if (result.status === 409) message = 'This Discord account is already linked, or the code belongs to a linked account.';
       await interaction.editReply({ embeds: [errorEmbed(message, 'Link failed')] });
       return;
