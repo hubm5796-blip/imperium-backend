@@ -29,7 +29,20 @@
 			"pattern": "api.imperiummc.net",
 			"custom_domain": true
 		}
-	]
-	// All other config (DISCORD_CLIENT_ID, JWT_SECRET, PAYNOW_API_KEY, etc.)
-	// is set via `wrangler secret put <NAME>` — never committed here.
+	],
+	// Non-secret values. Declared here (not just the dashboard) because
+	// Workers Builds treats this file as authoritative on every Git-triggered
+	// deploy — a plaintext var set ONLY via the dashboard gets silently wiped
+	// on the next deploy unless it's declared here or the deploy passes
+	// --keep-vars. This is what caused "Missing required environment
+	// variable: DISCORD_CLIENT_ID" despite the dashboard showing it set.
+	"vars": {
+		"DISCORD_CLIENT_ID": "1520285608906330293",
+		"NODE_ENV": "production"
+	}
+	// True secrets (JWT_SECRET, PAYNOW_API_KEY, DISCORD_CLIENT_SECRET,
+	// DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, WEBPANEL_HMAC_SECRET,
+	// BOT_API_TOKEN, REDIS_PASSWORD, PAYNOW_WEBHOOK_SECRETS, etc.) still go
+	// through `wrangler secret put <NAME>` — those DO persist across Git
+	// deploys independently of this file, unlike plaintext dashboard vars.
 }
