@@ -18,10 +18,17 @@
 			"binding": "HYPERDRIVE",
 			"id": "REPLACE_WITH_REAL_HYPERDRIVE_ID"
 		}
+	],
+	// Matches the route already bound to imperium-backend-prod in the
+	// dashboard. Declared here too because Cloudflare's Git-integration
+	// deploys treat this file as authoritative and flag (or would overwrite)
+	// any drift from what's actually configured on the Worker.
+	"routes": [
+		{
+			"pattern": "api.imperiummc.net",
+			"custom_domain": true
+		}
 	]
-	// Routes/custom domain are already configured on imperium-backend-prod in
-	// the dashboard (api.imperiummc.net) — left there rather than duplicated
-	// here, since this file no longer needs to declare or change them.
 	// All other config (DISCORD_CLIENT_ID, JWT_SECRET, PAYNOW_API_KEY, etc.)
 	// is set via `wrangler secret put <NAME>` — never committed here.
 }
