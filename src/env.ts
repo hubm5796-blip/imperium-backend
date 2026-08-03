@@ -25,6 +25,8 @@ export interface EnvShape {
     host: string;
     port: number;
     password: string;
+    /** Managed providers (Upstash, etc.) require TLS; a bare requirepass self-host typically doesn't use it. */
+    tls: boolean;
   };
   webpanelHmacSecret: string;
   /**
@@ -68,6 +70,11 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     }
     return parsed;
   }
+  function optionalBool(key: string, fallback: boolean): boolean {
+    const raw = get(key);
+    if (raw === undefined || raw === '') return fallback;
+    return raw === 'true' || raw === '1';
+  }
 
   const nodeEnv = optional('NODE_ENV', 'development');
 
@@ -85,6 +92,7 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
       host: optional('REDIS_HOST', 'localhost'),
       port: optionalInt('REDIS_PORT', 6379),
       password: optional('REDIS_PASSWORD'),
+      tls: optionalBool('REDIS_TLS', false),
     },
     webpanelHmacSecret: required('WEBPANEL_HMAC_SECRET'),
     botApiToken: optional('BOT_API_TOKEN'),

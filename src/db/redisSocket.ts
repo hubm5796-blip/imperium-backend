@@ -32,6 +32,8 @@ export interface RedisSocketConfig {
   host: string;
   port: number;
   password?: string;
+  /** Upstash (and most managed Redis providers) require TLS, no exceptions; a bare requirepass self-host typically doesn't use it. */
+  tls?: boolean;
 }
 
 const CRLF = '\r\n';
@@ -149,7 +151,10 @@ export async function redisCommand(
   args: Array<string | number>,
 ): Promise<RespValue> {
   const connect = await getConnect();
-  const socket = connect({ hostname: config.host, port: config.port });
+  const socket = connect(
+    { hostname: config.host, port: config.port },
+    config.tls ? { secureTransport: 'on', allowHalfOpen: false } : { allowHalfOpen: false },
+  );
   try {
     await socket.opened;
     const writer = socket.writable.getWriter();
@@ -189,7 +194,10 @@ export async function redisSubscribeOnce(
   onSubscribed?: () => Promise<void>,
 ): Promise<string | null> {
   const connect = await getConnect();
-  const socket = connect({ hostname: config.host, port: config.port });
+  const socket = connect(
+    { hostname: config.host, port: config.port },
+    config.tls ? { secureTransport: 'on', allowHalfOpen: false } : { allowHalfOpen: false },
+  );
   const deadline = Date.now() + timeoutMs;
 
   try {
