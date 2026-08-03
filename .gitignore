@@ -6,3 +6,6 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+.dev.vars
+.dev.vars.*
+.wrangler/

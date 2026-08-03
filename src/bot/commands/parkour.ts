@@ -1,5 +1,5 @@
 /** /parkour — show parkour courses, how it works, and best times. */
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder } from '@discordjs/builders';
 import { COLORS } from '../config.js';
 import type { BotCommand } from './_shared.js';
 

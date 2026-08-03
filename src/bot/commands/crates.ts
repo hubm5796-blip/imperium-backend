@@ -1,5 +1,5 @@
 /** /crates — list all available crate types. */
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder } from '@discordjs/builders';
 import type { BotCommand } from './_shared.js';
 
 export const cratesCommand: BotCommand = {

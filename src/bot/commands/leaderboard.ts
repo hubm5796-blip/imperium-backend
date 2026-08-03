@@ -1,35 +1,87 @@
-/** /leaderboard <type> — top 10 players, paginated 10 per page. */
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  type ChatInputCommandInteraction,
-  ComponentType,
-  SlashCommandBuilder,
-} from 'discord.js';
+/**
+ * /leaderboard <type> — top 10 players, paginated 10 per page.
+ *
+ * Pagination is stateless: each button's custom_id encodes the leaderboard
+ * type and target page directly (`lb:<type>:<page>`). The old discord.js
+ * version used a live MessageComponentCollector — a gateway-only feature
+ * (it listens for follow-up interactions over the WebSocket connection).
+ * HTTP Interactions delivers each button click as its own independent
+ * webhook call with no shared in-memory state, so the button itself has to
+ * carry everything needed to render the next page. interactions.ts routes
+ * any component interaction whose custom_id starts with "lb:" here.
+ */
+import { ActionRowBuilder, ButtonBuilder, SlashCommandBuilder } from '@discordjs/builders';
+import { ButtonStyle } from 'discord-api-types/v10';
 import { getLeaderboard } from '../apiClient.js';
 import { leaderboardEmbed, errorEmbed } from '../embeds.js';
+import type { InteractionShim } from '../interactionShim.js';
 import type { BotCommand } from './_shared.js';
 
 const TYPES = ['denarius', 'blocks', 'prestige', 'playtime'] as const;
 type LeaderboardType = (typeof TYPES)[number];
 
-const PREV_ID = 'lb_prev';
-const NEXT_ID = 'lb_next';
+const PAGE_SIZE = 10;
+const CUSTOM_ID_PREFIX = 'lb:';
 
-function row(page: number, hasNext: boolean): ActionRowBuilder<ButtonBuilder> {
+function isLeaderboardType(value: string): value is LeaderboardType {
+  return (TYPES as readonly string[]).includes(value);
+}
+
+function row(type: LeaderboardType, page: number, hasNext: boolean) {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(PREV_ID)
+      .setCustomId(`${CUSTOM_ID_PREFIX}${type}:${page - 1}`)
       .setLabel('◀ Prev')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(page === 0),
     new ButtonBuilder()
-      .setCustomId(NEXT_ID)
+      .setCustomId(`${CUSTOM_ID_PREFIX}${type}:${page + 1}`)
       .setLabel('Next ▶')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(!hasNext),
   );
+}
+
+async function loadPage(type: LeaderboardType, page: number) {
+  const result = await getLeaderboard(type, PAGE_SIZE);
+  if (!result.ok) return result;
+  // Slice client-side for pagination; backend returns up to PAGE_SIZE.
+  const start = page * PAGE_SIZE;
+  return {
+    ok: true as const,
+    data: { ...result.data, entries: result.data.entries.slice(start, start + PAGE_SIZE) },
+  };
+}
+
+/** True if this component interaction belongs to leaderboard pagination. */
+export function isLeaderboardComponent(customId: string): boolean {
+  return customId.startsWith(CUSTOM_ID_PREFIX);
+}
+
+/** Handle a leaderboard pagination button click (routed from interactions.ts). */
+export async function handleLeaderboardComponent(interaction: InteractionShim): Promise<void> {
+  const customId = interaction.customId ?? '';
+  const [, typeRaw, pageRaw] = customId.split(':');
+  const page = Number.parseInt(pageRaw ?? '0', 10);
+
+  if (!typeRaw || !isLeaderboardType(typeRaw) || Number.isNaN(page) || page < 0) {
+    await interaction.deferUpdate();
+    return;
+  }
+
+  await interaction.deferUpdate();
+
+  const result = await loadPage(typeRaw, page);
+  if (!result.ok || result.data.entries.length === 0) {
+    // Went past the end (or the backend hiccupped) — leave the message as-is
+    // rather than showing an empty/broken page.
+    return;
+  }
+
+  await interaction.editReply({
+    embeds: [leaderboardEmbed(result.data)],
+    components: [row(typeRaw, page, result.data.entries.length === PAGE_SIZE)],
+  });
 }
 
 export const leaderboardCommand: BotCommand = {
@@ -52,9 +104,9 @@ export const leaderboardCommand: BotCommand = {
       )
       .toJSON();
   },
-  async execute(interaction: ChatInputCommandInteraction) {
-    const type = interaction.options.getString('type', true) as LeaderboardType;
-    if (!TYPES.includes(type)) {
+  async execute(interaction) {
+    const type = interaction.options.getString('type', true);
+    if (!type || !isLeaderboardType(type)) {
       await interaction.reply({
         embeds: [errorEmbed('Unknown leaderboard type.')],
         ephemeral: true,
@@ -64,21 +116,8 @@ export const leaderboardCommand: BotCommand = {
 
     await interaction.deferReply();
 
-    const PAGE_SIZE = 10;
-    let page = 0;
-
-    const loadPage = async (p: number) => {
-      const result = await getLeaderboard(type, PAGE_SIZE);
-      if (!result.ok) return result;
-      // Slice client-side for pagination; backend returns up to PAGE_SIZE.
-      const start = p * PAGE_SIZE;
-      return {
-        ok: true as const,
-        data: { ...result.data, entries: result.data.entries.slice(start, start + PAGE_SIZE) },
-      };
-    };
-
-    const initial = await loadPage(page);
+    const page = 0;
+    const initial = await loadPage(type, page);
     if (!initial.ok) {
       await interaction.editReply({ embeds: [errorEmbed(initial.message, 'Leaderboard unavailable')] });
       return;
@@ -90,43 +129,9 @@ export const leaderboardCommand: BotCommand = {
       return;
     }
 
-    const message = await interaction.editReply({
+    await interaction.editReply({
       embeds: [leaderboardEmbed(initial.data)],
-      components: [row(page, initial.data.entries.length === PAGE_SIZE)],
-    });
-
-    // Listen for button presses for 60 seconds.
-    const collector = message.createMessageComponentCollector({
-      componentType: ComponentType.Button,
-      time: 60_000,
-    });
-
-    collector.on('collect', async (btn) => {
-      if (btn.user.id !== interaction.user.id) {
-        await btn.reply({ ephemeral: true, content: "This isn't your leaderboard." });
-        return;
-      }
-      if (btn.customId === PREV_ID && page > 0) page -= 1;
-      else if (btn.customId === NEXT_ID) page += 1;
-
-      const next = await loadPage(page);
-      await btn.deferUpdate();
-      if (!next.ok || next.data.entries.length === 0) {
-        // Went past the end — step back and stop paginating.
-        page = Math.max(0, page - 1);
-        collector.stop('end');
-        return;
-      }
-      await interaction.editReply({
-        embeds: [leaderboardEmbed(next.data)],
-        components: [row(page, next.data.entries.length === PAGE_SIZE)],
-      });
-    });
-
-    collector.on('end', async () => {
-      await interaction
-        .editReply({ components: [row(page, false)] })
-        .catch(() => undefined);
+      components: [row(type, page, initial.data.entries.length === PAGE_SIZE)],
     });
   },
 };

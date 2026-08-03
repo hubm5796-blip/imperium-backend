@@ -1,5 +1,5 @@
 /** /dungeons — list all available dungeons. */
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder } from '@discordjs/builders';
 import type { BotCommand } from './_shared.js';
 
 export const dungeonsCommand: BotCommand = {

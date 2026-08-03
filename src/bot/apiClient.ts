@@ -5,6 +5,20 @@
  * All data is fetched over HTTP from the backend API (default api.imperiummc.net).
  */
 import { getBotConfig } from './config.js';
+import { createApp } from '../app.js';
+
+// The backend used to be a separate service the bot called over HTTP; now
+// both live in the same Worker, and BACKEND_API_BASE points at this Worker's
+// own routed domain (api.imperiummc.net). A real fetch() to your own zone
+// gets blocked/hangs (Cloudflare's same-zone loopback protection) — that's
+// what caused /online and friends to spin on "thinking..." forever. Routing
+// through Hono's in-process app.request() instead skips the network hop
+// entirely; same routing/middleware, zero self-referential HTTP.
+let appInstance: ReturnType<typeof createApp> | undefined;
+function localApp() {
+  if (!appInstance) appInstance = createApp();
+  return appInstance;
+}
 
 /** Shape of a confirmed account link returned by the backend. */
 export interface LinkResult {
@@ -82,8 +96,7 @@ async function request<T>(
   path: string,
   body?: unknown,
 ): Promise<ApiResult<T>> {
-  const { apiBase, apiToken } = getBotConfig();
-  const url = `${apiBase}${path}`;
+  const { apiToken } = getBotConfig();
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -94,7 +107,8 @@ async function request<T>(
     if (apiToken) {
       headers['X-Bot-Token'] = apiToken;
     }
-    const res = await fetch(url, {
+    // In-process via Hono (see localApp() above) — not a real network fetch.
+    const res = await localApp().request(path, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,

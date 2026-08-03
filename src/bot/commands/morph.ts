@@ -1,5 +1,5 @@
 /** /morph — list the six Roman beast morphs and what they do. */
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder } from '@discordjs/builders';
 import { COLORS } from '../config.js';
 import type { BotCommand } from './_shared.js';
 

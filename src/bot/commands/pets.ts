@@ -1,5 +1,5 @@
 /** /pets — list all available pet types. */
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder } from '@discordjs/builders';
 import type { BotCommand } from './_shared.js';
 
 export const petsCommand: BotCommand = {

@@ -4,7 +4,8 @@
  * Every command renders through these helpers so the look stays consistent:
  * gold accents, dark/neutral chrome, and a common footer.
  */
-import { EmbedBuilder, type EmbedField } from 'discord.js';
+import { EmbedBuilder } from '@discordjs/builders';
+import type { APIEmbedField as EmbedField } from 'discord-api-types/v10';
 import {
   BRANDING,
   COLORS,

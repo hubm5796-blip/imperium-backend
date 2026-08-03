@@ -1,11 +1,11 @@
 import { Pool, type QueryResult, type QueryResultRow } from 'pg';
-import { env } from '../env.js';
 import { logger } from '../utils/logger.js';
 import {
   CURRENCY_COLUMNS,
   type CurrencyBalanceRow,
   type DiscordLinkRow,
   type EconomyTransactionRow,
+  type PaynowSubscriptionRow,
   type PlayerRankRow,
   type PlayerStatsRow,
   type PlayerProfile,
@@ -13,23 +13,47 @@ import {
 } from '../types/index.js';
 import { minorUnitsToDisplay } from '../utils/money.js';
 
-/** Shared PostgreSQL connection pool. */
-export const pool = new Pool({
-  connectionString: env.databaseUrl,
-  max: 10,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
-});
+/**
+ * Lazily-initialized PostgreSQL connection pool. Not created at module load
+ * time: on Workers, the connection string comes from the Hyperdrive binding
+ * (`c.env.HYPERDRIVE.connectionString`), which is only available per-request,
+ * not at module scope. `initPool()` is idempotent — a Hono middleware calls
+ * it on every request, but only the first call on a given warm isolate
+ * actually creates the pool; later calls reuse it, same as the old eager
+ * module-level singleton did within one Node process.
+ */
+let pool: Pool | null = null;
 
-pool.on('error', (err) => {
-  logger.error({ err }, 'Unexpected error on idle pg client');
-});
+export function initPool(connectionString: string): void {
+  if (pool) return;
+  pool = new Pool({
+    connectionString,
+    max: 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+  });
+  pool.on('error', (err) => {
+    logger.error({ err }, 'Unexpected error on idle pg client');
+  });
+}
+
+function getPool(): Pool {
+  if (!pool) {
+    throw new Error('Postgres pool not initialized — initPool() must run before any query');
+  }
+  return pool;
+}
+
+/** Drains the pool on graceful shutdown (Node dev entrypoint only — Workers has no shutdown hook). */
+export async function closePool(): Promise<void> {
+  if (pool) await pool.end();
+}
 
 async function query<T extends QueryResultRow>(
   text: string,
   params: ReadonlyArray<unknown>,
 ): Promise<QueryResult<T>> {
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     return await client.query<T>(text, params as unknown[]);
   } finally {
@@ -90,6 +114,66 @@ export async function deleteDiscordLinkByDiscordId(discordId: string): Promise<b
   return (result.rowCount ?? 0) > 0;
 }
 
+/* --------------------------------------------------------------- PayNow */
+
+/** Look up the PayNow customer id linked to a player, if we've seen them at checkout before. */
+export async function getPaynowCustomerId(uuid: string): Promise<string | null> {
+  const result = await query<Pick<DiscordLinkRow, 'paynow_customer_id'>>(
+    'SELECT paynow_customer_id FROM discord_links WHERE uuid = $1',
+    [uuid],
+  );
+  return result.rows[0]?.paynow_customer_id ?? null;
+}
+
+/** Persist the PayNow customer id for a linked player (set once found/created). */
+export async function setPaynowCustomerId(uuid: string, customerId: string): Promise<void> {
+  await query(
+    'UPDATE discord_links SET paynow_customer_id = $2 WHERE uuid = $1',
+    [uuid, customerId],
+  );
+}
+
+/**
+ * Cached view of a player's active donor subscription, kept in sync by the
+ * PayNow webhook handler. Used for fast dashboard reads without calling out
+ * to PayNow on every page load.
+ */
+export async function getCachedSubscription(uuid: string): Promise<PaynowSubscriptionRow | null> {
+  const result = await query<PaynowSubscriptionRow>(
+    'SELECT uuid, subscription_id, product_id, status, updated_at FROM paynow_subscriptions WHERE uuid = $1',
+    [uuid],
+  );
+  return result.rows[0] ?? null;
+}
+
+/** Upsert the cached subscription row for a player (called from the webhook handler). */
+export async function upsertCachedSubscription(
+  uuid: string,
+  subscriptionId: string,
+  productId: string,
+  status: string,
+): Promise<void> {
+  await query(
+    `INSERT INTO paynow_subscriptions (uuid, subscription_id, product_id, status, updated_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (uuid) DO UPDATE
+       SET subscription_id = EXCLUDED.subscription_id,
+           product_id = EXCLUDED.product_id,
+           status = EXCLUDED.status,
+           updated_at = EXCLUDED.updated_at`,
+    [uuid, subscriptionId, productId, status],
+  );
+}
+
+/** Look up a player's uuid by their PayNow customer id (webhooks carry customer id, not uuid). */
+export async function getUuidByPaynowCustomerId(customerId: string): Promise<string | null> {
+  const result = await query<Pick<DiscordLinkRow, 'uuid'>>(
+    'SELECT uuid FROM discord_links WHERE paynow_customer_id = $1',
+    [customerId],
+  );
+  return result.rows[0]?.uuid ?? null;
+}
+
 /**
  * Fetch the full player profile (rank + prestige + stats) for a single UUID.
  * All JOINs are LEFT JOINs so a partial profile is returned if some tables
@@ -141,6 +225,19 @@ export async function getPlayerProfile(uuid: string): Promise<PlayerProfile | nu
             kdRatio: pvpDeaths === 0 ? (pvpKills > 0 ? pvpKills : null) : pvpKills / pvpDeaths,
           },
   };
+}
+
+/**
+ * Resolve a username to its Minecraft UUID via the plugin-maintained registry
+ * (kept current on every join). Case-insensitive exact match — usernames
+ * (including Bedrock/Floodgate-prefixed ones) are matched as typed.
+ */
+export async function getUuidByUsername(username: string): Promise<string | null> {
+  const result = await query<{ uuid: string }>(
+    'SELECT uuid FROM player_names WHERE LOWER(username) = LOWER($1)',
+    [username],
+  );
+  return result.rows[0]?.uuid ?? null;
 }
 
 /** Fetch all four currency balances for a UUID, converted from minor units. */

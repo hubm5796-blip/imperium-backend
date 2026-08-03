@@ -1,5 +1,5 @@
 /** /gadgets — list the ten fun cosmetic gadgets and how to get them. */
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder } from '@discordjs/builders';
 import { COLORS } from '../config.js';
 import type { BotCommand } from './_shared.js';
 

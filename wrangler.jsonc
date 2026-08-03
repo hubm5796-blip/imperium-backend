@@ -1,0 +1,53 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"main": "src/worker.ts",
+	// Matches the existing "imperium-backend-prod" Worker (dashboard name) so
+	// Cloudflare's Git integration deploys new commits to that same Worker.
+	"name": "imperium-backend-prod",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// Provisioned via `wrangler hyperdrive create` against Neon (see the
+	// migration plan / session notes for why: production Postgres was
+	// unreachable, this is a fresh database — schema bootstrapped via the
+	// plugin's own SchemaInitializer against the same instance).
+	"hyperdrive": [
+		{
+			"binding": "HYPERDRIVE",
+			"id": "9e292633772945a7ba3869c5f3261886"
+		}
+	],
+	// api.imperiummc.net routes to this Worker via an existing proxied CNAME
+	// record (api -> imperium-backend-prod.playimperiummc-net.workers.dev),
+	// NOT a Wrangler-managed Custom Domain. Do NOT add a `routes` block with
+	// custom_domain:true here — it fights the CNAME for ownership of the
+	// hostname and Cloudflare's API rejects it ("already has externally
+	// managed DNS records"), which aborts the entire deploy step (the new
+	// version gets uploaded but never promoted to serve traffic). The CNAME
+	// is sufficient on its own; leave DNS as-is.
+	//
+	// Non-secret values. Declared here (not just the dashboard) because
+	// Workers Builds treats this file as authoritative on every Git-triggered
+	// deploy — a plaintext var set ONLY via the dashboard gets silently wiped
+	// on the next deploy unless it's declared here or the deploy passes
+	// --keep-vars. This is what caused "Missing required environment
+	// variable: DISCORD_CLIENT_ID" despite the dashboard showing it set.
+	// Every one of these was previously an un-padlocked "Variable" in the
+	// dashboard (not a "Secret") — same wipe risk applied to all of them.
+	"vars": {
+		"BACKEND_API_BASE": "https://api.imperiummc.net",
+		"DISCORD_CLIENT_ID": "1520285608906330293",
+		"DISCORD_PUBLIC_KEY": "2340504d65c62d22bab9f1150577536a0fc79d42019247dc9815bca349b45594",
+		"DISCORD_REDIRECT_URI": "https://imperiummc.net/auth/callback",
+		"PAYNOW_STORE_ID": "586713008948903936",
+		"REDIS_PORT": "6379",
+		"REDIS_TLS": "true",
+		"NODE_ENV": "production"
+	}
+	// True secrets (JWT_SECRET, PAYNOW_API_KEY, DISCORD_CLIENT_SECRET,
+	// DISCORD_BOT_TOKEN, WEBPANEL_HMAC_SECRET, BOT_API_TOKEN, REDIS_HOST,
+	// REDIS_PASSWORD, PAYNOW_WEBHOOK_SECRETS) are padlocked "Secret" entries
+	// in the dashboard and go through `wrangler secret put <NAME>` — those DO
+	// persist across Git deploys independently of this file.
+}

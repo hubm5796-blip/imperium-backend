@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { Hono, type Context } from 'hono';
+import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import {
   AUTH_COOKIE_NAME,
@@ -15,12 +15,15 @@ import {
   fetchDiscordUser,
 } from '../auth/discord.js';
 import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
-import { authRateLimit, globalRateLimit } from '../middleware/rateLimit.js';
+import { authRateLimit, globalRateLimit, rateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
+  getCachedSubscription,
+  getDiscordIdByUuid,
   getEloLeaderboard,
   getLeaderboard,
   getParkourLeaderboard,
+  getPaynowCustomerId,
   getPlayerBalances,
   getPlayerFactions,
   getPlayerParkour,
@@ -29,16 +32,32 @@ import {
   getPlayerStats,
   getPlayerTransactions,
   getUuidByDiscordId,
+  getUuidByPaynowCustomerId,
+  getUuidByUsername,
   getWaveLeaderboard,
   isAlreadyLinked,
+  setPaynowCustomerId,
+  upsertCachedSubscription,
   upsertDiscordLink,
 } from '../db/pool.js';
 import {
   consumeLinkCode,
+  consumeLoginCode,
   createLinkCode,
   getOnlinePlayerCount,
   sendCommandWithResponse,
 } from '../db/redis.js';
+import {
+  applyTierChange,
+  createCheckoutSession,
+  createCustomerToken,
+  findOrCreatePaynowCustomer,
+  getCustomerSubscriptions,
+  PaynowApiError,
+  previewTierChange,
+} from '../paynow/client.js';
+import { isDonorSubscriptionProduct, isLifetimeProduct } from '../paynow/constants.js';
+import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
 import type { AppContextVariables } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
@@ -78,6 +97,31 @@ function requireBotAuth(c: Context): boolean {
     return false;
   }
 }
+
+/**
+ * Rate limiter for /auth/webcode/verify. This route is bot-token-gated (only
+ * imperium-frontend's own edge proxy can call it — see the route below), so
+ * `X-Original-Client-IP` is trustworthy here specifically: an attacker can't
+ * reach this route at all without the bot token, and the only party that
+ * holds it (our own frontend) sets that header from the *real* incoming
+ * request's Cloudflare-verified `CF-Connecting-IP`, not from anything an end
+ * user controls directly. Falls back to the normal spoofable-header chain
+ * for requests that (somehow) reach here without valid bot auth — they'll be
+ * rejected by the route handler anyway, but still get bucketed sanely rather
+ * than colliding into a single 'unknown' bucket.
+ */
+const webcodeRateLimit = rateLimit(8, 5 * 60_000, 'webcode', (c) => {
+  if (requireBotAuth(c)) {
+    const forwarded = c.req.header('x-original-client-ip');
+    if (forwarded) return forwarded;
+  }
+  return (
+    c.req.header('cf-connecting-ip') ??
+    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+    c.req.header('x-real-ip') ??
+    'unknown'
+  );
+});
 
 /* ------------------------------------------------------------------ Auth */
 
@@ -125,7 +169,8 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     const token = await exchangeCodeForToken(code);
     const discordUser = await fetchDiscordUser(token.access_token);
 
-    const jwt = signJwt({
+    const jwt = await signJwt({
+      authMethod: 'discord',
       discordId: discordUser.id,
       discordUsername: discordUser.global_name ?? discordUser.username,
       discordAvatar: buildAvatarUrl(discordUser),
@@ -141,15 +186,92 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
   }
 });
 
-/** GET /api/auth/me — return the current Discord user + MC link status. */
+/**
+ * GET /api/auth/me — the current session, however it was established.
+ * A successful (2xx) response always means "logged in" — callers should
+ * branch on HTTP status, not on the presence of any particular field, since
+ * `discord` is legitimately null for an mc_code session with no linked
+ * Discord account.
+ */
 api.get('/auth/me', requireAuth, async (c) => {
   const user = c.var.user!;
   return c.json({
-    discordId: user.discordId,
-    username: user.discordUsername,
-    avatar: user.discordAvatar,
+    authMethod: user.authMethod,
+    discord: user.discordId
+      ? {
+          id: user.discordId,
+          username: user.discordUsername ?? null,
+          avatar: user.discordAvatar ?? null,
+        }
+      : null,
     mcLinked: c.var.mcUuid !== null,
     mcUuid: c.var.mcUuid,
+  });
+});
+
+/**
+ * POST /api/auth/webcode/verify — exchange an in-game 6-digit login code for
+ * a session. The code is generated and stored directly in Redis by the
+ * plugin's `/webcode` command (15min TTL, single-use); this endpoint just
+ * consumes it. If the underlying Minecraft account happens to already be
+ * linked to Discord, the resulting session carries that Discord identity too
+ * — otherwise it's a plain mc_code session (still usable everywhere except
+ * Discord-specific features, since `requireLinked` only cares about mcUuid).
+ *
+ * Bot-token gated: only imperium-frontend's own edge proxy
+ * (src/app/api/auth/webcode/verify) calls this directly. It doesn't set a
+ * browser cookie of its own consequence — the frontend signs the session
+ * that actually matters, on the domain that actually matters, from this
+ * response. Gating it this way also means the strict rate limit above can
+ * trust the caller-forwarded real client IP instead of just seeing "the
+ * frontend" for every request.
+ */
+api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  let body: { code?: string };
+  try {
+    body = (await c.req.json()) as { code?: string };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const code = (body.code ?? '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    return c.json({ error: 'Code must be 6 digits' }, 400);
+  }
+
+  const record = await consumeLoginCode(code);
+  if (!record) {
+    return c.json({ error: 'Invalid or expired code' }, 404);
+  }
+
+  let discordId: string | null = null;
+  try {
+    discordId = await getDiscordIdByUuid(record.uuid);
+  } catch {
+    // Database hiccup — proceed as an unlinked mc_code session rather than
+    // failing the login outright; the player already proved MC ownership.
+    discordId = null;
+  }
+
+  const jwt = await signJwt({
+    authMethod: 'mc_code',
+    mcUuid: record.uuid,
+    ...(discordId ? { discordId } : {}),
+  });
+  setCookie(c, AUTH_COOKIE_NAME, jwt, authCookieOptions());
+
+  return c.json({
+    ok: true,
+    uuid: record.uuid,
+    username: record.username ?? null,
+    // The real id, not just a boolean — the frontend's edge auth route builds
+    // its own session from this response (see imperium-frontend's
+    // src/app/api/auth/webcode/verify/route.ts), so it needs the value, not
+    // just whether one exists.
+    discordId,
   });
 });
 
@@ -488,6 +610,9 @@ api.get('/server/features', (c) => {
 /** POST /api/link/initiate — generate a 6-char code stored in Redis (10 min TTL). */
 api.post('/link/initiate', requireAuth, async (c) => {
   const user = c.var.user!;
+  if (!user.discordId) {
+    return c.json({ error: 'This account has no Discord identity to link. Sign in with Discord first.' }, 400);
+  }
   const code = await createLinkCode({ discordId: user.discordId }, 600);
   return c.json({
     code,
@@ -533,91 +658,34 @@ api.post('/link/confirm', async (c) => {
     return c.json({ error: 'Missing code' }, 400);
   }
 
-  // Step 1: Atomically consume the code from the plugin's SQLite database
-  // (link_codes table). This is the code the player got from `/discord link`
-  // in-game. consumeLinkCode does a DELETE...RETURNING so two concurrent
-  // confirms can't both redeem the same code.
-  const { consumeLinkCode: consumeSqliteLinkCode, upsertDiscordLinkSqlite } =
-    await import('../db/sqlite.js');
-  const codeRecord = consumeSqliteLinkCode(code);
-
-  if (!codeRecord) {
-    // Fall back to Redis-based verification (web flow) if SQLite isn't available.
-    const redisRecord = await consumeLinkCode(code);
-    if (!redisRecord) {
-      return c.json(
-        { error: 'Invalid or expired code. Run /discord link in-game for a fresh one.' },
-        404,
-      );
-    }
-
-    // Redis/web flow: the discordId was bound to the code at /link/initiate by
-    // the authenticated user. Use the STORED value — do NOT trust the body.
-    const discordId = redisRecord.discordId;
-    if (!discordId) {
-      // The code exists but carries no discordId (shouldn't happen for the web
-      // flow). Refuse rather than guess.
-      return c.json({ error: 'Code is not bound to a Discord account' }, 400);
-    }
-    // If the caller bothered to send a discordId, it MUST match the stored one.
-    if (body.discordId && body.discordId !== discordId) {
-      return c.json({ error: 'discordId does not match the code holder' }, 403);
-    }
-
-    const uuid = body.uuid ?? redisRecord.uuid;
-    if (!uuid) {
-      return c.json({ error: 'Cannot complete link: missing uuid' }, 400);
-    }
-
-    // Hijack guard: refuse to silently rebind an already-linked UUID.
-    try {
-      const existing = await isAlreadyLinked(uuid);
-      if (existing && existing !== discordId) {
-        return c.json(
-          { error: 'Minecraft account already linked to a different Discord' },
-          409,
-        );
-      }
-    } catch {
-      // PG unavailable — fall through; upsert will fail loudly if needed.
-    }
-
-    try {
-      await upsertDiscordLink(uuid, discordId);
-      return c.json({ ok: true, linked: true, discordId, uuid, username: 'Player' });
-    } catch {
-      return c.json({ error: 'Failed to persist link' }, 500);
-    }
+  // The code was written to Redis by the plugin's `/discord link` command
+  // (ImperiumMC:link_code:<CODE> -> {uuid, discordId?}, 10min TTL) — consumed
+  // single-use via GET+DEL. Both the in-game and website linking flows go
+  // through Redis now (the SQLite link_codes path was removed during the
+  // Workers migration — Workers has no local filesystem).
+  const record = await consumeLinkCode(code);
+  if (!record?.uuid) {
+    return c.json({ error: 'Invalid or expired code. Run /discord link in-game for a fresh one.' }, 404);
   }
 
-  // SQLite/in-game flow: the code's discord_id column doesn't exist, so the bot
-  // supplies the Discord account to bind. The code is already consumed above.
-  const uuid = codeRecord.uuid;
-  const discordId = body.discordId ?? '';
+  // Discord id: prefer the value bound to the code at /link/initiate (web flow,
+  // where the authenticated user is known); otherwise take the bot-supplied
+  // body value (in-game flow, where only the UUID is known at code-creation).
+  const discordId = record.discordId ?? body.discordId ?? '';
   if (!discordId) {
     return c.json({ error: 'Missing discordId' }, 400);
   }
-
-  const written = upsertDiscordLinkSqlite(uuid, discordId);
-  if (written === 'conflict') {
-    return c.json(
-      { error: 'Minecraft account already linked to a different Discord' },
-      409,
-    );
-  }
-  if (written) {
-    return c.json({
-      ok: true,
-      linked: true,
-      discordId,
-      uuid,
-      username: `Player`,
-    });
+  // If the caller sent a discordId, it MUST match the code's bound holder —
+  // never let a mismatched caller claim someone else's pending link.
+  if (body.discordId && record.discordId && body.discordId !== record.discordId) {
+    return c.json({ error: 'discordId does not match the code holder' }, 403);
   }
 
-  // SQLite write unavailable — fall back to PostgreSQL (with hijack guard).
+  // Hijack guard (security): refuse to silently rebind an already-linked UUID
+  // to a different Discord account. Throws are swallowed — PG being down falls
+  // through to the upsert, which will fail loudly if there's a real conflict.
   try {
-    const existing = await isAlreadyLinked(uuid);
+    const existing = await isAlreadyLinked(record.uuid);
     if (existing && existing !== discordId) {
       return c.json(
         { error: 'Minecraft account already linked to a different Discord' },
@@ -625,11 +693,12 @@ api.post('/link/confirm', async (c) => {
       );
     }
   } catch {
-    // PG guard failed; attempt the write anyway.
+    // PG guard unavailable — fall through to the write.
   }
+
   try {
-    await upsertDiscordLink(uuid, discordId);
-    return c.json({ ok: true, linked: true, discordId, uuid, username: 'Player' });
+    await upsertDiscordLink(record.uuid, discordId);
+    return c.json({ ok: true, linked: true, discordId, uuid: record.uuid });
   } catch {
     return c.json({ error: 'Failed to persist link' }, 500);
   }
@@ -653,6 +722,337 @@ api.delete('/link', async (c) => {
     return c.json({ error: 'No link found for this Discord account' }, 404);
   }
   return c.json({ discordId, unlinked: true });
+});
+
+/* ------------------------------------------------------------------ Store */
+
+// Function, not a module-scope constant: `env` isn't populated until
+// initEnvFromProcess()/initEnvFromBindings() runs, which happens after this
+// module's own top-level code has already been evaluated.
+function frontendUrl(): string {
+  return env.isProduction ? 'https://imperiummc.net' : 'http://localhost:3000';
+}
+
+/**
+ * Auth gate for /store/* routes. Real browser traffic never carries this
+ * backend's own session cookie — the live session lives on imperium-frontend's
+ * edge-native cookie (a different domain, a different JWT implementation
+ * entirely). imperium-frontend verifies that session and the caller's linked
+ * status itself, then calls in here with the bot token plus the
+ * already-verified `X-Mc-Uuid` header. Session-cookie auth is kept only as a
+ * fallback so these routes remain directly testable against the backend.
+ */
+const storeAuth: MiddlewareHandler<ApiEnv> = async (c, next) => {
+  if (requireBotAuth(c)) {
+    const uuid = c.req.header('x-mc-uuid');
+    if (!uuid) {
+      return c.json({ error: 'Missing X-Mc-Uuid header' }, 400);
+    }
+    c.set('mcUuid', uuid);
+    await next();
+    return;
+  }
+  if (!c.var.user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  if (!c.var.mcUuid) {
+    return c.json({ error: 'Minecraft account not linked', linkRequired: true }, 403);
+  }
+  await next();
+};
+
+/** Resolve (and lazily create) the PayNow customer id for the calling player. */
+async function resolvePaynowCustomerId(uuid: string): Promise<string> {
+  const existing = await getPaynowCustomerId(uuid);
+  if (existing) return existing;
+  const customerId = await findOrCreatePaynowCustomer(uuid);
+  await setPaynowCustomerId(uuid, customerId);
+  return customerId;
+}
+
+/**
+ * GET /api/store/subscription — the caller's current donor subscription, if any.
+ * Reads from our webhook-fed cache first (fast, no PayNow round trip); falls
+ * back to a live Storefront API call if we've never seen a webhook for this
+ * player yet (e.g. their very first purchase, before the webhook lands).
+ */
+api.get('/store/subscription', storeAuth, async (c) => {
+  const uuid = c.var.mcUuid!;
+
+  const cached = await getCachedSubscription(uuid);
+  if (cached) {
+    return c.json({
+      subscriptionId: cached.subscription_id,
+      productId: cached.product_id,
+      status: cached.status,
+    });
+  }
+
+  const customerId = await getPaynowCustomerId(uuid);
+  if (!customerId) {
+    return c.json({ subscription: null });
+  }
+
+  try {
+    const token = await createCustomerToken(customerId);
+    const subs = await getCustomerSubscriptions(token);
+    const active = subs.find((s) => isDonorSubscriptionProduct(String(s.product_id ?? '')));
+    if (!active) {
+      return c.json({ subscription: null });
+    }
+    return c.json({
+      subscriptionId: active.id,
+      productId: active.product_id,
+      status: active.status,
+    });
+  } catch (err) {
+    logger.error({ err, uuid }, 'Failed to fetch live PayNow subscription');
+    return c.json({ subscription: null });
+  }
+});
+
+/**
+ * POST /api/store/checkout — create a checkout session for one product and
+ * return the URL to redirect the browser to. `subscription` must match how
+ * the target product is configured in PayNow (subscription vs one-time).
+ */
+api.post('/store/checkout', storeAuth, async (c) => {
+  const uuid = c.var.mcUuid!;
+  let body: { productId?: string; subscription?: boolean };
+  try {
+    body = (await c.req.json()) as { productId?: string; subscription?: boolean };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body.productId) {
+    return c.json({ error: 'Missing productId' }, 400);
+  }
+
+  try {
+    const customerId = await resolvePaynowCustomerId(uuid);
+    const session = await createCheckoutSession({
+      customerId,
+      productId: body.productId,
+      subscription: Boolean(body.subscription),
+      returnUrl: `${frontendUrl()}/dashboard/subscription?checkout=success`,
+      cancelUrl: `${frontendUrl()}/store?checkout=canceled`,
+    });
+    return c.json({ url: session.url });
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      logger.warn({ err: err.body, status: err.status, uuid }, 'PayNow checkout creation failed');
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, uuid }, 'Checkout creation failed');
+    return c.json({ error: 'Failed to create checkout session' }, 500);
+  }
+});
+
+/**
+ * POST /api/store/subscription/preview-change — proration preview for
+ * switching the caller's active donor subscription to a different tier.
+ * No charge, no side effects.
+ */
+api.post('/store/subscription/preview-change', storeAuth, async (c) => {
+  const uuid = c.var.mcUuid!;
+  let body: { targetProductId?: string };
+  try {
+    body = (await c.req.json()) as { targetProductId?: string };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body.targetProductId || !isDonorSubscriptionProduct(body.targetProductId)) {
+    return c.json({ error: 'Invalid or unknown targetProductId' }, 400);
+  }
+
+  const customerId = await getPaynowCustomerId(uuid);
+  if (!customerId) {
+    return c.json({ error: 'No PayNow customer on record for this account' }, 404);
+  }
+
+  try {
+    const token = await createCustomerToken(customerId);
+    const result = await previewTierChange(token, body.targetProductId);
+    return c.json(result);
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, uuid }, 'Tier change preview failed');
+    return c.json({ error: 'Failed to preview tier change' }, 500);
+  }
+});
+
+/**
+ * POST /api/store/subscription/change — apply a tier change (upgrade or
+ * downgrade) to the caller's active donor subscription, with proration.
+ * Pass `verificationCode` when a prior call returned `pending_verification`.
+ */
+api.post('/store/subscription/change', storeAuth, async (c) => {
+  const uuid = c.var.mcUuid!;
+  let body: { targetProductId?: string; verificationCode?: string };
+  try {
+    body = (await c.req.json()) as { targetProductId?: string; verificationCode?: string };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body.targetProductId || !isDonorSubscriptionProduct(body.targetProductId)) {
+    return c.json({ error: 'Invalid or unknown targetProductId' }, 400);
+  }
+
+  const customerId = await getPaynowCustomerId(uuid);
+  if (!customerId) {
+    return c.json({ error: 'No PayNow customer on record for this account' }, 404);
+  }
+
+  try {
+    const token = await createCustomerToken(customerId);
+    const result = await applyTierChange(token, body.targetProductId, body.verificationCode);
+    return c.json(result);
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, uuid }, 'Tier change failed');
+    return c.json({ error: 'Failed to change tier' }, 500);
+  }
+});
+
+/**
+ * GET /api/player/lookup?username=... — resolve a username to a UUID (and
+ * display name) for the gifting flow. Requires a linked session; only tells
+ * the caller whether *some* account exists under that name, nothing else.
+ */
+api.get('/player/lookup', storeAuth, async (c) => {
+  const username = (c.req.query('username') ?? '').trim();
+  if (!username) {
+    return c.json({ error: 'Missing username query parameter' }, 400);
+  }
+  const uuid = await getUuidByUsername(username);
+  if (!uuid) {
+    return c.json({ error: 'No player found with that username' }, 404);
+  }
+  return c.json({ uuid, username });
+});
+
+/**
+ * POST /api/store/gift-checkout — create a checkout session for a one-time
+ * lifetime product, delivered to a *different* player's Minecraft account.
+ * The caller pays (redirected to the returned checkout URL); the PayNow
+ * customer — and therefore the delivery target — is resolved from the
+ * recipient's username, not the caller's own account. Lifetime products
+ * only: see isLifetimeProduct() for why subscriptions aren't giftable.
+ */
+api.post('/store/gift-checkout', storeAuth, async (c) => {
+  const buyerUuid = c.var.mcUuid!;
+  let body: { productId?: string; recipientUsername?: string };
+  try {
+    body = (await c.req.json()) as { productId?: string; recipientUsername?: string };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body.productId || !isLifetimeProduct(body.productId)) {
+    return c.json({ error: 'Invalid or unknown productId — gifting only supports lifetime ranks' }, 400);
+  }
+  const recipientUsername = (body.recipientUsername ?? '').trim();
+  if (!recipientUsername) {
+    return c.json({ error: 'Missing recipientUsername' }, 400);
+  }
+
+  const recipientUuid = await getUuidByUsername(recipientUsername);
+  if (!recipientUuid) {
+    return c.json({ error: 'No player found with that username — have they joined the server before?' }, 404);
+  }
+  if (recipientUuid === buyerUuid) {
+    return c.json({ error: 'Use the normal checkout to buy for yourself' }, 400);
+  }
+
+  try {
+    const customerId = await resolvePaynowCustomerId(recipientUuid);
+    const session = await createCheckoutSession({
+      customerId,
+      productId: body.productId,
+      subscription: false,
+      returnUrl: `${frontendUrl()}/dashboard/subscription?gift=success`,
+      cancelUrl: `${frontendUrl()}/store?checkout=canceled`,
+    });
+    return c.json({ url: session.url, recipientUsername });
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      logger.warn({ err: err.body, status: err.status, buyerUuid, recipientUuid }, 'PayNow gift checkout creation failed');
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, buyerUuid, recipientUuid }, 'Gift checkout creation failed');
+    return c.json({ error: 'Failed to create gift checkout session' }, 500);
+  }
+});
+
+/* ---------------------------------------------------------- PayNow webhook */
+
+/**
+ * POST /api/webhooks/paynow — receives order/subscription/delivery events
+ * from PayNow. Signature-verified (HMAC-SHA256 over `timestamp.body`), not
+ * cookie/bot-token authenticated. Keeps `paynow_subscriptions` in sync so
+ * the dashboard can read current-tier state without calling PayNow live.
+ */
+api.post('/webhooks/paynow', async (c) => {
+  const rawBody = await c.req.text();
+  const verification = verifyPaynowWebhook({
+    rawBody,
+    signatureHeader: c.req.header('PayNow-Signature'),
+    timestampHeader: c.req.header('PayNow-Timestamp'),
+  });
+  if (!verification.valid) {
+    logger.warn({ reason: verification.reason }, 'Rejected PayNow webhook');
+    return c.json({ error: 'Invalid signature' }, 401);
+  }
+
+  let event: { event_type?: string; data?: Record<string, unknown> };
+  try {
+    event = JSON.parse(rawBody) as { event_type?: string; data?: Record<string, unknown> };
+  } catch {
+    return c.json({ error: 'Invalid JSON payload' }, 400);
+  }
+
+  const eventType = event.event_type ?? '';
+  const data = event.data ?? {};
+
+  try {
+    switch (eventType) {
+      case 'OnSubscriptionActivated':
+      case 'OnSubscriptionRenewed': {
+        const customerId = String(data['customer_id'] ?? (data['customer'] as { id?: string })?.id ?? '');
+        const subscriptionId = String(data['id'] ?? '');
+        const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
+        const status = String(data['status'] ?? 'active');
+        const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
+        if (uuid && subscriptionId && productId) {
+          await upsertCachedSubscription(uuid, subscriptionId, productId, status);
+        }
+        break;
+      }
+      case 'OnSubscriptionCanceled': {
+        const customerId = String(data['customer_id'] ?? (data['customer'] as { id?: string })?.id ?? '');
+        const subscriptionId = String(data['id'] ?? '');
+        const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
+        const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
+        if (uuid && subscriptionId && productId) {
+          await upsertCachedSubscription(uuid, subscriptionId, productId, 'canceled');
+        }
+        break;
+      }
+      default:
+        // Other event types (orders, refunds, chargebacks) don't need caching —
+        // rank grant/revoke is already handled by PayNow's product commands.
+        break;
+    }
+  } catch (err) {
+    // Log but still 200 — PayNow retries on non-2xx, and a cache-write failure
+    // isn't worth a retry storm; the next renewal event will self-heal it.
+    logger.error({ err, eventType }, 'Failed to process PayNow webhook');
+  }
+
+  return c.json({ ok: true });
 });
 
 /* --------------------------------------------------------------- Actions */

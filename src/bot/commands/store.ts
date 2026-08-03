@@ -1,5 +1,5 @@
 /** /store — store / donation link. */
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from '@discordjs/builders';
 import { storeEmbed } from '../embeds.js';
 import type { BotCommand } from './_shared.js';
 

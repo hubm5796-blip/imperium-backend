@@ -1,13 +1,9 @@
 /** /unlink — remove the Discord↔Minecraft link. */
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from '@discordjs/builders';
 import { unlinkAccount } from '../apiClient.js';
 import { EMOJI } from '../config.js';
 import { successEmbed, errorEmbed } from '../embeds.js';
-import {
-  type BotCommand,
-  removeLinkedRole,
-  resolveGuild,
-} from './_shared.js';
+import { type BotCommand, removeLinkedRole } from './_shared.js';
 
 export const unlinkCommand: BotCommand = {
   name: 'unlink',
@@ -34,12 +30,9 @@ export const unlinkCommand: BotCommand = {
       return;
     }
 
-    // Best-effort: strip the linked role across all shared guilds.
-    for (const guild of interaction.client.guilds.cache.values()) {
-      const g = await resolveGuild(interaction, guild.id);
-      const member = g && (await g.members.fetch(discordId).catch(() => null));
-      if (member) await removeLinkedRole(member);
-    }
+    // Best-effort: strip the linked role in the guild this command was run
+    // from (see link.ts for why this no longer loops over every shared guild).
+    await removeLinkedRole(interaction);
 
     await interaction.editReply({
       embeds: [

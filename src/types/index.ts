@@ -9,11 +9,20 @@ export interface DiscordUser {
   discriminator: string;
 }
 
-/** Decoded JWT payload stored in the auth cookie. */
+/**
+ * Decoded JWT payload stored in the auth cookie. Two session shapes:
+ * - `authMethod: 'discord'` — signed in via Discord OAuth. `discordId` etc. are
+ *   set; `mcUuid` is resolved on each request via the discord_links table.
+ * - `authMethod: 'mc_code'` — signed in via the in-game 6-digit code. `mcUuid`
+ *   is baked into the token directly (no DB lookup needed); `discordId` is set
+ *   only if that Minecraft account happens to already be linked to Discord.
+ */
 export interface JwtPayload {
-  discordId: string;
-  discordUsername: string;
-  discordAvatar: string | null;
+  authMethod: 'discord' | 'mc_code';
+  discordId?: string;
+  discordUsername?: string;
+  discordAvatar?: string | null;
+  mcUuid?: string;
   iat?: number;
   exp?: number;
 }
@@ -23,6 +32,16 @@ export interface DiscordLinkRow {
   uuid: string;
   discord_id: string;
   linked_at: Date;
+  paynow_customer_id: string | null;
+}
+
+/** Row in the `paynow_subscriptions` table — a cache of a player's active donor subscription. */
+export interface PaynowSubscriptionRow {
+  uuid: string;
+  subscription_id: string;
+  product_id: string;
+  status: string;
+  updated_at: Date;
 }
 
 /** Row in the `player_ranks` table. */

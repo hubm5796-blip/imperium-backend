@@ -1,5 +1,5 @@
 /** /online — live server status. */
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from '@discordjs/builders';
 import { getServerStatus } from '../apiClient.js';
 import { serverStatusEmbed, errorEmbed } from '../embeds.js';
 import type { BotCommand } from './_shared.js';
