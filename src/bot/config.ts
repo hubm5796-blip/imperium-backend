@@ -110,9 +110,12 @@ export function getBotConfig() {
   /**
    * Shared secret sent as the `X-Bot-Token` header to authenticate bot-only
    * backend endpoints (/link/confirm, DELETE /link, /player/profile with
-   * ?uuid= or ?discord_id=). MUST match the backend's BOT_API_TOKEN.
+   * ?uuid= or ?discord_id=). Same env var the backend itself checks
+   * (env.botApiToken / BOT_API_TOKEN) — previously read as BACKEND_API_TOKEN
+   * here, a different name for what has to be the identical value, which
+   * would silently 401 every bot->backend call unless both were set.
    */
-  const apiToken = process.env.BACKEND_API_TOKEN;
+  const apiToken = process.env.BOT_API_TOKEN;
   /** Optional: role to grant when a Discord account is linked. */
   const linkedRoleId = process.env.DISCORD_LINKED_ROLE_ID;
   /** Optional: guild id for fast (per-guild) command registration during dev. */
