@@ -2,9 +2,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"main": "src/worker.ts",
 	// Matches the existing "imperium-backend-prod" Worker (dashboard name) so
-	// Cloudflare's Git integration deploys new commits to that same Worker —
-	// it already owns the api.imperiummc.net custom domain route, so nothing
-	// else needs to change there once this connects.
+	// Cloudflare's Git integration deploys new commits to that same Worker.
 	"name": "imperium-backend-prod",
 	"compatibility_date": "2026-08-01",
 	"compatibility_flags": [
@@ -20,16 +18,15 @@
 			"id": "9e292633772945a7ba3869c5f3261886"
 		}
 	],
-	// Matches the route already bound to imperium-backend-prod in the
-	// dashboard. Declared here too because Cloudflare's Git-integration
-	// deploys treat this file as authoritative and flag (or would overwrite)
-	// any drift from what's actually configured on the Worker.
-	"routes": [
-		{
-			"pattern": "api.imperiummc.net",
-			"custom_domain": true
-		}
-	],
+	// api.imperiummc.net routes to this Worker via an existing proxied CNAME
+	// record (api -> imperium-backend-prod.playimperiummc-net.workers.dev),
+	// NOT a Wrangler-managed Custom Domain. Do NOT add a `routes` block with
+	// custom_domain:true here — it fights the CNAME for ownership of the
+	// hostname and Cloudflare's API rejects it ("already has externally
+	// managed DNS records"), which aborts the entire deploy step (the new
+	// version gets uploaded but never promoted to serve traffic). The CNAME
+	// is sufficient on its own; leave DNS as-is.
+	//
 	// Non-secret values. Declared here (not just the dashboard) because
 	// Workers Builds treats this file as authoritative on every Git-triggered
 	// deploy — a plaintext var set ONLY via the dashboard gets silently wiped
