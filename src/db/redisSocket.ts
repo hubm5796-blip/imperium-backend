@@ -15,8 +15,18 @@
 // silently dropped); the extra per-call connect/AUTH round trip is a small,
 // predictable cost against the alternative of debugging a half-dead
 // long-lived connection in production.
-
-import { connect } from 'cloudflare:sockets';
+//
+// `cloudflare:sockets` is a dynamic import, not a static one: it's a virtual
+// module that only exists inside the Workers runtime. A static top-level
+// import crashes the entire module graph under plain Node (e.g. `tsx
+// src/index.ts` for local dev) the instant this file is imported, even by
+// code paths that never call a Redis function. Deferring to call time means
+// local Node dev still boots — it just can't reach Redis (only `wrangler
+// dev`, running on the real Workers runtime, can).
+async function getConnect(): Promise<typeof import('cloudflare:sockets').connect> {
+  const mod = await import('cloudflare:sockets');
+  return mod.connect;
+}
 
 export interface RedisSocketConfig {
   host: string;
@@ -138,6 +148,7 @@ export async function redisCommand(
   config: RedisSocketConfig,
   args: Array<string | number>,
 ): Promise<RespValue> {
+  const connect = await getConnect();
   const socket = connect({ hostname: config.host, port: config.port });
   try {
     await socket.opened;
@@ -177,6 +188,7 @@ export async function redisSubscribeOnce(
    */
   onSubscribed?: () => Promise<void>,
 ): Promise<string | null> {
+  const connect = await getConnect();
   const socket = connect({ hostname: config.host, port: config.port });
   const deadline = Date.now() + timeoutMs;
 

@@ -648,7 +648,12 @@ api.delete('/link', async (c) => {
 
 /* ------------------------------------------------------------------ Store */
 
-const FRONTEND_URL = env.isProduction ? 'https://imperiummc.net' : 'http://localhost:3000';
+// Function, not a module-scope constant: `env` isn't populated until
+// initEnvFromProcess()/initEnvFromBindings() runs, which happens after this
+// module's own top-level code has already been evaluated.
+function frontendUrl(): string {
+  return env.isProduction ? 'https://imperiummc.net' : 'http://localhost:3000';
+}
 
 /**
  * Auth gate for /store/* routes. Real browser traffic never carries this
@@ -751,8 +756,8 @@ api.post('/store/checkout', storeAuth, async (c) => {
       customerId,
       productId: body.productId,
       subscription: Boolean(body.subscription),
-      returnUrl: `${FRONTEND_URL}/dashboard/subscription?checkout=success`,
-      cancelUrl: `${FRONTEND_URL}/store?checkout=canceled`,
+      returnUrl: `${frontendUrl()}/dashboard/subscription?checkout=success`,
+      cancelUrl: `${frontendUrl()}/store?checkout=canceled`,
     });
     return c.json({ url: session.url });
   } catch (err) {
@@ -890,8 +895,8 @@ api.post('/store/gift-checkout', storeAuth, async (c) => {
       customerId,
       productId: body.productId,
       subscription: false,
-      returnUrl: `${FRONTEND_URL}/dashboard/subscription?gift=success`,
-      cancelUrl: `${FRONTEND_URL}/store?checkout=canceled`,
+      returnUrl: `${frontendUrl()}/dashboard/subscription?gift=success`,
+      cancelUrl: `${frontendUrl()}/store?checkout=canceled`,
     });
     return c.json({ url: session.url, recipientUsername });
   } catch (err) {

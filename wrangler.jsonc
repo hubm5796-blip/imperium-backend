@@ -1,0 +1,29 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"main": "src/worker.ts",
+	"name": "imperium-backend",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// Provisioned via `wrangler hyperdrive create` against the existing
+	// Postgres instance — see the migration plan for the exact command.
+	// Placeholder id below MUST be replaced before this deploys.
+	"hyperdrive": [
+		{
+			"binding": "HYPERDRIVE",
+			"id": "REPLACE_WITH_REAL_HYPERDRIVE_ID"
+		}
+	],
+	// Custom domain — once this Worker is verified against its *.workers.dev
+	// URL, reassign api.imperiummc.net here (replacing the stale
+	// imperium-backend-prod Worker's route) to cut production traffic over.
+	"routes": [
+		{
+			"pattern": "api.imperiummc.net",
+			"custom_domain": true
+		}
+	]
+	// All other config (DISCORD_CLIENT_ID, JWT_SECRET, PAYNOW_API_KEY, etc.)
+	// is set via `wrangler secret put <NAME>` — never committed here.
+}

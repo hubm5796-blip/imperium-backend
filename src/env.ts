@@ -1,73 +1,147 @@
-import dotenv from 'dotenv';
+// Env is populated once per warm isolate/process, not read eagerly at module
+// load time — Workers only exposes its bindings (Hyperdrive, secrets, vars)
+// per-request via the fetch handler's `env` parameter, unlike Node's
+// always-available `process.env`. The Node dev/prod entrypoint
+// (src/index.ts) calls initEnvFromProcess() once at startup; the Workers
+// entrypoint (src/worker.ts) calls initEnvFromBindings(c.env) from request
+// middleware. Every existing call site (`import { env } from './env.js'`,
+// used throughout routes/middleware/paynow/bot) is unchanged — `env` is
+// still a plain importable object, just backed by a proxy that reads
+// whichever build populated it.
 
-dotenv.config();
-
-function required(key: string, fallback?: string): string {
-  const value = process.env[key] ?? fallback;
-  if (value === undefined || value === '') {
-    throw new Error(`Missing required environment variable: ${key}`);
-  }
-  return value;
-}
-
-function optional(key: string, fallback = ''): string {
-  return process.env[key] ?? fallback;
-}
-
-function optionalInt(key: string, fallback: number): number {
-  const raw = process.env[key];
-  if (raw === undefined || raw === '') return fallback;
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isNaN(parsed)) {
-    throw new Error(`Environment variable ${key} must be an integer, got: ${raw}`);
-  }
-  return parsed;
-}
-
-export const env = {
+export interface EnvShape {
   discord: {
-    clientId: required('DISCORD_CLIENT_ID'),
-    clientSecret: required('DISCORD_CLIENT_SECRET'),
-    redirectUri: required(
-      'DISCORD_REDIRECT_URI',
-      'https://imperiummc.net/auth/callback',
-    ),
-    botToken: optional('DISCORD_BOT_TOKEN'),
-  },
-  jwtSecret: required('JWT_SECRET'),
-  databaseUrl: required('DATABASE_URL'),
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    botToken: string;
+    /** Ed25519 public key used to verify Discord Interactions webhook signatures. */
+    publicKey: string;
+  };
+  jwtSecret: string;
+  /** Node dev/prod only — Workers gets its Postgres connection via the Hyperdrive binding instead. */
+  databaseUrl: string;
   redis: {
-    host: optional('REDIS_HOST', 'localhost'),
-    port: optionalInt('REDIS_PORT', 6379),
-    password: optional('REDIS_PASSWORD'),
-  },
-  webpanelHmacSecret: required('WEBPANEL_HMAC_SECRET'),
+    host: string;
+    port: number;
+    password: string;
+  };
+  webpanelHmacSecret: string;
   /**
    * Shared secret required on bot-only endpoints (/link/confirm, DELETE /link,
    * /player/profile with ?uuid=/?discord_id=). The bot sends it in the
    * `X-Bot-Token` header. Optional in dev; if unset, bot-auth-only checks fail.
    */
-  botApiToken: optional('BOT_API_TOKEN'),
-  port: optionalInt('PORT', 3001),
-  nodeEnv: optional('NODE_ENV', 'development'),
-  isProduction: optional('NODE_ENV', 'development') === 'production',
-  /** Path to the plugin's SQLite database (for link code verification when Redis is not available). */
-  sqlitePath: optional('SQLITE_PATH', ''),
+  botApiToken: string;
+  port: number;
+  nodeEnv: string;
+  isProduction: boolean;
+  /** Path to the plugin's SQLite database — Node dev fallback only; unused on Workers (no local filesystem). */
+  sqlitePath: string;
   paynow: {
-    apiKey: required('PAYNOW_API_KEY'),
-    storeId: required('PAYNOW_STORE_ID'),
-    /**
-     * PayNow issues a distinct secret per webhook subscription (one per event
-     * type), so we register several (activated/renewed/canceled) all pointing
-     * at the same endpoint. Comma-separated; a valid signature against ANY of
-     * them is accepted.
-     */
-    webhookSecrets: required('PAYNOW_WEBHOOK_SECRETS')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean),
-    baseUrl: optional('PAYNOW_BASE_URL', 'https://api.paynow.gg'),
-  },
-} as const;
+    apiKey: string;
+    storeId: string;
+    webhookSecrets: string[];
+    baseUrl: string;
+  };
+}
 
-export type Env = typeof env;
+type Getter = (key: string, fallback?: string) => string | undefined;
+
+function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape {
+  function required(key: string, fallback?: string): string {
+    const value = get(key, fallback);
+    if (value === undefined || value === '') {
+      throw new Error(`Missing required environment variable: ${key}`);
+    }
+    return value;
+  }
+  function optional(key: string, fallback = ''): string {
+    return get(key, fallback) ?? fallback;
+  }
+  function optionalInt(key: string, fallback: number): number {
+    const raw = get(key);
+    if (raw === undefined || raw === '') return fallback;
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isNaN(parsed)) {
+      throw new Error(`Environment variable ${key} must be an integer, got: ${raw}`);
+    }
+    return parsed;
+  }
+
+  const nodeEnv = optional('NODE_ENV', 'development');
+
+  return {
+    discord: {
+      clientId: required('DISCORD_CLIENT_ID'),
+      clientSecret: required('DISCORD_CLIENT_SECRET'),
+      redirectUri: required('DISCORD_REDIRECT_URI', 'https://imperiummc.net/auth/callback'),
+      botToken: optional('DISCORD_BOT_TOKEN'),
+      publicKey: optional('DISCORD_PUBLIC_KEY'),
+    },
+    jwtSecret: required('JWT_SECRET'),
+    databaseUrl: opts.requireDatabaseUrl ? required('DATABASE_URL') : optional('DATABASE_URL'),
+    redis: {
+      host: optional('REDIS_HOST', 'localhost'),
+      port: optionalInt('REDIS_PORT', 6379),
+      password: optional('REDIS_PASSWORD'),
+    },
+    webpanelHmacSecret: required('WEBPANEL_HMAC_SECRET'),
+    botApiToken: optional('BOT_API_TOKEN'),
+    port: optionalInt('PORT', 3001),
+    nodeEnv,
+    isProduction: nodeEnv === 'production',
+    sqlitePath: optional('SQLITE_PATH', ''),
+    paynow: {
+      apiKey: required('PAYNOW_API_KEY'),
+      storeId: required('PAYNOW_STORE_ID'),
+      webhookSecrets: required('PAYNOW_WEBHOOK_SECRETS')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      baseUrl: optional('PAYNOW_BASE_URL', 'https://api.paynow.gg'),
+    },
+  };
+}
+
+let current: EnvShape | null = null;
+
+/** Node dev/prod entrypoint only. Idempotent — safe to call more than once. */
+export async function initEnvFromProcess(): Promise<void> {
+  if (current) return;
+  const dotenv = await import('dotenv');
+  dotenv.config();
+  current = buildEnv((key, fallback) => process.env[key] ?? fallback, { requireDatabaseUrl: true });
+}
+
+/**
+ * Workers entrypoint only. Idempotent per warm isolate — the Hono middleware
+ * that calls this runs on every request, but only the first call on a given
+ * isolate actually builds the env; later calls are no-ops, same as
+ * db/pool.ts's initPool().
+ */
+export function initEnvFromBindings(bindings: Record<string, unknown>): void {
+  if (current) return;
+  const get: Getter = (key, fallback) => {
+    const value = bindings[key];
+    return typeof value === 'string' ? value : fallback;
+  };
+  current = buildEnv(get, { requireDatabaseUrl: false });
+}
+
+/** Plain, importable object every existing call site already uses unchanged. */
+export const env: EnvShape = new Proxy({} as EnvShape, {
+  get(_target, prop, receiver) {
+    if (!current) {
+      throw new Error(
+        'env accessed before initialization — call initEnvFromProcess() or initEnvFromBindings() first',
+      );
+    }
+    return Reflect.get(current, prop, receiver);
+  },
+});
+
+/** Test-only: reset so a test suite can call initEnvFromProcess()/initEnvFromBindings() fresh. */
+export function __resetEnvForTests(): void {
+  current = null;
+}
