@@ -18,7 +18,7 @@ type AuthEnv = { Variables: AppContextVariables };
  */
 export const attachUser: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const token = getCookie(c, AUTH_COOKIE_NAME);
-  const user = verifyJwt(token);
+  const user = await verifyJwt(token);
   c.set('user', user);
 
   if (user?.authMethod === 'mc_code') {

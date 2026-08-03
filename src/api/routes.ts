@@ -148,7 +148,7 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     const token = await exchangeCodeForToken(code);
     const discordUser = await fetchDiscordUser(token.access_token);
 
-    const jwt = signJwt({
+    const jwt = await signJwt({
       authMethod: 'discord',
       discordId: discordUser.id,
       discordUsername: discordUser.global_name ?? discordUser.username,
@@ -233,7 +233,7 @@ api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
     discordId = null;
   }
 
-  const jwt = signJwt({
+  const jwt = await signJwt({
     authMethod: 'mc_code',
     mcUuid: record.uuid,
     ...(discordId ? { discordId } : {}),
