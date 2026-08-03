@@ -1,5 +1,5 @@
 /** /profile [user] — show a player's profile card. */
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from '@discordjs/builders';
 import { getProfile } from '../apiClient.js';
 import { profileEmbed, errorEmbed, notLinkedEmbed } from '../embeds.js';
 import { type BotCommand, getTargetUserOption } from './_shared.js';

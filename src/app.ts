@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { api } from './api/routes.js';
+import { discordInteractions } from './bot/interactions.js';
 import { logger } from './utils/logger.js';
 import type { AppContextVariables } from './types/index.js';
 
@@ -53,6 +54,9 @@ export function createApp() {
   app.get('/health', (c) => c.json({ status: 'ok' }));
 
   app.route('/api', api);
+  // Discord's Interactions Endpoint URL — configured in the Discord
+  // Developer Portal to point at https://api.imperiummc.net/discord/interactions.
+  app.route('/discord/interactions', discordInteractions);
 
   // Catch any uncaught exception from a route handler so we never leak a stack
   // trace or hang the request; log the real error and return a generic 500.

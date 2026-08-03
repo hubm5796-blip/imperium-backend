@@ -1,7 +1,6 @@
 import { serve } from '@hono/node-server';
 import { env, initEnvFromProcess } from './env.js';
 import { createApp } from './app.js';
-import { startBot } from './bot/index.js';
 import { initPool, closePool } from './db/pool.js';
 import { logger } from './utils/logger.js';
 
@@ -30,15 +29,14 @@ async function shutdown(signal: string): Promise<void> {
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
+// The Discord bot no longer runs as a separate gateway process — Discord
+// posts interactions directly to /discord/interactions (see
+// src/bot/interactions.ts), served by this same app. Run
+// `tsx src/bot/registerCommands.ts` once (or after changing a command) to
+// register slash commands.
 serve(
   { fetch: app.fetch, port: env.port },
   (info) => {
     logger.info({ port: info.port, env: env.nodeEnv }, 'ImperiumMC API listening');
-    // Start the bot in the background if a token is configured.
-    if (env.discord.botToken) {
-      void startBot().catch((err) => {
-        logger.error({ err }, 'Bot startup failed');
-      });
-    }
   },
 );

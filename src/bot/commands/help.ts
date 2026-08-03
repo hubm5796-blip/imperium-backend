@@ -1,5 +1,5 @@
 /** /help — show all bot commands and server info. */
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder } from '@discordjs/builders';
 import type { BotCommand } from './_shared.js';
 
 export const helpCommand: BotCommand = {

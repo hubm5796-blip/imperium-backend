@@ -1,5 +1,5 @@
 /** /balance — show the four currency balances. */
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from '@discordjs/builders';
 import { getProfile } from '../apiClient.js';
 import { balanceEmbed, errorEmbed, notLinkedEmbed } from '../embeds.js';
 import { type BotCommand, getTargetUserOption } from './_shared.js';

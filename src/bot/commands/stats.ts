@@ -1,5 +1,5 @@
 /** /stats — show mining and PVP statistics. */
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from '@discordjs/builders';
 import { getProfile } from '../apiClient.js';
 import { statsEmbed, errorEmbed, notLinkedEmbed } from '../embeds.js';
 import { type BotCommand, getTargetUserOption } from './_shared.js';
