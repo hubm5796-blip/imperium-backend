@@ -62,10 +62,21 @@ export const DONOR_TIERS: DonorTierProductIds[] = [
 ];
 
 const SUBSCRIPTION_PRODUCT_IDS = new Set(DONOR_TIERS.map((t) => t.subscriptionProductId));
+const LIFETIME_PRODUCT_IDS = new Set(DONOR_TIERS.map((t) => t.lifetimeProductId));
 
 /** True if `productId` is one of the 7 donor subscription products (eligible for tier-group change). */
 export function isDonorSubscriptionProduct(productId: string): boolean {
   return SUBSCRIPTION_PRODUCT_IDS.has(productId);
+}
+
+/**
+ * True if `productId` is one of the 7 one-time lifetime rank products. Gifting is
+ * restricted to these — a gifted subscription would recur against the buyer's
+ * checkout session but deliver to the recipient's PayNow customer, with no payment
+ * method on file for the renewal. Lifetime purchases have no such problem.
+ */
+export function isLifetimeProduct(productId: string): boolean {
+  return LIFETIME_PRODUCT_IDS.has(productId);
 }
 
 /** Look up a tier's metadata by its subscription product id. */

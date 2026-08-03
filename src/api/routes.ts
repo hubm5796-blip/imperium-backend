@@ -32,6 +32,7 @@ import {
   getPlayerTransactions,
   getUuidByDiscordId,
   getUuidByPaynowCustomerId,
+  getUuidByUsername,
   getWaveLeaderboard,
   setPaynowCustomerId,
   upsertCachedSubscription,
@@ -53,7 +54,7 @@ import {
   PaynowApiError,
   previewTierChange,
 } from '../paynow/client.js';
-import { isDonorSubscriptionProduct } from '../paynow/constants.js';
+import { isDonorSubscriptionProduct, isLifetimeProduct } from '../paynow/constants.js';
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
 import type { AppContextVariables } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -831,6 +832,75 @@ api.post('/store/subscription/change', storeAuth, async (c) => {
     }
     logger.error({ err, uuid }, 'Tier change failed');
     return c.json({ error: 'Failed to change tier' }, 500);
+  }
+});
+
+/**
+ * GET /api/player/lookup?username=... — resolve a username to a UUID (and
+ * display name) for the gifting flow. Requires a linked session; only tells
+ * the caller whether *some* account exists under that name, nothing else.
+ */
+api.get('/player/lookup', storeAuth, async (c) => {
+  const username = (c.req.query('username') ?? '').trim();
+  if (!username) {
+    return c.json({ error: 'Missing username query parameter' }, 400);
+  }
+  const uuid = await getUuidByUsername(username);
+  if (!uuid) {
+    return c.json({ error: 'No player found with that username' }, 404);
+  }
+  return c.json({ uuid, username });
+});
+
+/**
+ * POST /api/store/gift-checkout — create a checkout session for a one-time
+ * lifetime product, delivered to a *different* player's Minecraft account.
+ * The caller pays (redirected to the returned checkout URL); the PayNow
+ * customer — and therefore the delivery target — is resolved from the
+ * recipient's username, not the caller's own account. Lifetime products
+ * only: see isLifetimeProduct() for why subscriptions aren't giftable.
+ */
+api.post('/store/gift-checkout', storeAuth, async (c) => {
+  const buyerUuid = c.var.mcUuid!;
+  let body: { productId?: string; recipientUsername?: string };
+  try {
+    body = (await c.req.json()) as { productId?: string; recipientUsername?: string };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body.productId || !isLifetimeProduct(body.productId)) {
+    return c.json({ error: 'Invalid or unknown productId — gifting only supports lifetime ranks' }, 400);
+  }
+  const recipientUsername = (body.recipientUsername ?? '').trim();
+  if (!recipientUsername) {
+    return c.json({ error: 'Missing recipientUsername' }, 400);
+  }
+
+  const recipientUuid = await getUuidByUsername(recipientUsername);
+  if (!recipientUuid) {
+    return c.json({ error: 'No player found with that username — have they joined the server before?' }, 404);
+  }
+  if (recipientUuid === buyerUuid) {
+    return c.json({ error: 'Use the normal checkout to buy for yourself' }, 400);
+  }
+
+  try {
+    const customerId = await resolvePaynowCustomerId(recipientUuid);
+    const session = await createCheckoutSession({
+      customerId,
+      productId: body.productId,
+      subscription: false,
+      returnUrl: `${FRONTEND_URL}/dashboard/subscription?gift=success`,
+      cancelUrl: `${FRONTEND_URL}/store?checkout=canceled`,
+    });
+    return c.json({ url: session.url, recipientUsername });
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      logger.warn({ err: err.body, status: err.status, buyerUuid, recipientUuid }, 'PayNow gift checkout creation failed');
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, buyerUuid, recipientUuid }, 'Gift checkout creation failed');
+    return c.json({ error: 'Failed to create gift checkout session' }, 500);
   }
 });
 

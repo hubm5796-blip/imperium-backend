@@ -189,6 +189,19 @@ export async function getPlayerProfile(uuid: string): Promise<PlayerProfile | nu
   };
 }
 
+/**
+ * Resolve a username to its Minecraft UUID via the plugin-maintained registry
+ * (kept current on every join). Case-insensitive exact match — usernames
+ * (including Bedrock/Floodgate-prefixed ones) are matched as typed.
+ */
+export async function getUuidByUsername(username: string): Promise<string | null> {
+  const result = await query<{ uuid: string }>(
+    'SELECT uuid FROM player_names WHERE LOWER(username) = LOWER($1)',
+    [username],
+  );
+  return result.rows[0]?.uuid ?? null;
+}
+
 /** Fetch all four currency balances for a UUID, converted from minor units. */
 export async function getPlayerBalances(
   uuid: string,
