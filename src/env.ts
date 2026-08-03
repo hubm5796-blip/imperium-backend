@@ -94,7 +94,7 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     discord: {
       clientId: required('DISCORD_CLIENT_ID'),
       clientSecret: required('DISCORD_CLIENT_SECRET'),
-      redirectUri: required('DISCORD_REDIRECT_URI', 'https://imperiummc.net/auth/callback'),
+      redirectUri: required('DISCORD_REDIRECT_URI', 'https://api.imperiummc.net/api/auth/discord/callback'),
       botToken: optional('DISCORD_BOT_TOKEN'),
       publicKey: optional('DISCORD_PUBLIC_KEY'),
     },

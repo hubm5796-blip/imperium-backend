@@ -43,7 +43,9 @@ import {
 import {
   consumeLinkCode,
   consumeLoginCode,
+  consumeSessionCode,
   createLinkCode,
+  createSessionCode,
   getOnlinePlayerCount,
   sendCommandWithResponse,
 } from '../db/redis.js';
@@ -169,20 +171,22 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     const token = await exchangeCodeForToken(code);
     const discordUser = await fetchDiscordUser(token.access_token);
 
-    const jwt = await signJwt({
-      authMethod: 'discord',
+    // Code-exchange handoff: store the resolved Discord identity under a one-time
+    // code in Redis, then redirect to the FRONTEND's callback with that code. The
+    // frontend exchanges it (POST /api/auth/exchange) and signs its own session
+    // cookie on imperiummc.net. The backend owns the OAuth + Discord secret; the
+    // frontend owns the browser session — neither cookie domain nor secret leaks.
+    const sessionCode = await createSessionCode({
       discordId: discordUser.id,
       discordUsername: discordUser.global_name ?? discordUser.username,
       discordAvatar: buildAvatarUrl(discordUser),
     });
-
-    setCookie(c, AUTH_COOKIE_NAME, jwt, authCookieOptions());
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
-    return c.redirect('/dashboard', 302);
+    return c.redirect(`${frontendUrl()}/auth/callback?session=${sessionCode}`, 302);
   } catch (err) {
     logger.error({ err }, 'Discord OAuth2 callback failed');
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
-    return c.redirect('/login?error=callback_failed', 302);
+    return c.redirect(`${frontendUrl()}/login?error=callback_failed`, 302);
   }
 });
 
@@ -272,6 +276,45 @@ api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
     // src/app/api/auth/webcode/verify/route.ts), so it needs the value, not
     // just whether one exists.
     discordId,
+  });
+});
+
+/**
+ * POST /api/auth/exchange — redeem a one-time OAuth session handoff code (written
+ * by /auth/discord/callback) for the Discord identity it carries. Bot-token
+ * gated + rate-limited: only imperium-frontend's edge callback calls this, to
+ * sign its own session cookie on imperiummc.net after the backend completed the
+ * Discord OAuth (which the frontend can't do itself — it must not hold the
+ * Discord client secret). Single-use: the code is consumed on read.
+ */
+api.post('/auth/exchange', webcodeRateLimit, async (c) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  let body: { code?: string };
+  try {
+    body = (await c.req.json()) as { code?: string };
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const code = (body.code ?? '').trim();
+  if (!code) {
+    return c.json({ error: 'Missing code' }, 400);
+  }
+
+  const session = await consumeSessionCode(code);
+  if (!session) {
+    // Missing/expired/already-consumed — the 60s handoff window elapsed or this
+    // is a replay. Either way the frontend should send the user back to login.
+    return c.json({ error: 'Invalid or expired session code' }, 404);
+  }
+
+  return c.json({
+    ok: true,
+    discordId: session.discordId,
+    discordUsername: session.discordUsername,
+    discordAvatar: session.discordAvatar,
   });
 });
 

@@ -19,6 +19,14 @@ export const LINK_CODE_PREFIX = 'ImperiumMC:link_code:';
  * the backend only ever reads/consumes these, never generates them.
  */
 export const LOGIN_CODE_PREFIX = 'ImperiumMC:login_code:';
+/**
+ * Redis key prefix for one-time OAuth session handoff codes. After the backend
+ * completes Discord OAuth it stores the resolved Discord identity here under a
+ * random code, then redirects the browser to the frontend with that code; the
+ * frontend exchanges it (POST /api/auth/exchange) for its own session cookie.
+ * Short TTL (60s) + single-use (GET+DEL) — see createSessionCode/consumeSessionCode.
+ */
+export const SESSION_CODE_PREFIX = 'ImperiumMC:session:';
 
 function socketConfig(): RedisSocketConfig {
   return {
@@ -263,4 +271,59 @@ function generateLinkCode(length = 6): string {
     out += LINK_CODE_ALPHABET[bytes[i]! % LINK_CODE_ALPHABET.length];
   }
   return out;
+}
+
+/**
+ * The Discord identity the backend resolves during OAuth, handed off to the
+ * frontend via a one-time session code so the frontend can sign its own cookie
+ * without ever seeing the Discord client secret.
+ */
+export interface SessionHandoff {
+  discordId: string;
+  discordUsername: string | null;
+  /** Discord avatar hash (not a URL) — the frontend renders it via discordAvatarUrl(). */
+  discordAvatar: string | null;
+}
+
+/**
+ * Store a Discord identity under a fresh one-time code (TTL 60s) and return the
+ * code. The browser is redirected to the frontend with this code; the frontend
+ * then consumes it via consumeSessionCode (called by POST /api/auth/exchange).
+ */
+export async function createSessionCode(
+  payload: SessionHandoff,
+  ttlSeconds = 60,
+): Promise<string> {
+  const code = nanoid(24);
+  const key = `${SESSION_CODE_PREFIX}${code}`;
+  await redisCommand(socketConfig(), [
+    'SET',
+    key,
+    JSON.stringify({ ...payload, createdAt: Date.now() }),
+    'EX',
+    ttlSeconds,
+  ]);
+  return code;
+}
+
+/**
+ * Consume (single-use GET+DEL) a session handoff code. Returns the stored
+ * Discord identity, or null if the code was missing/expired/already consumed.
+ */
+export async function consumeSessionCode(code: string): Promise<SessionHandoff | null> {
+  const key = `${SESSION_CODE_PREFIX}${code.trim()}`;
+  const raw = await redisCommand(socketConfig(), ['GET', key]);
+  if (raw === null || typeof raw !== 'string') return null;
+  await redisCommand(socketConfig(), ['DEL', key]);
+  try {
+    const parsed = JSON.parse(raw) as Partial<SessionHandoff>;
+    if (!parsed.discordId) return null;
+    return {
+      discordId: parsed.discordId,
+      discordUsername: parsed.discordUsername ?? null,
+      discordAvatar: parsed.discordAvatar ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
