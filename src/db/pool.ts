@@ -1,5 +1,4 @@
 import { Pool, type QueryResult, type QueryResultRow } from 'pg';
-import { env } from '../env.js';
 import { logger } from '../utils/logger.js';
 import {
   CURRENCY_COLUMNS,
@@ -14,23 +13,47 @@ import {
 } from '../types/index.js';
 import { minorUnitsToDisplay } from '../utils/money.js';
 
-/** Shared PostgreSQL connection pool. */
-export const pool = new Pool({
-  connectionString: env.databaseUrl,
-  max: 10,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
-});
+/**
+ * Lazily-initialized PostgreSQL connection pool. Not created at module load
+ * time: on Workers, the connection string comes from the Hyperdrive binding
+ * (`c.env.HYPERDRIVE.connectionString`), which is only available per-request,
+ * not at module scope. `initPool()` is idempotent — a Hono middleware calls
+ * it on every request, but only the first call on a given warm isolate
+ * actually creates the pool; later calls reuse it, same as the old eager
+ * module-level singleton did within one Node process.
+ */
+let pool: Pool | null = null;
 
-pool.on('error', (err) => {
-  logger.error({ err }, 'Unexpected error on idle pg client');
-});
+export function initPool(connectionString: string): void {
+  if (pool) return;
+  pool = new Pool({
+    connectionString,
+    max: 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+  });
+  pool.on('error', (err) => {
+    logger.error({ err }, 'Unexpected error on idle pg client');
+  });
+}
+
+function getPool(): Pool {
+  if (!pool) {
+    throw new Error('Postgres pool not initialized — initPool() must run before any query');
+  }
+  return pool;
+}
+
+/** Drains the pool on graceful shutdown (Node dev entrypoint only — Workers has no shutdown hook). */
+export async function closePool(): Promise<void> {
+  if (pool) await pool.end();
+}
 
 async function query<T extends QueryResultRow>(
   text: string,
   params: ReadonlyArray<unknown>,
 ): Promise<QueryResult<T>> {
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     return await client.query<T>(text, params as unknown[]);
   } finally {

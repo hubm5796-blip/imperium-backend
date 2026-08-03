@@ -5,9 +5,14 @@ import { secureHeaders } from 'hono/secure-headers';
 import { env } from './env.js';
 import { api } from './api/routes.js';
 import { startBot } from './bot/index.js';
-import { pool } from './db/pool.js';
+import { initPool, closePool } from './db/pool.js';
 import { logger } from './utils/logger.js';
 import type { AppContextVariables } from './types/index.js';
+
+// Node dev/prod entrypoint: the connection string is available synchronously
+// here (dotenv/process.env), unlike the Workers entrypoint (worker.ts) where
+// it only arrives per-request via the Hyperdrive binding.
+initPool(env.databaseUrl);
 
 const app = new Hono<{ Variables: AppContextVariables }>();
 
@@ -75,7 +80,7 @@ async function shutdown(signal: string): Promise<void> {
   try {
     // Redis is now a per-call connection (db/redisSocket.ts) — nothing
     // persistent to close there. Only the Postgres pool needs draining.
-    await pool.end();
+    await closePool();
   } catch (err) {
     logger.error({ err }, 'Error during shutdown');
   }
