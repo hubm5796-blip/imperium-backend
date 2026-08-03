@@ -561,13 +561,19 @@ api.get('/leaderboards/waves', async (c) => {
 /** GET /api/server/status — online player count from Redis (live) or DB. */
 api.get('/server/status', async (c) => {
   try {
-    const online = await getOnlinePlayerCount();
+    const count = await getOnlinePlayerCount();
+    // The plugin writes ImperiumMC:online_count every 20s with a 60s TTL. A present
+    // key (even value 0) means the server process is alive and heartbeating — that's
+    // "online", regardless of whether anyone is logged in. Only a missing key (null,
+    // expired/never-written) means the server is actually down. Conflating "0 players"
+    // with "offline" made an empty-but-live server read as Offline in Discord/the site.
+    const isUp = count !== null;
     return c.json({
-      online: online === null ? false : online > 0,
-      playerCount: online ?? 0,
+      online: isUp,
+      playerCount: count ?? 0,
       maxPlayers: 200,
       timestamp: Date.now(),
-      source: online === null ? 'unknown' : 'redis',
+      source: count === null ? 'unknown' : 'redis',
     });
   } catch {
     return c.json({
