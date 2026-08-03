@@ -36,13 +36,21 @@
 	// on the next deploy unless it's declared here or the deploy passes
 	// --keep-vars. This is what caused "Missing required environment
 	// variable: DISCORD_CLIENT_ID" despite the dashboard showing it set.
+	// Every one of these was previously an un-padlocked "Variable" in the
+	// dashboard (not a "Secret") — same wipe risk applied to all of them.
 	"vars": {
+		"BACKEND_API_BASE": "https://api.imperiummc.net",
 		"DISCORD_CLIENT_ID": "1520285608906330293",
+		"DISCORD_PUBLIC_KEY": "2340504d65c62d22bab9f1150577536a0fc79d42019247dc9815bca349b45594",
+		"DISCORD_REDIRECT_URI": "https://imperiummc.net/auth/callback",
+		"PAYNOW_STORE_ID": "586713008948903936",
+		"REDIS_PORT": "6379",
+		"REDIS_TLS": "true",
 		"NODE_ENV": "production"
 	}
 	// True secrets (JWT_SECRET, PAYNOW_API_KEY, DISCORD_CLIENT_SECRET,
-	// DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY, WEBPANEL_HMAC_SECRET,
-	// BOT_API_TOKEN, REDIS_PASSWORD, PAYNOW_WEBHOOK_SECRETS, etc.) still go
-	// through `wrangler secret put <NAME>` — those DO persist across Git
-	// deploys independently of this file, unlike plaintext dashboard vars.
+	// DISCORD_BOT_TOKEN, WEBPANEL_HMAC_SECRET, BOT_API_TOKEN, REDIS_HOST,
+	// REDIS_PASSWORD, PAYNOW_WEBHOOK_SECRETS) are padlocked "Secret" entries
+	// in the dashboard and go through `wrangler secret put <NAME>` — those DO
+	// persist across Git deploys independently of this file.
 }
