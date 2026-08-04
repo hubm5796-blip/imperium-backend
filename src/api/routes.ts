@@ -578,7 +578,6 @@ api.get('/admin/server/status', async (c) => {
     source: count !== null ? 'redis' : 'unknown',
   });
 });
-});
 
 /**
  * GET /api/admin/player?query=... — staff player lookup by username or UUID.
