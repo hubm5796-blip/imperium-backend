@@ -122,7 +122,9 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
       tls: optionalBool('REDIS_TLS', false),
     },
     webpanelHmacSecret: required('WEBPANEL_HMAC_SECRET'),
-    botApiToken: optional('BOT_API_TOKEN'),
+    // BOT_API_TOKEN is required in production — without it, all bot-auth endpoints
+    // (linking, profile lookups, store checkout) silently 401. Fail loudly instead.
+    botApiToken: nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN'),
     port: optionalInt('PORT', 3001),
     nodeEnv,
     isProduction: nodeEnv === 'production',

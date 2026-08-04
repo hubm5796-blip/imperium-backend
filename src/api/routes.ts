@@ -842,6 +842,13 @@ const storeAuth: MiddlewareHandler<ApiEnv> = async (c, next) => {
     if (!uuid) {
       return c.json({ error: 'Missing X-Mc-Uuid header' }, 400);
     }
+    // Validate UUID format — rejects garbage that would trigger pointless DB queries
+    // or potential injection vectors downstream. Accepts both hyphenated and
+    // non-hyphenated UUIDs, plus Bedrock .prefix names.
+    if (!/^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/.test(uuid)
+        && !/^\.[a-zA-Z0-9_]{3,16}$/.test(uuid)) {
+      return c.json({ error: 'Invalid UUID format' }, 400);
+    }
     c.set('mcUuid', uuid);
     await next();
     return;
