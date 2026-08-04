@@ -23,7 +23,10 @@ import {
   getLeaderboard,
   getParkourLeaderboard,
   getPaynowCustomerId,
+  getPlayerAchievements,
   getPlayerBalances,
+  getPlayerCosmetics,
+  getPlayerDailyQuests,
   getPlayerFactions,
   getPlayerParkour,
   getPlayerProfile,
@@ -502,6 +505,27 @@ api.get('/player/parkour', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
   const parkour = await getPlayerParkour(uuid);
   return c.json(parkour);
+});
+
+/** GET /api/player/achievements — completed and in-progress achievements. */
+api.get('/player/achievements', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  const data = await getPlayerAchievements(uuid);
+  return c.json(data);
+});
+
+/** GET /api/player/cosmetics — owned cosmetics and active trail/hat/effects. */
+api.get('/player/cosmetics', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  const data = await getPlayerCosmetics(uuid);
+  return c.json(data);
+});
+
+/** GET /api/player/quests — today's daily quests and their progress. */
+api.get('/player/quests', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  const data = await getPlayerDailyQuests(uuid);
+  return c.json(data);
 });
 
 /* ---------------------------------------------------------------- Public */

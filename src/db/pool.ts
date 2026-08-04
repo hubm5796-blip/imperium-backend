@@ -646,7 +646,111 @@ export async function getWaveLeaderboard(limit = 20): Promise<WaveLeaderboardEnt
   );
   return result.rows.map((row) => ({
     uuid: row.uuid,
-    highest_wave: Number(row.highest_wave ?? 0),
-    total_sessions: Number(row.total_sessions ?? 0),
+    highestWave: Number(row.highest_wave ?? 0),
+    totalSessions: Number(row.total_sessions ?? 0),
   }));
+}
+
+// ─── Achievements ───────────────────────────────────────────────────────────
+
+export interface PlayerAchievement {
+  achievementId: string;
+  progress: number;
+  completed: boolean;
+  claimed: boolean;
+  completedAt: number;
+}
+
+export async function getPlayerAchievements(uuid: string): Promise<{ achievements: PlayerAchievement[] }> {
+  const result = await query<{ achievement_id: string; progress: string; completed: boolean; claimed: boolean; completed_at: string }>(
+    'SELECT achievement_id, progress, completed, claimed, completed_at FROM player_achievements WHERE uuid = $1 ORDER BY completed DESC, progress DESC',
+    [uuid],
+  );
+  return {
+    achievements: result.rows.map((row) => ({
+      achievementId: row.achievement_id,
+      progress: Number(row.progress ?? 0),
+      completed: row.completed,
+      claimed: row.claimed,
+      completedAt: Number(row.completed_at ?? 0),
+    })),
+  };
+}
+
+// ─── Cosmetics ──────────────────────────────────────────────────────────────
+
+export interface PlayerCosmetics {
+  unlocked: string[];
+  activeTrail: string | null;
+  activeHat: string | null;
+  activeKillEffect: string | null;
+  activeMineEffect: string | null;
+}
+
+export async function getPlayerCosmetics(uuid: string): Promise<PlayerCosmetics> {
+  const result = await query<{ unlocked_cosmetics: string | null; active_trail: string | null; active_hat: string | null; active_kill_effect: string | null; active_mine_effect: string | null }>(
+    'SELECT unlocked_cosmetics, active_trail, active_hat, active_kill_effect, active_mine_effect FROM player_cosmetics WHERE uuid = $1',
+    [uuid],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return { unlocked: [], activeTrail: null, activeHat: null, activeKillEffect: null, activeMineEffect: null };
+  }
+  let unlocked: string[] = [];
+  try {
+    unlocked = JSON.parse(row.unlocked_cosmetics ?? '[]');
+  } catch {
+    unlocked = [];
+  }
+  return {
+    unlocked,
+    activeTrail: row.active_trail,
+    activeHat: row.active_hat,
+    activeKillEffect: row.active_kill_effect,
+    activeMineEffect: row.active_mine_effect,
+  };
+}
+
+// ─── Skill Tree ─────────────────────────────────────────────────────────────
+
+export interface PlayerSkillNode {
+  branch: string;
+  nodeId: string;
+}
+
+export async function getPlayerSkillNodes(uuid: string): Promise<{ nodes: PlayerSkillNode[] }> {
+  const result = await query<{ branch: string; node_id: string }>(
+    'SELECT branch, node_id FROM player_skills WHERE uuid = $1',
+    [uuid],
+  );
+  return {
+    nodes: result.rows.map((row) => ({
+      branch: row.branch,
+      nodeId: row.node_id,
+    })),
+  };
+}
+
+// ─── Daily Quests ───────────────────────────────────────────────────────────
+
+export interface PlayerDailyQuest {
+  questId: string;
+  progress: number;
+  completed: boolean;
+  claimed: boolean;
+}
+
+export async function getPlayerDailyQuests(uuid: string): Promise<{ quests: PlayerDailyQuest[] }> {
+  const result = await query<{ quest_id: string; progress: string; completed: boolean; claimed: boolean }>(
+    "SELECT quest_id, progress, completed, claimed FROM player_daily_quests WHERE uuid = $1 AND assigned_date = CURRENT_DATE",
+    [uuid],
+  );
+  return {
+    quests: result.rows.map((row) => ({
+      questId: row.quest_id,
+      progress: Number(row.progress ?? 0),
+      completed: row.completed,
+      claimed: row.claimed,
+    })),
+  };
 }
