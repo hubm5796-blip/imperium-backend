@@ -51,6 +51,15 @@ export async function getCachedJson<T>(key: string): Promise<T | null> {
   }
 }
 
+/** Best-effort cache invalidation — failures are logged, never thrown. */
+export async function deleteCachedJson(key: string): Promise<void> {
+  try {
+    await redisCommand(socketConfig(), ['DEL', `${RESPONSE_CACHE_PREFIX}${key}`]);
+  } catch (err) {
+    logger.warn({ err, key }, 'Response cache delete failed — non-fatal');
+  }
+}
+
 /** Best-effort write to the response cache — failures are logged, never thrown. */
 export async function setCachedJson(key: string, value: unknown, ttlSeconds: number): Promise<void> {
   try {

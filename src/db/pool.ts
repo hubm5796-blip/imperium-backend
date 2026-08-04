@@ -1,4 +1,5 @@
 import { Pool, type QueryResult, type QueryResultRow } from 'pg';
+import { deleteCachedJson, getCachedJson, setCachedJson } from './redis.js';
 import { logger } from '../utils/logger.js';
 import {
   CURRENCY_COLUMNS,
@@ -26,9 +27,19 @@ let pool: Pool | null = null;
 
 export function initPool(connectionString: string): void {
   if (pool) return;
+  // max: 5, not 10 -- Cloudflare Workers hard-caps a single invocation to 6
+  // concurrent connections total (https://developers.cloudflare.com/hyperdrive/,
+  // confirmed via the platform's own gotchas doc). A pool sized above that cap
+  // doesn't error cleanly -- it queues past the limit and connection-acquire
+  // calls silently time out at connectionTimeoutMillis, which upstream code
+  // that does `catch { return null }` (e.g. getUuidByDiscordId call sites)
+  // then reports as "not found" even when the row genuinely exists. This is
+  // exactly what was happening: a live, already-linked Discord account was
+  // being told "not linked" because the DB call queued past 6 connections in
+  // flight and timed out at 5s, not because the link didn't exist.
   pool = new Pool({
     connectionString,
-    max: 10,
+    max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
   });
@@ -61,13 +72,32 @@ export async function query<T extends QueryResultRow>(
   }
 }
 
-/** Look up the Minecraft UUID associated with a Discord account, if linked. */
+/**
+ * Look up the Minecraft UUID associated with a Discord account, if linked.
+ * This is the identity-resolution step for every Discord login — if it can't
+ * run, nobody who signed in with Discord can do anything on the site,
+ * including cancel a subscription. Redis (Upstash) is a genuinely separate
+ * provider from Postgres (Neon), so caching the mapping there and falling
+ * back to it on a Postgres failure means login survives either provider
+ * going down alone, not just a Postgres misconfiguration/overload. Links
+ * change rarely, so a 24h TTL is refreshed on every successful read anyway.
+ */
+const DISCORD_UUID_CACHE_TTL_SECONDS = 86_400;
+
 export async function getUuidByDiscordId(discordId: string): Promise<string | null> {
-  const result = await query<Pick<DiscordLinkRow, 'uuid'>>(
-    'SELECT uuid FROM discord_links WHERE discord_id = $1',
-    [discordId],
-  );
-  return result.rows[0]?.uuid ?? null;
+  const cacheKey = `discord_uuid:${discordId}`;
+  try {
+    const result = await query<Pick<DiscordLinkRow, 'uuid'>>(
+      'SELECT uuid FROM discord_links WHERE discord_id = $1',
+      [discordId],
+    );
+    const uuid = result.rows[0]?.uuid ?? null;
+    if (uuid) void setCachedJson(cacheKey, uuid, DISCORD_UUID_CACHE_TTL_SECONDS);
+    return uuid;
+  } catch (err) {
+    logger.warn({ err, discordId }, 'Postgres lookup failed for discord_id -> uuid; trying Redis fallback');
+    return await getCachedJson<string>(cacheKey);
+  }
 }
 
 /** Look up the Discord id linked to a Minecraft UUID, if any. */
@@ -103,6 +133,9 @@ export async function upsertDiscordLink(uuid: string, discordId: string): Promis
            linked_at = EXCLUDED.linked_at`,
     [uuid, discordId],
   );
+  // Warm the Redis fallback immediately rather than waiting for the first
+  // getUuidByDiscordId read — see its docs for why this cache exists.
+  void setCachedJson(`discord_uuid:${discordId}`, uuid, DISCORD_UUID_CACHE_TTL_SECONDS);
 }
 
 /** Remove a Discord <-> Minecraft link by Discord id. Returns true if a row was deleted. */
@@ -111,16 +144,19 @@ export async function deleteDiscordLinkByDiscordId(discordId: string): Promise<b
     'DELETE FROM discord_links WHERE discord_id = $1',
     [discordId],
   );
+  void deleteCachedJson(`discord_uuid:${discordId}`);
   return (result.rowCount ?? 0) > 0;
 }
 
 /** Remove a Discord<->Minecraft link by the MC side — used by the website's
  * own unlink action, where the session is uuid-first regardless of login method. */
 export async function deleteDiscordLinkByUuid(uuid: string): Promise<boolean> {
-  const result = await query(
-    'DELETE FROM discord_links WHERE uuid = $1',
+  const result = await query<Pick<DiscordLinkRow, 'discord_id'>>(
+    'DELETE FROM discord_links WHERE uuid = $1 RETURNING discord_id',
     [uuid],
   );
+  const discordId = result.rows[0]?.discord_id;
+  if (discordId) void deleteCachedJson(`discord_uuid:${discordId}`);
   return (result.rowCount ?? 0) > 0;
 }
 
