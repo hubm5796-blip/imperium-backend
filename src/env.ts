@@ -94,7 +94,21 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     discord: {
       clientId: required('DISCORD_CLIENT_ID'),
       clientSecret: required('DISCORD_CLIENT_SECRET'),
-      redirectUri: required('DISCORD_REDIRECT_URI', 'https://api.imperiummc.net/api/auth/discord/callback'),
+      // Derive the OAuth redirect URI from BACKEND_API_BASE (reliably set in wrangler
+      // config to https://api.imperiummc.net). DISCORD_REDIRECT_URI is NOT trusted as-is:
+      // it kept getting clobbered to a stale frontend-path value on every Workers Builds
+      // redeploy, breaking Discord login with "invalid redirect_uri". The callback is a
+      // fixed path on THIS backend, so computing it from the backend's own origin is always
+      // correct. Only honor an explicit override if it points at a backend callback URL.
+      redirectUri: (() => {
+        const base = optional('BACKEND_API_BASE', 'https://api.imperiummc.net').replace(/\/$/, '');
+        const derived = `${base}/api/auth/discord/callback`;
+        const override = optional('DISCORD_REDIRECT_URI');
+        // Honor the override only if it's the correct backend callback (not the stale
+        // frontend-path value that the clobbering keeps reintroducing).
+        if (override && override.includes('/api/auth/discord/callback')) return override.trim();
+        return derived;
+      })(),
       botToken: optional('DISCORD_BOT_TOKEN'),
       publicKey: optional('DISCORD_PUBLIC_KEY'),
     },
