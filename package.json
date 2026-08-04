@@ -18,11 +18,11 @@
     "@hono/node-server": "^1.13.0",
     "@hono/zod-validator": "^0.4.0",
     "cookie": "^1.0.1",
-    "discord-api-types": "^0.38.51",
+    "discord-api-types": "^0.38.52",
     "discord-interactions": "^4.4.0",
     "dotenv": "^16.4.0",
-    "hono": "^4.6.0",
-    "jose": "^6.2.7",
+    "hono": "^4.13.0",
+    "jose": "^6.2.8",
     "nanoid": "^5.0.0",
     "pg": "^8.13.0",
     "zod": "^3.23.0"
@@ -30,9 +30,9 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260801.1",
     "@types/cookie": "^1.0.0",
-    "@types/node": "^22.7.0",
-    "@types/pg": "^8.11.0",
-    "tsx": "^4.19.0",
+    "@types/node": "^26.1.2",
+    "@types/pg": "^8.20.3",
+    "tsx": "^4.23.5",
     "typescript": "^5.6.0",
     "wrangler": "^4.118.0"
   }

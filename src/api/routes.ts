@@ -9,7 +9,6 @@ import {
 } from '../auth/jwt.js';
 import { env } from '../env.js';
 import {
-  buildAvatarUrl,
   buildAuthorizeUrl,
   exchangeCodeForToken,
   fetchDiscordUser,
@@ -34,6 +33,7 @@ import {
   getUuidByDiscordId,
   getUuidByPaynowCustomerId,
   getUuidByUsername,
+  getNameByUuid,
   getWaveLeaderboard,
   isAlreadyLinked,
   setPaynowCustomerId,
@@ -179,7 +179,10 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     const sessionCode = await createSessionCode({
       discordId: discordUser.id,
       discordUsername: discordUser.global_name ?? discordUser.username,
-      discordAvatar: buildAvatarUrl(discordUser),
+      // Store the avatar HASH (not a CDN URL) — the frontend's discordAvatarUrl()
+      // builds the URL itself from (id, hash). Storing buildAvatarUrl()'s full URL
+      // here produced a broken double-URL on the dashboard.
+      discordAvatar: discordUser.avatar ?? null,
     });
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
     return c.redirect(`${frontendUrl()}/api/auth/callback?session=${sessionCode}`, 302);
@@ -744,7 +747,16 @@ api.post('/link/confirm', async (c) => {
 
   try {
     await upsertDiscordLink(record.uuid, discordId);
-    return c.json({ ok: true, linked: true, discordId, uuid: record.uuid });
+    // Resolve the Minecraft username so the bot can show "linked to <name>"
+    // instead of "linked to undefined". Falls back to the UUID if the player
+    // hasn't joined since the player_names registry was introduced.
+    let username: string | null = null;
+    try {
+      username = await getNameByUuid(record.uuid);
+    } catch {
+      // player_names table missing or PG hiccup — degrade to the uuid.
+    }
+    return c.json({ ok: true, linked: true, discordId, uuid: record.uuid, username: username ?? record.uuid });
   } catch {
     return c.json({ error: 'Failed to persist link' }, 500);
   }

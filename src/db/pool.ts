@@ -240,6 +240,19 @@ export async function getUuidByUsername(username: string): Promise<string | null
   return result.rows[0]?.uuid ?? null;
 }
 
+/**
+ * Resolve a Minecraft UUID to its current username via the plugin-maintained
+ * player_names registry (kept current on every join). Returns null if the UUID
+ * is unknown (player never joined, or the registry isn't populated yet).
+ */
+export async function getNameByUuid(uuid: string): Promise<string | null> {
+  const result = await query<{ username: string }>(
+    'SELECT username FROM player_names WHERE uuid = $1',
+    [uuid],
+  );
+  return result.rows[0]?.username ?? null;
+}
+
 /** Fetch all four currency balances for a UUID, converted from minor units. */
 export async function getPlayerBalances(
   uuid: string,
