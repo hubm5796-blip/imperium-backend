@@ -40,6 +40,7 @@ import {
   getNameByUuid,
   getWaveLeaderboard,
   isAlreadyLinked,
+  query,
   setPaynowCustomerId,
   upsertCachedSubscription,
   upsertDiscordLink,
@@ -554,6 +555,7 @@ api.get('/admin/server/status', async (c) => {
     try {
       const result = await query<{ uuid: string; username: string }>(
         `SELECT op.uuid, pn.username FROM online_players op LEFT JOIN player_names pn ON op.uuid = pn.uuid LIMIT 100`,
+        [],
       );
       onlinePlayers = result.rows;
     } catch {
@@ -745,7 +747,7 @@ api.get('/player/permissions', async (c) => {
       `SELECT group_name FROM luckperms_players WHERE uuid = $1`,
       [uuid],
     );
-    groups = result.rows.map((r) => r.group_name.toLowerCase());
+    groups = result.rows.map((r: { group_name: string }) => r.group_name.toLowerCase());
   } catch {
     // LuckPerms table may not exist or have a different name
   }
@@ -868,8 +870,8 @@ api.get('/leaderboards/waves', async (c) => {
     rank: i + 1,
     uuid: row.uuid,
     username: row.uuid,
-    highest_wave: row.highest_wave,
-    total_sessions: row.total_sessions,
+    highest_wave: row.highestWave,
+    total_sessions: row.totalSessions,
   }));
   return c.json({ entries });
 });

@@ -49,7 +49,7 @@ export async function closePool(): Promise<void> {
   if (pool) await pool.end();
 }
 
-async function query<T extends QueryResultRow>(
+export async function query<T extends QueryResultRow>(
   text: string,
   params: ReadonlyArray<unknown>,
 ): Promise<QueryResult<T>> {
@@ -633,8 +633,8 @@ export async function getEloLeaderboard(limit = 20): Promise<EloLeaderboardEntry
 /** A single endless-wave leaderboard entry (1-based rank added by the caller). */
 export interface WaveLeaderboardEntry {
   uuid: string;
-  highest_wave: number;
-  total_sessions: number;
+  highestWave: number;
+  totalSessions: number;
 }
 
 /** Top players by highest wave survived. */
