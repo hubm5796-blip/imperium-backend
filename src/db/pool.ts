@@ -357,59 +357,66 @@ export async function getLeaderboard(
   const cap = Math.min(Math.max(limit, 1), 100);
 
   if (type === 'denarius') {
-    const result = await query<{ uuid: string; balance: string }>(
-      `SELECT uuid, balance
-         FROM currency_balances
-        WHERE currency = $1
-        ORDER BY balance DESC
+    const result = await query<{ uuid: string; balance: string; name: string | null }>(
+      `SELECT cb.uuid, cb.balance, pn.username AS name
+         FROM currency_balances cb
+         LEFT JOIN player_names pn ON cb.uuid = pn.uuid
+        WHERE cb.currency = $1
+        ORDER BY cb.balance DESC
         LIMIT $2`,
       [CURRENCY_COLUMNS.denarius, cap],
     );
     return result.rows.map((row) => ({
       uuid: row.uuid,
+      name: row.name ?? undefined,
       value: minorUnitsToDisplay(row.balance),
     }));
   }
 
   if (type === 'blocks') {
-    const result = await query<{ uuid: string; blocks_mined: string }>(
-      `SELECT uuid, blocks_mined
-         FROM player_stats
-        ORDER BY blocks_mined DESC
+    const result = await query<{ uuid: string; blocks_mined: string; name: string | null }>(
+      `SELECT ps.uuid, ps.blocks_mined, pn.username AS name
+         FROM player_stats ps
+         LEFT JOIN player_names pn ON ps.uuid = pn.uuid
+        ORDER BY ps.blocks_mined DESC
         LIMIT $1`,
       [cap],
     );
     return result.rows.map((row) => ({
       uuid: row.uuid,
-      // blocks_mined is a raw COUNT, not minor-unit currency; do NOT divide.
+      name: row.name ?? undefined,
       value: Number(row.blocks_mined ?? 0),
     }));
   }
 
   if (type === 'playtime') {
-    const result = await query<{ uuid: string; play_time: string }>(
-      `SELECT uuid, play_time
-         FROM player_stats
-        ORDER BY play_time DESC
+    const result = await query<{ uuid: string; play_time: string; name: string | null }>(
+      `SELECT ps.uuid, ps.play_time, pn.username AS name
+         FROM player_stats ps
+         LEFT JOIN player_names pn ON ps.uuid = pn.uuid
+        ORDER BY ps.play_time DESC
         LIMIT $1`,
       [cap],
     );
     return result.rows.map((row) => ({
       uuid: row.uuid,
+      name: row.name ?? undefined,
       value: Number(row.play_time),
     }));
   }
 
   // prestige
-  const result = await query<{ uuid: string; prestige_level: string; prestige_points: string }>(
-    `SELECT uuid, prestige_level, prestige_points
-       FROM prestige_data
-      ORDER BY prestige_level DESC, prestige_points DESC
+  const result = await query<{ uuid: string; prestige_level: string; prestige_points: string; name: string | null }>(
+    `SELECT pd.uuid, pd.prestige_level, pd.prestige_points, pn.username AS name
+       FROM prestige_data pd
+       LEFT JOIN player_names pn ON pd.uuid = pn.uuid
+      ORDER BY pd.prestige_level DESC, pd.prestige_points DESC
       LIMIT $1`,
     [cap],
   );
   return result.rows.map((row) => ({
     uuid: row.uuid,
+    name: row.name ?? undefined,
     value: Number(row.prestige_level),
     secondary: Number(row.prestige_points),
   }));
