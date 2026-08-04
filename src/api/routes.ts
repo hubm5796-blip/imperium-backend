@@ -419,9 +419,21 @@ api.get('/player/profile', async (c) => {
   // SQLite field, then 0. Currency always comes from getPlayerBalances (above).
   const p = profile as any;
 
+  // Resolve the Minecraft username from the player_names registry (the PG
+  // getPlayerProfile doesn't include it). Falls back to the SQLite profile's
+  // username, then to the UUID if neither is available.
+  let resolvedUsername = p.username ?? null;
+  if (!resolvedUsername) {
+    try {
+      resolvedUsername = await getNameByUuid(uuid);
+    } catch {
+      // player_names table not available — fall through to UUID
+    }
+  }
+
   return c.json({
     uuid,
-    username: p.username ?? `Player`,
+    username: resolvedUsername ?? `Player`,
     discordId: queryDiscordId ?? c.var.user?.discordId ?? null,
     rank: p.rank?.level ?? p.rank_level ?? p.rank ?? 0,
     prestigeLevel: p.prestige?.level ?? p.prestige_level ?? p.prestige ?? 0,
