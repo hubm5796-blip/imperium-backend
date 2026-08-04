@@ -1190,8 +1190,8 @@ api.post('/store/checkout', storeAuth, async (c) => {
       logger.warn({ err: err.body, status: err.status, uuid }, 'PayNow checkout creation failed');
       return c.json({ error: err.message }, 502);
     }
-    logger.error({ err, uuid }, 'Checkout creation failed');
-    return c.json({ error: 'Failed to create checkout session' }, 500);
+    logger.error({ err: err instanceof Error ? err.message : String(err), uuid }, 'Checkout creation failed');
+    return c.json({ error: 'Checkout service unavailable. Please try again.' }, 500);
   }
 });
 
