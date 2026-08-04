@@ -281,16 +281,13 @@ api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
 
 /**
  * POST /api/auth/exchange — redeem a one-time OAuth session handoff code (written
- * by /auth/discord/callback) for the Discord identity it carries. Bot-token
- * gated + rate-limited: only imperium-frontend's edge callback calls this, to
- * sign its own session cookie on imperiummc.net after the backend completed the
- * Discord OAuth (which the frontend can't do itself — it must not hold the
- * Discord client secret). Single-use: the code is consumed on read.
+ * by /auth/discord/callback) for the Discord identity it carries. Rate-limited.
+ * No bot-token gate: the session code is itself a single-use capability token
+ * (60s TTL, consumed on read), so possession of it IS the authorization. Only
+ * imperium-frontend's edge callback calls this to sign its own session cookie on
+ * imperiummc.net after the backend completed the Discord OAuth. Single-use.
  */
 api.post('/auth/exchange', webcodeRateLimit, async (c) => {
-  if (!requireBotAuth(c)) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
   let body: { code?: string };
   try {
     body = (await c.req.json()) as { code?: string };
