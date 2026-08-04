@@ -9,3 +9,6 @@ dist/
 .dev.vars
 .dev.vars.*
 .wrangler/
+
+# Backend log (local dev)
+backend.log
