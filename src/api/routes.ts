@@ -536,6 +536,233 @@ api.get('/player/legion', requireAuth, requireLinked, async (c) => {
   return c.json(data);
 });
 
+/* ---------------------------------------------------------------- Admin */
+
+/**
+ * GET /api/admin/server/status — enriched status for staff (TPS, memory, online
+ * player list). The frontend proxy route (src/app/api/admin/status/route.ts)
+ * forwards here with the X-Bot-Token + X-Admin-Discord-Id headers.
+ */
+api.get('/admin/server/status', async (c) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  try {
+    const count = await getOnlinePlayerCount();
+    // Fetch online player names from the online_players table (if it exists)
+    let onlinePlayers: { uuid: string; username: string }[] = [];
+    try {
+      const result = await query<{ uuid: string; username: string }>(
+        `SELECT op.uuid, pn.username FROM online_players op LEFT JOIN player_names pn ON op.uuid = pn.uuid LIMIT 100`,
+      );
+      onlinePlayers = result.rows;
+    } catch {
+      // Table may not exist — degrade to just the count
+    }
+    return c.json({
+      online: count !== null,
+      playerCount: count ?? 0,
+      maxPlayers: 200,
+      onlinePlayers,
+      source: count !== null ? 'redis' : 'unknown',
+    });
+  } catch {
+    return c.json({ online: false, playerCount: 0, maxPlayers: 200, source: 'unavailable' });
+  }
+});
+
+/**
+ * GET /api/admin/player?query=... — staff player lookup by username or UUID.
+ * Returns the full profile (rank, prestige, stats, balances, username).
+ */
+api.get('/admin/player', async (c) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const query_param = c.req.query('query') ?? '';
+  if (!query_param) {
+    return c.json({ error: 'Missing query parameter' }, 400);
+  }
+
+  // Try to resolve as UUID first, then as username
+  let uuid: string | null = null;
+  if (/^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/.test(query_param)) {
+    uuid = query_param;
+  } else {
+    uuid = await getUuidByUsername(query_param);
+  }
+
+  if (!uuid) {
+    return c.json({ error: 'Player not found' }, 404);
+  }
+
+  const profile = await getPlayerProfile(uuid);
+  if (!profile) {
+    return c.json({ uuid, error: 'Profile data not available yet' }, 200);
+  }
+
+  const balances = await getPlayerBalances(uuid);
+  let username: string | null = null;
+  try {
+    username = await getNameByUuid(uuid);
+  } catch {
+    // Best effort
+  }
+
+  const p = profile as any;
+  return c.json({
+    uuid,
+    username: username ?? 'Player',
+    rank: p.rank?.level ?? 0,
+    prestige: p.prestige?.level ?? 0,
+    denarius: balances.denarius,
+    auctoritas: balances.tokens,
+    civitas: balances.beacons,
+    aureus: balances.goldenCoins,
+    blocksMined: p.stats?.blocksMined ?? 0,
+    playtimeSeconds: Number(p.stats?.playTime ?? 0),
+    pvpKills: p.stats?.pvpKills ?? 0,
+    pvpDeaths: p.stats?.pvpDeaths ?? 0,
+  });
+});
+
+/**
+ * POST /api/admin/punish — forward a punishment to the plugin via Redis.
+ * Body: { target, action, reason, duration, actor }
+ */
+api.post('/admin/punish', async (c) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  let body: { target?: string; action?: string; reason?: string; duration?: string; actor?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+
+  const target = body.target ?? '';
+  const action = body.action ?? '';
+  const reason = body.reason ?? '';
+
+  if (!target || !action) {
+    return c.json({ error: 'Missing target or action' }, 400);
+  }
+
+  // Try to forward via the Redis command bus
+  try {
+    const response = await sendCommandWithResponse(
+      'PUNISH_PLAYER',
+      { target, action, reason, duration: body.duration, actor: body.actor },
+      5_000,
+    );
+    if (response.status === 'OK') {
+      return c.json({ ok: true, result: response.data ?? null });
+    }
+    return c.json({ error: response.error ?? 'Plugin rejected the action' }, 502);
+  } catch {
+    return c.json({ error: 'Plugin did not respond — punishment may not be wired yet' }, 501);
+  }
+});
+
+/**
+ * POST /api/admin/broadcast — forward a broadcast to the plugin.
+ */
+api.post('/admin/broadcast', async (c) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  let body: { message?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+
+  const message = body.message ?? '';
+  if (!message || message.length < 1 || message.length > 256) {
+    return c.json({ error: 'Message must be 1-256 characters' }, 400);
+  }
+
+  try {
+    const response = await sendCommandWithResponse('BROADCAST', { message }, 5_000);
+    if (response.status === 'OK') {
+      return c.json({ ok: true });
+    }
+    return c.json({ error: response.error ?? 'Plugin rejected the broadcast' }, 502);
+  } catch {
+    return c.json({ error: 'Plugin did not respond — broadcast may not be wired yet' }, 501);
+  }
+});
+
+/**
+ * POST /api/admin/reload — trigger a config reload on the plugin.
+ */
+api.post('/admin/reload', async (c) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  try {
+    const response = await sendCommandWithResponse('RELOAD_CONFIG', {}, 10_000);
+    if (response.status === 'OK') {
+      return c.json({ ok: true });
+    }
+    return c.json({ error: response.error ?? 'Plugin rejected the reload' }, 502);
+  } catch {
+    return c.json({ error: 'Plugin did not respond — reload may not be wired yet' }, 501);
+  }
+});
+
+/**
+ * GET /api/player/permissions?discord_id=... — resolve LuckPerms groups for a
+ * Discord-linked player. Used by the frontend admin gate + AdminContext.
+ */
+api.get('/player/permissions', async (c) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const discordId = c.req.query('discord_id');
+  if (!discordId) {
+    return c.json({ error: 'Missing discord_id' }, 400);
+  }
+
+  // Resolve the MC UUID from the Discord link
+  let uuid: string | null = null;
+  try {
+    uuid = await getUuidByDiscordId(discordId);
+  } catch {
+    uuid = null;
+  }
+
+  if (!uuid) {
+    return c.json({ isAdmin: false, isMod: false, isHelper: false, groups: [] });
+  }
+
+  // Query LuckPerms groups from the database (the plugin writes them)
+  let groups: string[] = [];
+  try {
+    const result = await query<{ group_name: string }>(
+      `SELECT group_name FROM luckperms_players WHERE uuid = $1`,
+      [uuid],
+    );
+    groups = result.rows.map((r) => r.group_name.toLowerCase());
+  } catch {
+    // LuckPerms table may not exist or have a different name
+  }
+
+  // Derive admin flags from group names
+  const adminGroups = ['admin', 'owner', 'manager', 'dev'];
+  const modGroups = ['mod', 'moderator', 'srmod', 'headmod', ...adminGroups];
+  const helperGroups = ['helper', ...modGroups];
+
+  return c.json({
+    isAdmin: groups.some((g) => adminGroups.includes(g)),
+    isMod: groups.some((g) => modGroups.includes(g)),
+    isHelper: groups.some((g) => helperGroups.includes(g)),
+    groups,
+  });
+});
+
 /* ---------------------------------------------------------------- Public */
 
 /** GET /api/leaderboards/:type — top 20 by denarius | blocks | prestige | playtime. */
