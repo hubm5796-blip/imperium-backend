@@ -1267,10 +1267,14 @@ api.post('/store/subscription/change', storeAuth, async (c) => {
 
 /**
  * GET /api/player/lookup?username=... — resolve a username to a UUID (and
- * display name) for the gifting flow. Requires a linked session; only tells
- * the caller whether *some* account exists under that name, nothing else.
+ * display name). Used by the gifting flow AND by the auth/me endpoint to
+ * auto-resolve a Discord user's MC account when they share the same username.
  */
-api.get('/player/lookup', storeAuth, async (c) => {
+api.get('/player/lookup', async (c) => {
+  // Accept either bot token OR session auth
+  if (!requireBotAuth(c) && !c.var.user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
   const username = (c.req.query('username') ?? '').trim();
   if (!username) {
     return c.json({ error: 'Missing username query parameter' }, 400);
