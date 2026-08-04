@@ -52,15 +52,19 @@ import {
   consumeSessionCode,
   createLinkCode,
   createSessionCode,
+  getCachedJson,
   getOnlinePlayerCount,
   sendCommandWithResponse,
+  setCachedJson,
 } from '../db/redis.js';
 import {
   applyTierChange,
+  cancelSubscription,
   createCheckoutSession,
   createCustomerToken,
   findOrCreatePaynowCustomer,
   getCustomerSubscriptions,
+  getSubscriptionById,
   PaynowApiError,
   previewTierChange,
 } from '../paynow/client.js';
@@ -386,6 +390,23 @@ api.get('/player/profile', async (c) => {
     return c.json({ error: 'Player not linked' }, 404);
   }
 
+  const discordId = queryDiscordId ?? c.var.user?.discordId ?? null;
+
+  // Short-TTL cache of everything that's purely a function of uuid (NOT
+  // discordId — that varies by caller context, so it's always computed fresh
+  // below and never cached). The frontend dashboard calls this same backend
+  // route 3x per page load (profile/stats/balances each re-fetch the whole
+  // thing to pull out different fields) — this collapses that back down to
+  // one real Postgres round trip. Cache-read/write failures are fail-open
+  // (see getCachedJson/setCachedJson) — a Redis outage just means no caching,
+  // never a broken response.
+  type CachedProfileFields = Omit<Record<string, unknown>, 'discordId'>;
+  const cacheKey = `player_profile:${uuid}`;
+  const cachedFields = await getCachedJson<CachedProfileFields>(cacheKey);
+  if (cachedFields) {
+    return c.json({ ...cachedFields, discordId });
+  }
+
   // Try PostgreSQL first, fall back to SQLite
   let profile: any = null;
   try {
@@ -437,10 +458,9 @@ api.get('/player/profile', async (c) => {
     }
   }
 
-  return c.json({
+  const fields = {
     uuid,
     username: resolvedUsername ?? `Player`,
-    discordId: queryDiscordId ?? c.var.user?.discordId ?? null,
     rank: p.rank?.level ?? p.rank_level ?? p.rank ?? 0,
     prestigeLevel: p.prestige?.level ?? p.prestige_level ?? p.prestige ?? 0,
     denarius: balances.denarius ?? 0,
@@ -452,7 +472,16 @@ api.get('/player/profile', async (c) => {
     pvpKills: p.stats?.pvpKills ?? p.pvpKills ?? p.pvp_kills ?? 0,
     pvpDeaths: p.stats?.pvpDeaths ?? p.pvpDeaths ?? p.pvp_deaths ?? 0,
     trophies: p.stats?.pvpTrophies ?? p.pvpTrophies ?? p.pvp_trophies ?? 0,
-  });
+  };
+
+  // 15s TTL: long enough to collapse the dashboard's own 3 redundant calls
+  // into one real read, short enough that a fresh purchase/rank-up/balance
+  // change shows up on the next page load rather than feeling stale.
+  // setCachedJson already fails open internally (logs, never throws) — fire
+  // without awaiting so a slow/unreachable Redis never delays the response.
+  void setCachedJson(cacheKey, fields, 15);
+
+  return c.json({ ...fields, discordId });
 });
 
 /** GET /api/player/balances — the four currencies, converted from minor units. */
@@ -1122,12 +1151,38 @@ const storeAuth: MiddlewareHandler<ApiEnv> = async (c, next) => {
   await next();
 };
 
+/**
+ * Postgres here is a performance cache, never a hard dependency — PayNow's
+ * own customer-lookup-by-minecraft_uuid is the actual source of truth.
+ * A DB outage should make the store slower (an extra PayNow round trip per
+ * request instead of a cached row), never take checkout/subscriptions/
+ * cancellation down entirely. Every DB call on this path goes through one of
+ * these two wrappers so that failure mode is enforced in one place.
+ */
+async function dbReadOrNull<T>(label: string, fn: () => Promise<T | null>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (err) {
+    logger.warn({ err, label }, 'DB read failed on store path — degrading to a live PayNow call');
+    return null;
+  }
+}
+
+function dbWriteBestEffort(label: string, fn: () => Promise<void>): void {
+  fn().catch((err: unknown) => {
+    logger.warn({ err, label }, 'DB cache write failed on store path — non-fatal, continuing');
+  });
+}
+
 /** Resolve (and lazily create) the PayNow customer id for the calling player. */
 async function resolvePaynowCustomerId(uuid: string): Promise<string> {
-  const existing = await getPaynowCustomerId(uuid);
+  const existing = await dbReadOrNull('getPaynowCustomerId', () => getPaynowCustomerId(uuid));
   if (existing) return existing;
+  // Source of truth regardless of cache state: PayNow's own lookup-by-uuid
+  // (inside findOrCreatePaynowCustomer) finds an existing customer even if
+  // our cache never had it or just failed to read.
   const customerId = await findOrCreatePaynowCustomer(uuid);
-  await setPaynowCustomerId(uuid, customerId);
+  dbWriteBestEffort('setPaynowCustomerId', () => setPaynowCustomerId(uuid, customerId));
   return customerId;
 }
 
@@ -1135,12 +1190,13 @@ async function resolvePaynowCustomerId(uuid: string): Promise<string> {
  * GET /api/store/subscription — the caller's current donor subscription, if any.
  * Reads from our webhook-fed cache first (fast, no PayNow round trip); falls
  * back to a live Storefront API call if we've never seen a webhook for this
- * player yet (e.g. their very first purchase, before the webhook lands).
+ * player yet (e.g. their very first purchase, before the webhook lands) or if
+ * the cache itself is unreachable.
  */
 api.get('/store/subscription', storeAuth, async (c) => {
   const uuid = c.var.mcUuid!;
 
-  const cached = await getCachedSubscription(uuid);
+  const cached = await dbReadOrNull('getCachedSubscription', () => getCachedSubscription(uuid));
   if (cached) {
     return c.json({
       subscriptionId: cached.subscription_id,
@@ -1149,12 +1205,8 @@ api.get('/store/subscription', storeAuth, async (c) => {
     });
   }
 
-  const customerId = await getPaynowCustomerId(uuid);
-  if (!customerId) {
-    return c.json({ subscription: null });
-  }
-
   try {
+    const customerId = await resolvePaynowCustomerId(uuid);
     const token = await createCustomerToken(customerId);
     const subs = await getCustomerSubscriptions(token);
     const active = subs.find((s) => isDonorSubscriptionProduct(String(s.product_id ?? '')));
@@ -1170,6 +1222,78 @@ api.get('/store/subscription', storeAuth, async (c) => {
     logger.error({ err, uuid }, 'Failed to fetch live PayNow subscription');
     return c.json({ subscription: null });
   }
+});
+
+/**
+ * POST /api/store/subscription/cancel — cancel the caller's active donor
+ * subscription. Always verifies live against PayNow (never trusts the cache
+ * for an authorization decision) that the subscription actually belongs to
+ * the calling player before canceling — the DB cache is only ever used to
+ * find a *candidate* subscription id, and even that step degrades to asking
+ * PayNow directly if the cache is unreachable.
+ */
+api.post('/store/subscription/cancel', storeAuth, async (c) => {
+  const uuid = c.var.mcUuid!;
+
+  let subscriptionId: string | null = null;
+  const cached = await dbReadOrNull('getCachedSubscription', () => getCachedSubscription(uuid));
+  if (cached) {
+    subscriptionId = cached.subscription_id;
+  } else {
+    try {
+      const customerId = await resolvePaynowCustomerId(uuid);
+      const token = await createCustomerToken(customerId);
+      const subs = await getCustomerSubscriptions(token);
+      const active = subs.find((s) => isDonorSubscriptionProduct(String(s.product_id ?? '')));
+      subscriptionId = active?.id ?? null;
+    } catch (err) {
+      logger.error({ err, uuid }, 'Failed to resolve subscription to cancel');
+      return c.json({ error: 'Could not reach PayNow to look up your subscription. Please try again shortly.' }, 502);
+    }
+  }
+
+  if (!subscriptionId) {
+    return c.json({ error: 'No active subscription found' }, 404);
+  }
+
+  // Authorization check: always confirm live against PayNow that this
+  // subscription's customer resolves back to the calling player, even if the
+  // id came from our own cache — a stale/tampered cache row must never be
+  // enough on its own to cancel someone's subscription.
+  try {
+    const [sub, customerId] = await Promise.all([
+      getSubscriptionById(subscriptionId),
+      resolvePaynowCustomerId(uuid),
+    ]);
+    if (sub.customer_id !== customerId) {
+      logger.warn({ uuid, subscriptionId }, 'Subscription cancel attempted against a mismatched customer');
+      return c.json({ error: 'No active subscription found' }, 404);
+    }
+  } catch (err) {
+    if (err instanceof PaynowApiError && err.status === 404) {
+      return c.json({ error: 'No active subscription found' }, 404);
+    }
+    logger.error({ err, uuid, subscriptionId }, 'Failed to verify subscription ownership before cancel');
+    return c.json({ error: 'Could not verify your subscription with PayNow. Please try again shortly.' }, 502);
+  }
+
+  try {
+    await cancelSubscription(subscriptionId);
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      logger.warn({ err: err.body, status: err.status, uuid, subscriptionId }, 'PayNow subscription cancel failed');
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, uuid, subscriptionId }, 'Subscription cancel failed');
+    return c.json({ error: 'Cancellation service unavailable. Please try again.' }, 500);
+  }
+
+  dbWriteBestEffort('upsertCachedSubscription(canceled)', async () => {
+    const productId = cached?.product_id ?? '';
+    await upsertCachedSubscription(uuid, subscriptionId!, productId, 'canceled');
+  });
+
+  return c.json({ ok: true, subscriptionId, status: 'canceled' });
 });
 
 /**
@@ -1226,12 +1350,8 @@ api.post('/store/subscription/preview-change', storeAuth, async (c) => {
     return c.json({ error: 'Invalid or unknown targetProductId' }, 400);
   }
 
-  const customerId = await getPaynowCustomerId(uuid);
-  if (!customerId) {
-    return c.json({ error: 'No PayNow customer on record for this account' }, 404);
-  }
-
   try {
+    const customerId = await resolvePaynowCustomerId(uuid);
     const token = await createCustomerToken(customerId);
     const result = await previewTierChange(token, body.targetProductId);
     return c.json(result);
@@ -1261,12 +1381,8 @@ api.post('/store/subscription/change', storeAuth, async (c) => {
     return c.json({ error: 'Invalid or unknown targetProductId' }, 400);
   }
 
-  const customerId = await getPaynowCustomerId(uuid);
-  if (!customerId) {
-    return c.json({ error: 'No PayNow customer on record for this account' }, 404);
-  }
-
   try {
+    const customerId = await resolvePaynowCustomerId(uuid);
     const token = await createCustomerToken(customerId);
     const result = await applyTierChange(token, body.targetProductId, body.verificationCode);
     return c.json(result);

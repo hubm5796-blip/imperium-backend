@@ -128,9 +128,30 @@ export async function createCheckoutSession(params: {
 /** A customer's subscription, as returned by the Storefront API. Passed through loosely typed. */
 export interface PaynowSubscription {
   id: string;
+  customer_id?: string;
   product_id?: string;
   status: string;
   [key: string]: unknown;
+}
+
+/**
+ * Cancel a subscription. PayNow's customer-token self-cancel endpoint exists
+ * on the Storefront API but is Steam-only per their docs — not available for
+ * this store's minecraft_geyser platform — so this always goes through the
+ * Management API (our own store API key), never a customer token.
+ */
+export async function cancelSubscription(subscriptionId: string): Promise<void> {
+  await managementRequest<unknown>(
+    `/v1/stores/${env.paynow.storeId}/subscriptions/${subscriptionId}/cancel`,
+    { method: 'POST' },
+  );
+}
+
+/** Fetch a single subscription by ID (Management API — used to verify ownership before canceling). */
+export async function getSubscriptionById(subscriptionId: string): Promise<PaynowSubscription> {
+  return managementRequest<PaynowSubscription>(
+    `/v1/stores/${env.paynow.storeId}/subscriptions/${subscriptionId}`,
+  );
 }
 
 /** List the calling customer's subscriptions (used to find their active donor-tier one). */

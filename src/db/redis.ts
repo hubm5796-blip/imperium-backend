@@ -27,6 +27,43 @@ export const LOGIN_CODE_PREFIX = 'ImperiumMC:login_code:';
  * Short TTL (60s) + single-use (GET+DEL) — see createSessionCode/consumeSessionCode.
  */
 export const SESSION_CODE_PREFIX = 'ImperiumMC:session:';
+/**
+ * Redis key prefix for short-TTL response caches on hot, read-heavy backend
+ * routes (currently /api/player/profile). Postgres compute-hours are the
+ * tighter free-tier constraint than Upstash's request count, so caching a
+ * repeated identical read here for a few seconds trades a cheap Redis GET for
+ * an entire Postgres round trip on every cache hit.
+ */
+export const RESPONSE_CACHE_PREFIX = 'ImperiumMC:cache:';
+
+/**
+ * Read a small JSON value from the response cache. Never throws — a cache
+ * miss and a cache failure look identical to the caller (both mean "go do
+ * the real read"), which is exactly the fail-open behavior wanted here.
+ */
+export async function getCachedJson<T>(key: string): Promise<T | null> {
+  try {
+    const raw = await redisCommand(socketConfig(), ['GET', `${RESPONSE_CACHE_PREFIX}${key}`]);
+    if (raw === null || typeof raw !== 'string') return null;
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort write to the response cache — failures are logged, never thrown. */
+export async function setCachedJson(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+  try {
+    await redisCommand(socketConfig(), [
+      'SETEX',
+      `${RESPONSE_CACHE_PREFIX}${key}`,
+      String(ttlSeconds),
+      JSON.stringify(value),
+    ]);
+  } catch (err) {
+    logger.warn({ err, key }, 'Response cache write failed — non-fatal');
+  }
+}
 
 function socketConfig(): RedisSocketConfig {
   return {
