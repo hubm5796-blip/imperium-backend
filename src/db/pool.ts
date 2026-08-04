@@ -180,6 +180,9 @@ export async function getUuidByPaynowCustomerId(customerId: string): Promise<str
  * have no row yet.
  */
 export async function getPlayerProfile(uuid: string): Promise<PlayerProfile | null> {
+  // Use a UNION-based approach: try player_ranks first, but fall back to a minimal
+  // profile if only some tables have data. A player who joined the server has data
+  // in player_names + currency_balances even if player_ranks hasn't been synced yet.
   const result = await query<PlayerRankRow & PrestigeDataRow & PlayerStatsRow>(
     `SELECT pr.rank_level, pr.rank_name, pr.rank_progress,
             pd.prestige_level, pd.prestige_points,
@@ -192,7 +195,23 @@ export async function getPlayerProfile(uuid: string): Promise<PlayerProfile | nu
   );
 
   const row = result.rows[0];
-  if (!row) return null;
+  if (!row) {
+    // No player_ranks row — check if the player exists at all (player_names).
+    // If they do, return a minimal profile with default values instead of null.
+    const nameResult = await query<{ username: string }>(
+      'SELECT username FROM player_names WHERE uuid = $1',
+      [uuid],
+    );
+    if (nameResult.rows.length > 0) {
+      return {
+        uuid,
+        rank: { level: 1, name: 'I', progress: 0 },
+        prestige: null,
+        stats: null,
+      };
+    }
+    return null;
+  }
 
   // blocks_mined is a raw COUNT, not minor-unit currency; do NOT divide by 100.
   const blocksMined = Number(row.blocks_mined ?? 0);
