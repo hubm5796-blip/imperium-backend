@@ -548,29 +548,36 @@ api.get('/admin/server/status', async (c) => {
   if (!requireBotAuth(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
+  // Get the online count from Redis (fast, reliable)
+  let count: number | null = null;
   try {
-    const count = await getOnlinePlayerCount();
-    // Fetch online player names from the online_players table (if it exists)
-    let onlinePlayers: { uuid: string; username: string }[] = [];
-    try {
-      const result = await query<{ uuid: string; username: string }>(
-        `SELECT op.uuid, pn.username FROM online_players op LEFT JOIN player_names pn ON op.uuid = pn.uuid LIMIT 100`,
-        [],
-      );
-      onlinePlayers = result.rows;
-    } catch {
-      // Table may not exist — degrade to just the count
-    }
-    return c.json({
-      online: count !== null,
-      playerCount: count ?? 0,
-      maxPlayers: 200,
-      onlinePlayers,
-      source: count !== null ? 'redis' : 'unknown',
-    });
+    count = await getOnlinePlayerCount();
   } catch {
-    return c.json({ online: false, playerCount: 0, maxPlayers: 200, source: 'unavailable' });
+    // Redis down — count stays null
   }
+
+  // Fetch online player names from Postgres (best-effort — may fail on cold
+  // start or if the table doesn't exist yet). Wrapped tightly so a Postgres
+  // timeout never causes a 500 for this route.
+  let onlinePlayers: { uuid: string; username: string }[] = [];
+  try {
+    const result = await query<{ uuid: string; username: string }>(
+      `SELECT op.uuid, pn.username FROM online_players op LEFT JOIN player_names pn ON op.uuid = pn.uuid LIMIT 100`,
+      [],
+    );
+    onlinePlayers = result.rows;
+  } catch {
+    // Table may not exist or pool not ready — degrade to just the count
+  }
+
+  return c.json({
+    online: count !== null,
+    playerCount: count ?? 0,
+    maxPlayers: 200,
+    onlinePlayers,
+    source: count !== null ? 'redis' : 'unknown',
+  });
+});
 });
 
 /**
