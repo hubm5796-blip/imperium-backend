@@ -17,6 +17,7 @@ import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
 import { authRateLimit, globalRateLimit, rateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
+  deleteDiscordLinkByUuid,
   getCachedSubscription,
   getDiscordIdByUuid,
   getEloLeaderboard,
@@ -722,24 +723,30 @@ api.post('/admin/reload', async (c) => {
 });
 
 /**
- * GET /api/player/permissions?discord_id=... — resolve LuckPerms groups for a
- * Discord-linked player. Used by the frontend admin gate + AdminContext.
+ * GET /api/player/permissions?uuid=...|discord_id=... — resolve LuckPerms
+ * groups for a player. LuckPerms itself is UUID-keyed (it's a Minecraft
+ * plugin — it has no concept of Discord identity), so `uuid` is the direct
+ * lookup; `discord_id` is only a convenience for callers that only have a
+ * Discord-session identity, resolved to a UUID the same way before querying.
+ * Used by the frontend admin gate + AdminContext.
  */
 api.get('/player/permissions', async (c) => {
   if (!requireBotAuth(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
+  const uuidParam = c.req.query('uuid');
   const discordId = c.req.query('discord_id');
-  if (!discordId) {
-    return c.json({ error: 'Missing discord_id' }, 400);
+  if (!uuidParam && !discordId) {
+    return c.json({ error: 'Missing uuid or discord_id' }, 400);
   }
 
-  // Resolve the MC UUID from the Discord link
-  let uuid: string | null = null;
-  try {
-    uuid = await getUuidByDiscordId(discordId);
-  } catch {
-    uuid = null;
+  let uuid: string | null = uuidParam ?? null;
+  if (!uuid && discordId) {
+    try {
+      uuid = await getUuidByDiscordId(discordId);
+    } catch {
+      uuid = null;
+    }
   }
 
   if (!uuid) {
@@ -1044,8 +1051,13 @@ api.post('/link/confirm', async (c) => {
 });
 
 /**
- * DELETE /api/link?discord_id=... — remove a Discord↔Minecraft link.
- * Called by the bot's /unlink command. Returns 404 if no link existed.
+ * DELETE /api/link?discord_id=...|uuid=... — remove a Discord↔Minecraft link.
+ * `discord_id` is used by the bot's /unlink command (that's the only identity
+ * it has in a Discord DM). `uuid` is used by the website — its sessions are
+ * uuid-first regardless of how the player logged in, so "unlink my Discord"
+ * is naturally keyed on the account being unlinked, not on the Discord ID
+ * that happens to have been resolved from the session. Returns 404 if no
+ * link existed.
  */
 api.delete('/link', async (c) => {
   // Bot-only: unlinking arbitrary accounts must be authenticated.
@@ -1053,14 +1065,15 @@ api.delete('/link', async (c) => {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const discordId = c.req.query('discord_id');
-  if (!discordId) {
-    return c.json({ error: 'Missing discord_id query parameter' }, 400);
+  const uuid = c.req.query('uuid');
+  if (!discordId && !uuid) {
+    return c.json({ error: 'Missing discord_id or uuid query parameter' }, 400);
   }
-  const removed = await deleteDiscordLinkByDiscordId(discordId);
+  const removed = uuid ? await deleteDiscordLinkByUuid(uuid) : await deleteDiscordLinkByDiscordId(discordId!);
   if (!removed) {
-    return c.json({ error: 'No link found for this Discord account' }, 404);
+    return c.json({ error: 'No link found for this account' }, 404);
   }
-  return c.json({ discordId, unlinked: true });
+  return c.json({ unlinked: true });
 });
 
 /* ------------------------------------------------------------------ Store */
@@ -1087,12 +1100,13 @@ const storeAuth: MiddlewareHandler<ApiEnv> = async (c, next) => {
     if (!uuid) {
       return c.json({ error: 'Missing X-Mc-Uuid header' }, 400);
     }
-    // Validate UUID format — accepts Minecraft UUIDs, Bedrock .prefix names,
-    // and Discord snowflake IDs (numeric, 17-20 digits) since the frontend
-    // may pass a discordId as fallback when no MC UUID is linked.
+    // Validate UUID format — accepts Minecraft UUIDs and Bedrock .prefix names
+    // only. Minecraft is the sole identity for store routes; a Discord ID
+    // (linked or not) is never a valid substitute, so this doesn't accept
+    // Discord snowflakes even as a fallback — the frontend must resolve (or
+    // reject) the linked MC account before ever calling in here.
     if (!/^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/.test(uuid)
-        && !/^\.[a-zA-Z0-9_]{3,16}$/.test(uuid)
-        && !/^\d{17,20}$/.test(uuid)) {
+        && !/^\.[a-zA-Z0-9_]{3,16}$/.test(uuid)) {
       return c.json({ error: 'Invalid UUID format' }, 400);
     }
     c.set('mcUuid', uuid);

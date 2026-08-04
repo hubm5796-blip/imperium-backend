@@ -114,6 +114,16 @@ export async function deleteDiscordLinkByDiscordId(discordId: string): Promise<b
   return (result.rowCount ?? 0) > 0;
 }
 
+/** Remove a Discord<->Minecraft link by the MC side — used by the website's
+ * own unlink action, where the session is uuid-first regardless of login method. */
+export async function deleteDiscordLinkByUuid(uuid: string): Promise<boolean> {
+  const result = await query(
+    'DELETE FROM discord_links WHERE uuid = $1',
+    [uuid],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 /* --------------------------------------------------------------- PayNow */
 
 /** Look up the PayNow customer id linked to a player, if we've seen them at checkout before. */
