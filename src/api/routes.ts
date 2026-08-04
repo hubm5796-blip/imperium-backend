@@ -751,9 +751,11 @@ api.get('/player/permissions', async (c) => {
   }
 
   // Derive admin flags from group names
-  const adminGroups = ['admin', 'owner', 'manager', 'dev'];
-  const modGroups = ['mod', 'moderator', 'srmod', 'headmod', ...adminGroups];
-  const helperGroups = ['helper', ...modGroups];
+  // These match the LuckPerms groups created by RankGroupBootstrapService.kt.
+  // Group names use underscores (sr_mod, head_admin, jr_mod) not camelCase.
+  const adminGroups = ['admin', 'sr_admin', 'head_admin', 'developer', 'manager', 'owner'];
+  const modGroups = ['mod', 'sr_mod', 'jr_mod', ...adminGroups];
+  const helperGroups = ['trainee', 'tester', 'builder', ...modGroups];
 
   return c.json({
     isAdmin: groups.some((g) => adminGroups.includes(g)),
