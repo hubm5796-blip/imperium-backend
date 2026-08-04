@@ -28,6 +28,7 @@ import {
   getPlayerCosmetics,
   getPlayerDailyQuests,
   getPlayerFactions,
+  getPlayerLegion,
   getPlayerParkour,
   getPlayerProfile,
   getPlayerSkills,
@@ -525,6 +526,13 @@ api.get('/player/cosmetics', requireAuth, requireLinked, async (c) => {
 api.get('/player/quests', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
   const data = await getPlayerDailyQuests(uuid);
+  return c.json(data);
+});
+
+/** GET /api/player/legion — the player's legion (guild) + members. */
+api.get('/player/legion', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  const data = await getPlayerLegion(uuid);
   return c.json(data);
 });
 

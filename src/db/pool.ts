@@ -754,3 +754,68 @@ export async function getPlayerDailyQuests(uuid: string): Promise<{ quests: Play
     })),
   };
 }
+
+// ─── Legion (Guild) ─────────────────────────────────────────────────────────
+
+export interface LegionInfo {
+  name: string;
+  displayName: string | null;
+  level: number;
+  ownerUuid: string;
+  xp: number;
+  maxMembers: number;
+}
+
+export interface LegionMemberInfo {
+  uuid: string;
+  username: string | null;
+  role: string;
+}
+
+export async function getPlayerLegion(uuid: string): Promise<{ legion: LegionInfo | null; members: LegionMemberInfo[] }> {
+  // Find the player's legion
+  const memberResult = await query<{ legion_name: string }>(
+    'SELECT legion_name FROM legion_members WHERE player_uuid = $1',
+    [uuid],
+  );
+  if (memberResult.rows.length === 0) {
+    return { legion: null, members: [] };
+  }
+  const legionName = memberResult.rows[0].legion_name;
+
+  // Fetch legion details
+  const legionResult = await query<{ name: string; display_name: string | null; level: string; owner_uuid: string; xp: string; max_members: string }>(
+    'SELECT name, display_name, level, owner_uuid, xp, max_members FROM legions WHERE name = $1',
+    [legionName],
+  );
+  if (legionResult.rows.length === 0) {
+    return { legion: null, members: [] };
+  }
+  const lr = legionResult.rows[0];
+
+  // Fetch all members with resolved usernames
+  const membersResult = await query<{ player_uuid: string; role: string; username: string | null }>(
+    `SELECT lm.player_uuid, lm.role, pn.username
+       FROM legion_members lm
+       LEFT JOIN player_names pn ON lm.player_uuid = pn.uuid
+      WHERE lm.legion_name = $1
+      ORDER BY CASE lm.role WHEN 'LEADER' THEN 0 WHEN 'OFFICER' THEN 1 WHEN 'ELITE' THEN 2 ELSE 3 END, pn.username`,
+    [legionName],
+  );
+
+  return {
+    legion: {
+      name: lr.name,
+      displayName: lr.display_name,
+      level: Number(lr.level ?? 1),
+      ownerUuid: lr.owner_uuid,
+      xp: Number(lr.xp ?? 0),
+      maxMembers: Number(lr.max_members ?? 10),
+    },
+    members: membersResult.rows.map((row) => ({
+      uuid: row.player_uuid,
+      username: row.username,
+      role: row.role,
+    })),
+  };
+}
