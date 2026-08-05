@@ -10,7 +10,7 @@
 // added in a later migration stage) using Discord's HTTP Interactions
 // Endpoint instead.
 import { initEnvFromBindings } from './env.js';
-import { initPool } from './db/pool.js';
+import { initPool, initD1 } from './db/pool.js';
 import { createApp } from './app.js';
 
 /**
@@ -21,6 +21,7 @@ import { createApp } from './app.js';
  */
 export interface WorkerBindings {
   HYPERDRIVE: Hyperdrive;
+  CACHE_DB: D1Database;
   DISCORD_CLIENT_ID: string;
   DISCORD_CLIENT_SECRET: string;
   DISCORD_REDIRECT_URI: string;
@@ -51,6 +52,7 @@ export default {
     // isolate actually builds env/opens the pool; later ones reuse both.
     initEnvFromBindings(bindings as unknown as Record<string, unknown>);
     initPool(bindings.HYPERDRIVE.connectionString);
+    initD1(bindings.CACHE_DB);
     // Forwarding bindings+ctx is required, not cosmetic: without a real
     // ExecutionContext, c.executionCtx.waitUntil() in interactions.ts has
     // nothing to attach to. Its catch block assumes that means "running

@@ -18,6 +18,20 @@
 			"id": "9e292633772945a7ba3869c5f3261886"
 		}
 	],
+	// Backend-only cache tables that the plugin never touches (verified by
+	// grep before moving anything here) live in D1 instead of Postgres. D1 is
+	// a native Workers binding -- no connection pool, no Hyperdrive
+	// connection-limit class of issue, and a separate free-tier budget from
+	// Neon. The core game database (everything the plugin owns via JDBC)
+	// stays on Postgres -- D1 has no JDBC/wire-protocol access, so it's not
+	// an option for anything the Java plugin needs to read/write directly.
+	"d1_databases": [
+		{
+			"binding": "CACHE_DB",
+			"database_name": "imperiummc-cache-db",
+			"database_id": "6b734eea-0c07-4a51-b844-f7de749056a9"
+		}
+	],
 	// api.imperiummc.net routes to this Worker via an existing proxied CNAME
 	// record (api -> imperium-backend-prod.playimperiummc-net.workers.dev),
 	// NOT a Wrangler-managed Custom Domain. Do NOT add a `routes` block with

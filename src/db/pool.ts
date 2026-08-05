@@ -48,6 +48,25 @@ export function initPool(connectionString: string): void {
   });
 }
 
+/**
+ * D1 binding for backend-only cache tables (currently just
+ * paynow_subscriptions) that the plugin never touches. Unlike the Postgres
+ * pool, this is just a reference to the binding Cloudflare hands us per
+ * request — no connection setup, no pool-size limit to exceed.
+ */
+let d1: D1Database | null = null;
+
+export function initD1(db: D1Database): void {
+  d1 = db;
+}
+
+function getD1(): D1Database {
+  if (!d1) {
+    throw new Error('D1 binding not initialized — initD1() must run before any cache-table query');
+  }
+  return d1;
+}
+
 function getPool(): Pool {
   if (!pool) {
     throw new Error('Postgres pool not initialized — initPool() must run before any query');
@@ -182,14 +201,16 @@ export async function setPaynowCustomerId(uuid: string, customerId: string): Pro
 /**
  * Cached view of a player's active donor subscription, kept in sync by the
  * PayNow webhook handler. Used for fast dashboard reads without calling out
- * to PayNow on every page load.
+ * to PayNow on every page load. Lives in D1, not Postgres -- backend-only,
+ * the plugin never touches this table (verified before migrating it off
+ * Postgres), so there's no JDBC dependency forcing it to stay there.
  */
 export async function getCachedSubscription(uuid: string): Promise<PaynowSubscriptionRow | null> {
-  const result = await query<PaynowSubscriptionRow>(
-    'SELECT uuid, subscription_id, product_id, status, updated_at FROM paynow_subscriptions WHERE uuid = $1',
-    [uuid],
-  );
-  return result.rows[0] ?? null;
+  const row = await getD1()
+    .prepare('SELECT uuid, subscription_id, product_id, status, updated_at FROM paynow_subscriptions WHERE uuid = ?')
+    .bind(uuid)
+    .first<PaynowSubscriptionRow>();
+  return row ?? null;
 }
 
 /** Upsert the cached subscription row for a player (called from the webhook handler). */
@@ -199,16 +220,18 @@ export async function upsertCachedSubscription(
   productId: string,
   status: string,
 ): Promise<void> {
-  await query(
-    `INSERT INTO paynow_subscriptions (uuid, subscription_id, product_id, status, updated_at)
-     VALUES ($1, $2, $3, $4, NOW())
-     ON CONFLICT (uuid) DO UPDATE
-       SET subscription_id = EXCLUDED.subscription_id,
-           product_id = EXCLUDED.product_id,
-           status = EXCLUDED.status,
-           updated_at = EXCLUDED.updated_at`,
-    [uuid, subscriptionId, productId, status],
-  );
+  await getD1()
+    .prepare(
+      `INSERT INTO paynow_subscriptions (uuid, subscription_id, product_id, status, updated_at)
+       VALUES (?, ?, ?, ?, datetime('now'))
+       ON CONFLICT (uuid) DO UPDATE
+         SET subscription_id = excluded.subscription_id,
+             product_id = excluded.product_id,
+             status = excluded.status,
+             updated_at = excluded.updated_at`,
+    )
+    .bind(uuid, subscriptionId, productId, status)
+    .run();
 }
 
 /** Look up a player's uuid by their PayNow customer id (webhooks carry customer id, not uuid). */
