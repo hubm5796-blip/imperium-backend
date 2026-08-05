@@ -96,14 +96,40 @@ export interface CreateCheckoutSessionResult {
   url: string;
 }
 
-/** Create a checkout session for a single product on behalf of a known customer. */
+/** A single line item in a PayNow checkout session. */
+export interface CheckoutLine {
+  productId: string;
+  quantity: number;
+  subscription?: boolean;
+  /** PayNow customer ID for a gift recipient (resolved from their UUID already). */
+  giftToCustomerId?: string;
+}
+
+/**
+ * Create a checkout session for one or more products. The `lines` array maps
+ * directly to PayNow's `lines[]` — each entry can have its own product,
+ * quantity, subscription flag, and gift recipient.
+ */
 export async function createCheckoutSession(params: {
   customerId: string;
-  productId: string;
-  subscription: boolean;
+  /** Legacy single-product form — internally converted to a one-element lines array. */
+  productId?: string;
+  subscription?: boolean;
+  /** Multi-product form — when provided, takes precedence over productId. */
+  lines?: CheckoutLine[];
   returnUrl: string;
   cancelUrl: string;
 }): Promise<CreateCheckoutSessionResult> {
+  const lines: CheckoutLine[] =
+    params.lines ??
+    (params.productId
+      ? [{ productId: params.productId, quantity: 1, subscription: params.subscription ?? false }]
+      : []);
+
+  if (lines.length === 0) {
+    throw new Error('createCheckoutSession requires at least one line item');
+  }
+
   return managementRequest<CreateCheckoutSessionResult>(
     `/v1/stores/${env.paynow.storeId}/checkouts`,
     {
@@ -113,13 +139,12 @@ export async function createCheckoutSession(params: {
         return_url: params.returnUrl,
         cancel_url: params.cancelUrl,
         auto_redirect: true,
-        lines: [
-          {
-            product_id: params.productId,
-            quantity: 1,
-            subscription: params.subscription,
-          },
-        ],
+        lines: lines.map((l) => ({
+          product_id: l.productId,
+          quantity: l.quantity,
+          subscription: l.subscription ?? false,
+          ...(l.giftToCustomerId ? { gift_to_customer_id: l.giftToCustomerId } : {}),
+        })),
       }),
     },
   );

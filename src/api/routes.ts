@@ -61,6 +61,7 @@ import {
   applyTierChange,
   cancelSubscription,
   createCheckoutSession,
+  type CheckoutLine,
   createCustomerToken,
   findOrCreatePaynowCustomer,
   getCustomerSubscriptions,
@@ -1465,6 +1466,88 @@ api.post('/store/gift-checkout', storeAuth, async (c) => {
     }
     logger.error({ err, buyerUuid, recipientUuid }, 'Gift checkout creation failed');
     return c.json({ error: 'Failed to create gift checkout session' }, 500);
+  }
+});
+
+/**
+ * POST /api/store/cart-checkout — create a single PayNow checkout session for
+ * multiple line items. Each item can be a subscription, a lifetime purchase, or
+ * a gift. Gifts resolve the recipient's UUID (via player_names or Mojang/PlayerDB
+ * fallback) and their PayNow customer ID inline so the `gift_to_customer_id`
+ * field is set per-line. The buyer (caller) pays for the whole cart in one
+ * PayNow transaction.
+ */
+api.post('/store/cart-checkout', storeAuth, async (c) => {
+  const buyerUuid = c.var.mcUuid!;
+  let body: { items?: Array<{ productId?: string; quantity?: number; subscription?: boolean; giftRecipient?: string }> };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  const items = body.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    return c.json({ error: 'Cart is empty — add at least one item' }, 400);
+  }
+  if (items.length > 20) {
+    return c.json({ error: 'Cart is limited to 20 items per checkout' }, 400);
+  }
+
+  // Validate every line item and build the PayNow lines array.
+  const lines: CheckoutLine[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item.productId || typeof item.productId !== 'string') {
+      return c.json({ error: `Item ${i + 1}: missing or invalid productId` }, 400);
+    }
+    const qty = Math.max(1, Math.min(99, Math.floor(item.quantity ?? 1)));
+    const isSub = item.subscription === true;
+
+    // Gifts are lifetime-only and resolve the recipient's PayNow customer.
+    if (item.giftRecipient) {
+      const recipientUuid = await getUuidByUsername(item.giftRecipient.trim());
+      if (!recipientUuid) {
+        return c.json(
+          { error: `Item ${i + 1}: could not find a Minecraft account named "${item.giftRecipient}". Have they joined the server, or is the username spelled correctly?` },
+          404,
+        );
+      }
+      if (recipientUuid === buyerUuid) {
+        return c.json({ error: `Item ${i + 1}: can't gift to yourself — use the normal checkout` }, 400);
+      }
+      if (!isLifetimeProduct(item.productId)) {
+        return c.json({ error: `Item ${i + 1}: gifts must be lifetime products` }, 400);
+      }
+      const giftCustomerId = await resolvePaynowCustomerId(recipientUuid);
+      lines.push({ productId: item.productId, quantity: qty, subscription: false, giftToCustomerId: giftCustomerId });
+    } else {
+      // Self-purchase: validate product type matches the subscription flag.
+      if (isSub && !isDonorSubscriptionProduct(item.productId)) {
+        return c.json({ error: `Item ${i + 1}: product is not a valid subscription` }, 400);
+      }
+      if (!isSub && !isLifetimeProduct(item.productId)) {
+        return c.json({ error: `Item ${i + 1}: product is not a valid lifetime purchase` }, 400);
+      }
+      lines.push({ productId: item.productId, quantity: qty, subscription: isSub });
+    }
+  }
+
+  try {
+    const customerId = await resolvePaynowCustomerId(buyerUuid);
+    const session = await createCheckoutSession({
+      customerId,
+      lines,
+      returnUrl: `${frontendUrl()}/dashboard?checkout=success`,
+      cancelUrl: `${frontendUrl()}/store?checkout=canceled`,
+    });
+    return c.json({ url: session.url });
+  } catch (err) {
+    if (err instanceof PaynowApiError) {
+      logger.warn({ err: err.body, status: err.status, buyerUuid, lineCount: lines.length }, 'PayNow cart checkout creation failed');
+      return c.json({ error: err.message }, 502);
+    }
+    logger.error({ err, buyerUuid, lineCount: lines.length }, 'Cart checkout creation failed');
+    return c.json({ error: 'Failed to create cart checkout session' }, 500);
   }
 });
 
