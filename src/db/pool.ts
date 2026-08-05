@@ -336,38 +336,86 @@ export async function getUuidByUsername(username: string): Promise<string | null
   // Bedrock/Floodgate usernames start with "." — no Mojang equivalent exists.
   if (username.startsWith('.')) return null;
 
-  // Java Edition: ask Mojang. Use the username-at-time API (no rate limit
-  // concern — this fires only when gifting to a player who never joined).
+  // Java Edition: resolve the UUID from Mojang/PlayerDB so gifting works even
+  // before the recipient has joined the server. Try Mojang first (authoritative),
+  // fall back to PlayerDB (aggressive CDN cache, rarely rate-limited). This only
+  // fires on a player_names miss, so call volume is tiny.
+  const resolved = await resolveUuidFromMojang(username);
+  if (!resolved) return null;
+
+  // Cache into player_names so the plugin's join handler and future lookups
+  // find it instantly. ON CONFLICT DO NOTHING — if the player joins later, the
+  // plugin's upsert updates the row with the authoritative username casing.
+  try {
+    await query(
+      'INSERT INTO player_names (uuid, username) VALUES ($1, $2) ON CONFLICT (uuid) DO NOTHING',
+      [resolved.uuid, resolved.name ?? username],
+    );
+  } catch {
+    // Non-fatal — the UUID is resolved even if the cache write fails.
+  }
+  return resolved.uuid;
+}
+
+/**
+ * Resolve a Java Edition username to {uuid, name} via Mojang's profile API,
+ * falling back to PlayerDB if Mojang is unreachable or rate-limits. Returns
+ * null if the username doesn't exist on either service.
+ */
+async function resolveUuidFromMojang(
+  username: string,
+): Promise<{ uuid: string; name: string | null } | null> {
+  // --- Mojang (authoritative) ---
   try {
     const res = await fetch(
       `https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(username)}`,
-      { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } },
+      { signal: AbortSignal.timeout(4000), headers: { Accept: 'application/json' } },
     );
-    if (!res.ok) return null;
-    const data = (await res.json()) as { id?: string; name?: string };
-    if (!data.id) return null;
-
-    // Mojang returns the UUID as a 32-char hex string (no dashes). Format it
-    // into the standard 8-4-4-4-12 dashed form the rest of the codebase uses.
-    const hex = data.id.replace(/-/g, '');
-    const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-
-    // Cache into player_names so the plugin's join handler and future lookups
-    // find it instantly. INSERT OR IGNORE (ON CONFLICT DO NOTHING) — if the
-    // player joins later, the plugin's upsert updates the row with the
-    // authoritative username casing.
-    try {
-      await query(
-        'INSERT INTO player_names (uuid, username) VALUES ($1, $2) ON CONFLICT (uuid) DO NOTHING',
-        [uuid, data.name ?? username],
-      );
-    } catch {
-      // Non-fatal — the UUID is resolved even if the cache write fails.
+    if (res.ok) {
+      const data = (await res.json()) as { id?: string; name?: string };
+      if (data.id) {
+        const hex = data.id.replace(/-/g, '');
+        if (hex.length === 32) {
+          const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+          return { uuid, name: data.name ?? null };
+        }
+      }
     }
-    return uuid;
   } catch {
-    return null;
+    // Mojang unreachable or timed out — try PlayerDB below.
   }
+
+  // --- PlayerDB (CDN-cached mirror, very reliable) ---
+  try {
+    const res = await fetch(
+      `https://playerdb.co/api/player/minecraft/${encodeURIComponent(username)}`,
+      { signal: AbortSignal.timeout(4000), headers: { Accept: 'application/json' } },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as {
+        code?: string;
+        data?: { player?: { id?: string; raw_id?: string; username?: string } };
+      };
+      if (data.code === 'player.found' && data.data?.player) {
+        const p = data.data.player;
+        // playerdb returns the dashed id; fall back to raw_id if needed.
+        const uuid = p.id ?? formatRawUuid(p.raw_id);
+        if (uuid && uuid.length === 36) {
+          return { uuid, name: p.username ?? null };
+        }
+      }
+    }
+  } catch {
+    // Both sources failed — give up.
+  }
+  return null;
+}
+
+function formatRawUuid(hex: string | undefined): string | null {
+  if (!hex) return null;
+  const h = hex.replace(/-/g, '');
+  if (h.length !== 32) return null;
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 /**
