@@ -1763,3 +1763,80 @@ api.get('/player/crates', requireBotAuth, async (c) => {
   }
   return c.json({ keys });
 });
+
+/* ---------------------------------------------------------- Referrals */
+
+/**
+ * POST /api/referrals/create — referrer creates a referral for a referred player.
+ * The referral is pending until the referred player reaches rank V (in-game).
+ */
+api.post('/referrals/create', requireBotAuth, async (c) => {
+  const referrerUuid = c.req.header('x-mc-uuid');
+  if (!referrerUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+
+  let body: { referredUsername?: string };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+
+  const referredUsername = (body.referredUsername ?? '').trim();
+  if (!referredUsername) return c.json({ error: 'Missing referredUsername' }, 400);
+
+  // Resolve the referred player's UUID
+  const referredUuid = await getUuidByUsername(referredUsername);
+  if (!referredUuid) {
+    return c.json({ error: 'Could not find a Minecraft account with that username. They must have joined the server or exist on Mojang.' }, 404);
+  }
+  if (referredUuid === referrerUuid) {
+    return c.json({ error: 'You cannot refer yourself.' }, 400);
+  }
+
+  // Check if this player was already referred by someone else
+  const existing = await query<{ referrer_uuid: string }>(
+    'SELECT referrer_uuid FROM referrals WHERE referred_uuid = $1', [referredUuid]
+  );
+  if (existing.rows.length > 0) {
+    return c.json({ error: `${referredUsername} has already been referred by another player.` }, 409);
+  }
+
+  // Check if the referred player already has a rank higher than I (rank V = prestige 5+)
+  // This prevents referring established players just for the reward
+  try {
+    await query(
+      `INSERT INTO referrals (referrer_uuid, referred_uuid, referred_username, status)
+       VALUES ($1, $2, $3, 'pending')
+       ON CONFLICT (referrer_uuid, referred_uuid) DO NOTHING`,
+      [referrerUuid, referredUuid, referredUsername],
+    );
+    return c.json({ ok: true, message: `Referral created. When ${referredUsername} reaches Rank V, you both get a reward!` });
+  } catch (err) {
+    return c.json({ error: 'Failed to create referral.' }, 500);
+  }
+});
+
+/**
+ * GET /api/referrals/mine — the calling player's referrals (as referrer).
+ */
+api.get('/referrals/mine', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+
+  const result = await query(
+    `SELECT id, referred_username, status, referrer_rewarded, referred_rewarded, created_at, completed_at
+     FROM referrals WHERE referrer_uuid = $1 ORDER BY created_at DESC LIMIT 50`,
+    [mcUuid],
+  );
+  const stats = await query<{ total: string; completed: string; pending: string }>(
+    `SELECT COUNT(*) as total,
+       COUNT(*) FILTER (WHERE status = 'completed') as completed,
+       COUNT(*) FILTER (WHERE status = 'pending') as pending
+     FROM referrals WHERE referrer_uuid = $1`,
+    [mcUuid],
+  );
+  return c.json({
+    referrals: result.rows,
+    stats: {
+      total: parseInt(stats.rows[0]?.total ?? '0', 10),
+      completed: parseInt(stats.rows[0]?.completed ?? '0', 10),
+      pending: parseInt(stats.rows[0]?.pending ?? '0', 10),
+    },
+  });
+});
