@@ -1840,3 +1840,53 @@ api.get('/referrals/mine', requireBotAuth, async (c) => {
     },
   });
 });
+
+/* ---------------------------------------------------------- Marketplace */
+
+/**
+ * GET /api/marketplace/listings — browse active marketplace listings.
+ * Supports category filter, sorting, and pagination.
+ */
+api.get('/marketplace/listings', requireBotAuth, async (c) => {
+  const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
+  const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') ?? '20', 10)));
+  const offset = (page - 1) * limit;
+  const category = c.req.query('category');
+  const sort = c.req.query('sort') ?? 'recent';
+
+  const orderBy = sort === 'price_low' ? 'price_each ASC' :
+    sort === 'price_high' ? 'price_each DESC' : 'created_at DESC';
+
+  const where = category ? `WHERE expires_at > CURRENT_TIMESTAMP AND category = $3` : `WHERE expires_at > CURRENT_TIMESTAMP`;
+  const params = category ? [limit, offset, category] : [limit, offset];
+
+  const result = await query(
+    `SELECT l.id, l.seller_uuid, l.item_nbt, l.quantity, l.price_each, l.category, l.created_at,
+       p.username AS seller_name
+     FROM marketplace_listings l
+     LEFT JOIN player_names p ON l.seller_uuid = p.uuid
+     ${where}
+     ORDER BY ${orderBy}
+     LIMIT $1 OFFSET $2`,
+    params,
+  );
+  const totalRow = await query<{ count: string }>(
+    `SELECT COUNT(*) as count FROM marketplace_listings ${category ? 'WHERE expires_at > CURRENT_TIMESTAMP AND category = $1' : 'WHERE expires_at > CURRENT_TIMESTAMP'}`,
+    category ? [category] : [],
+  );
+  return c.json({ listings: result.rows, total: parseInt(totalRow.rows[0]?.count ?? '0', 10), page, limit });
+});
+
+/**
+ * GET /api/marketplace/mine — the calling player's own listings.
+ */
+api.get('/marketplace/mine', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+  const result = await query(
+    `SELECT id, item_nbt, quantity, price_each, category, expires_at, created_at
+     FROM marketplace_listings WHERE seller_uuid = $1 ORDER BY created_at DESC LIMIT 50`,
+    [mcUuid],
+  );
+  return c.json({ listings: result.rows });
+});
