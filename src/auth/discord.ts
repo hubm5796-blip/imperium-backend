@@ -11,12 +11,16 @@ const SCOPES = ['identify'].join(' ');
 
 /** Build the URL the browser is redirected to in order to start OAuth2. */
 export function buildAuthorizeUrl(state?: string): string {
+  // No `prompt` param — omitting it (rather than 'consent') lets Discord skip
+  // the authorize screen on repeat logins for a user who already granted
+  // these scopes, same as any standard "Continue with Discord" button.
+  // Discord still always re-shows it after a scope change or if the user
+  // revoked access from their own Discord settings.
   const params = new URLSearchParams({
     client_id: env.discord.clientId,
     redirect_uri: env.discord.redirectUri,
     response_type: 'code',
     scope: SCOPES,
-    prompt: 'consent',
   });
   if (state) params.set('state', state);
   return `${AUTHORIZE_URL}?${params.toString()}`;
