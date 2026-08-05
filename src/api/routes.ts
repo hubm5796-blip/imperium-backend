@@ -1744,3 +1744,22 @@ api.post('/tickets/:id/respond', requireBotAuth, async (c) => {
   );
   return c.json({ ok: true });
 });
+
+/* ---------------------------------------------------------- Crate keys */
+
+/**
+ * GET /api/player/crates — the calling player's crate key counts per type.
+ */
+api.get('/player/crates', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+  const result = await query<{ crate_type: string; key_count: string }>(
+    'SELECT crate_type, key_count FROM player_crate_keys WHERE uuid = $1 AND key_count > 0',
+    [mcUuid],
+  );
+  const keys: Record<string, number> = {};
+  for (const row of result.rows) {
+    keys[row.crate_type] = parseInt(row.key_count, 10);
+  }
+  return c.json({ keys });
+});
