@@ -1654,3 +1654,93 @@ api.post(
     }
   },
 );
+
+/* ---------------------------------------------------------- Support tickets */
+
+/**
+ * POST /api/tickets — submit a support ticket. Requires a linked session.
+ */
+api.post('/tickets', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+
+  let body: { category?: string; subject?: string; body?: string };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+
+  const category = (body.category ?? '').trim().slice(0, 50);
+  const subject = (body.subject ?? '').trim().slice(0, 200);
+  const text = (body.body ?? '').trim().slice(0, 5000);
+  if (!subject || !text) return c.json({ error: 'Subject and body are required' }, 400);
+
+  // Resolve username
+  const nameRow = await query<{ username: string }>('SELECT username FROM player_names WHERE uuid = $1', [mcUuid]);
+  const username = nameRow.rows[0]?.username ?? 'Unknown';
+
+  const result = await query<{ id: string }>(
+    `INSERT INTO support_tickets (uuid, username, category, subject, body) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [mcUuid, username, category || 'general', subject, text],
+  );
+  return c.json({ ok: true, id: result.rows[0].id });
+});
+
+/**
+ * GET /api/tickets — list tickets for the calling player, or ALL tickets if the
+ * caller has a staff permission (owner/admin/mod). Staff see all tickets with
+ * pagination; players see only their own.
+ */
+api.get('/tickets', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+
+  const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
+  const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') ?? '20', 10)));
+  const offset = (page - 1) * limit;
+  const statusFilter = c.req.query('status');
+
+  const where = statusFilter ? `WHERE status = $3` : ``;
+  const params = statusFilter ? [limit, offset, statusFilter] : [limit, offset];
+
+  const result = await query(
+    `SELECT id, uuid, username, category, subject, status, priority, staff_response, responded_at, created_at
+     FROM support_tickets ${where}
+     ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, created_at DESC
+     LIMIT $1 OFFSET $2`,
+    params,
+  );
+  const totalRow = await query<{ count: string }>(`SELECT COUNT(*) as count FROM support_tickets ${statusFilter ? 'WHERE status = $1' : ''}`, statusFilter ? [statusFilter] : []);
+  return c.json({ tickets: result.rows, total: parseInt(totalRow.rows[0].count, 10), page, limit });
+});
+
+/**
+ * GET /api/tickets/mine — list only the calling player's own tickets.
+ */
+api.get('/tickets/mine', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+  const result = await query(
+    `SELECT id, category, subject, status, staff_response, responded_at, created_at
+     FROM support_tickets WHERE uuid = $1 ORDER BY created_at DESC LIMIT 50`,
+    [mcUuid],
+  );
+  return c.json({ tickets: result.rows });
+});
+
+/**
+ * POST /api/tickets/:id/respond — staff responds to a ticket.
+ */
+api.post('/tickets/:id/respond', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+  const ticketId = c.req.param('id');
+  let body: { response?: string; status?: string };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+  const response = (body.response ?? '').trim().slice(0, 5000);
+  const newStatus = body.status ?? 'responded';
+  if (!response) return c.json({ error: 'Response text is required' }, 400);
+
+  await query(
+    `UPDATE support_tickets SET staff_response = $1, responded_by = $2, responded_at = CURRENT_TIMESTAMP, status = $3 WHERE id = $4`,
+    [response, mcUuid, newStatus, ticketId],
+  );
+  return c.json({ ok: true });
+});
