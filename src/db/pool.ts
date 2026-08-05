@@ -183,6 +183,14 @@ export async function deleteDiscordLinkByUuid(uuid: string): Promise<boolean> {
 
 /** Look up the PayNow customer id linked to a player, if we've seen them at checkout before. */
 export async function getPaynowCustomerId(uuid: string): Promise<string | null> {
+  // Try the dedicated table first (works for ALL players, not just Discord-linked ones)
+  const standalone = await query<{ customer_id: string }>(
+    'SELECT customer_id FROM paynow_customers WHERE uuid = $1',
+    [uuid],
+  );
+  if (standalone.rows[0]?.customer_id) return standalone.rows[0].customer_id;
+
+  // Fall back to the legacy discord_links column (for players who linked Discord)
   const result = await query<Pick<DiscordLinkRow, 'paynow_customer_id'>>(
     'SELECT paynow_customer_id FROM discord_links WHERE uuid = $1',
     [uuid],
@@ -190,12 +198,22 @@ export async function getPaynowCustomerId(uuid: string): Promise<string | null> 
   return result.rows[0]?.paynow_customer_id ?? null;
 }
 
-/** Persist the PayNow customer id for a linked player (set once found/created). */
+/** Persist the PayNow customer id for a player. Uses a dedicated table so it works
+ *  for gift recipients who have never linked Discord (no discord_links row exists). */
 export async function setPaynowCustomerId(uuid: string, customerId: string): Promise<void> {
+  // Upsert into the dedicated table (works for all players)
+  await query(
+    `INSERT INTO paynow_customers (uuid, customer_id) VALUES ($1, $2)
+     ON CONFLICT (uuid) DO UPDATE SET customer_id = EXCLUDED.customer_id`,
+    [uuid, customerId],
+  ).catch(() => {
+    // Table might not exist yet on some deployments — fall back to the old column.
+  });
+  // Also update discord_links if a row exists (backward compat)
   await query(
     'UPDATE discord_links SET paynow_customer_id = $2 WHERE uuid = $1',
     [uuid, customerId],
-  );
+  ).catch(() => {});
 }
 
 /**
@@ -236,6 +254,14 @@ export async function upsertCachedSubscription(
 
 /** Look up a player's uuid by their PayNow customer id (webhooks carry customer id, not uuid). */
 export async function getUuidByPaynowCustomerId(customerId: string): Promise<string | null> {
+  // Try the dedicated table first (works for ALL players, not just Discord-linked ones)
+  const standalone = await query<{ uuid: string }>(
+    'SELECT uuid FROM paynow_customers WHERE customer_id = $1',
+    [customerId],
+  );
+  if (standalone.rows[0]?.uuid) return standalone.rows[0].uuid;
+
+  // Fall back to the legacy discord_links column
   const result = await query<Pick<DiscordLinkRow, 'uuid'>>(
     'SELECT uuid FROM discord_links WHERE paynow_customer_id = $1',
     [customerId],
