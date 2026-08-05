@@ -37,41 +37,76 @@ export const SESSION_CODE_PREFIX = 'ImperiumMC:session:';
 export const RESPONSE_CACHE_PREFIX = 'ImperiumMC:cache:';
 
 /**
- * Read a small JSON value from the response cache. Never throws — a cache
- * miss and a cache failure look identical to the caller (both mean "go do
- * the real read"), which is exactly the fail-open behavior wanted here.
+ * A hung `cloudflare:sockets` connection (no response ever, not even an
+ * error) doesn't throw — it just never resolves. try/catch alone doesn't
+ * protect against that, and Cloudflare's own platform watchdog killing the
+ * whole invocation is a much worse failure mode than "this cache call gave
+ * up quickly." Every response-cache call is raced against this so a stuck
+ * Redis connection can never hang a real user-facing request — this is
+ * exactly what caused a live incident: concurrent dashboard requests (the
+ * same page fires 3 of these in parallel) sent enough simultaneous Redis
+ * connections that some hung indefinitely with no timeout, and the whole
+ * request died instead of falling through to Postgres as designed.
+ */
+async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
+const CACHE_CALL_TIMEOUT_MS = 1_200;
+
+/**
+ * Read a small JSON value from the response cache. Never throws, never hangs
+ * — a cache miss, a cache failure, and a cache timeout all look identical to
+ * the caller (all mean "go do the real read"), which is exactly the
+ * fail-open behavior wanted here.
  */
 export async function getCachedJson<T>(key: string): Promise<T | null> {
-  try {
-    const raw = await redisCommand(socketConfig(), ['GET', `${RESPONSE_CACHE_PREFIX}${key}`]);
-    if (raw === null || typeof raw !== 'string') return null;
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
+  return withTimeout(
+    (async () => {
+      try {
+        const raw = await redisCommand(socketConfig(), ['GET', `${RESPONSE_CACHE_PREFIX}${key}`]);
+        if (raw === null || typeof raw !== 'string') return null;
+        return JSON.parse(raw) as T;
+      } catch {
+        return null;
+      }
+    })(),
+    CACHE_CALL_TIMEOUT_MS,
+    null,
+  );
 }
 
-/** Best-effort cache invalidation — failures are logged, never thrown. */
+/** Best-effort cache invalidation — failures/hangs are logged, never thrown or blocking. */
 export async function deleteCachedJson(key: string): Promise<void> {
-  try {
-    await redisCommand(socketConfig(), ['DEL', `${RESPONSE_CACHE_PREFIX}${key}`]);
-  } catch (err) {
-    logger.warn({ err, key }, 'Response cache delete failed — non-fatal');
-  }
+  await withTimeout(
+    redisCommand(socketConfig(), ['DEL', `${RESPONSE_CACHE_PREFIX}${key}`]).catch((err: unknown) => {
+      logger.warn({ err, key }, 'Response cache delete failed — non-fatal');
+    }),
+    CACHE_CALL_TIMEOUT_MS,
+    undefined,
+  );
 }
 
-/** Best-effort write to the response cache — failures are logged, never thrown. */
+/** Best-effort write to the response cache — failures/hangs are logged, never thrown or blocking. */
 export async function setCachedJson(key: string, value: unknown, ttlSeconds: number): Promise<void> {
-  try {
-    await redisCommand(socketConfig(), [
+  await withTimeout(
+    redisCommand(socketConfig(), [
       'SETEX',
       `${RESPONSE_CACHE_PREFIX}${key}`,
       String(ttlSeconds),
       JSON.stringify(value),
-    ]);
-  } catch (err) {
-    logger.warn({ err, key }, 'Response cache write failed — non-fatal');
-  }
+    ]).then(
+      () => undefined,
+      (err: unknown) => {
+        logger.warn({ err, key }, 'Response cache write failed — non-fatal');
+      },
+    ),
+    CACHE_CALL_TIMEOUT_MS,
+    undefined,
+  );
 }
 
 function socketConfig(): RedisSocketConfig {
