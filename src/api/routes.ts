@@ -1944,3 +1944,129 @@ api.post('/legion/invite', requireAuth, requireLinked, async (c) => {
     return c.json({ ok: response.ok, error: response.error }, response.ok ? 200 : 502);
   } catch { return c.json({ error: 'Plugin did not respond' }, 504); }
 });
+
+/* ---------------------------------------------------------- Referral Codes */
+
+/**
+ * GET /api/refcode/mine — get the caller's referral code (generates one if none exists).
+ */
+api.get('/refcode/mine', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+
+  // Check if player already has a code
+  const existing = await query<{ code: string; is_custom: boolean; total_redemptions: string }>(
+    'SELECT code, is_custom, total_redemptions FROM referral_codes WHERE uuid = $1', [mcUuid]
+  );
+  if (existing.rows.length > 0) {
+    return c.json({ code: existing.rows[0].code, isCustom: existing.rows[0].is_custom, redemptions: parseInt(existing.rows[0].total_redemptions, 10) });
+  }
+
+  // Generate a new random 6-char code
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let attempts = 0;
+  while (attempts < 10) {
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    try {
+      await query(
+        'INSERT INTO referral_codes (uuid, code) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [mcUuid, code]
+      );
+      return c.json({ code, isCustom: false, redemptions: 0 });
+    } catch {
+      attempts++;
+    }
+  }
+  return c.json({ error: 'Failed to generate code' }, 500);
+});
+
+/**
+ * POST /api/refcode/custom — Patrician+ sets a custom 6-char code.
+ * 30-day cooldown between changes.
+ */
+api.post('/refcode/custom', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+
+  let body: { code?: string };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+
+  const code = (body.code ?? '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{6}$/.test(code)) {
+    return c.json({ error: 'Code must be exactly 6 alphanumeric characters.' }, 400);
+  }
+
+  // Check cooldown
+  const existing = await query<{ code: string; last_changed_at: Date; is_custom: boolean }>(
+    'SELECT code, last_changed_at, is_custom FROM referral_codes WHERE uuid = $1', [mcUuid]
+  );
+  if (existing.rows.length > 0) {
+    const row = existing.rows[0];
+    if (row.is_custom) {
+      const daysSince = (Date.now() - new Date(row.last_changed_at).getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSince < 30) {
+        return c.json({ error: `You can change your custom code again in ${Math.ceil(30 - daysSince)} days.` }, 400);
+      }
+    }
+  }
+
+  // Check code isn't taken by someone else
+  const taken = await query('SELECT uuid FROM referral_codes WHERE code = $1 AND uuid != $2', [code, mcUuid]);
+  if (taken.rows.length > 0) {
+    return c.json({ error: 'That code is already taken. Try another.' }, 409);
+  }
+
+  // Upsert with custom flag
+  await query(
+    `INSERT INTO referral_codes (uuid, code, is_custom, last_changed_at)
+     VALUES ($1, $2, TRUE, CURRENT_TIMESTAMP)
+     ON CONFLICT (uuid) DO UPDATE SET code = EXCLUDED.code, is_custom = TRUE, last_changed_at = CURRENT_TIMESTAMP`,
+    [mcUuid, code]
+  );
+  return c.json({ ok: true, code });
+});
+
+/**
+ * POST /api/refcode/redeem — redeem a referral code.
+ * Both redeemer and code owner get a reward.
+ */
+api.post('/refcode/redeem', requireBotAuth, async (c) => {
+  const mcUuid = c.req.header('x-mc-uuid');
+  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+
+  let body: { code?: string };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+
+  const code = (body.code ?? '').trim().toUpperCase();
+  if (!code) return c.json({ error: 'Missing code' }, 400);
+
+  // Find the code owner
+  const owner = await query<{ uuid: string; username: string }>(
+    'SELECT uuid, username FROM referral_codes WHERE code = $1', [code]
+  );
+  if (owner.rows.length === 0) {
+    return c.json({ error: 'Invalid referral code.' }, 404);
+  }
+  const ownerUuid = owner.rows[0].uuid;
+  if (ownerUuid === mcUuid) {
+    return c.json({ error: 'You cannot redeem your own code.' }, 400);
+  }
+
+  // Check if already redeemed
+  const already = await query('SELECT 1 FROM referral_redemptions WHERE redeemer_uuid = $1 AND code_used = $2', [mcUuid, code]);
+  if (already.rows.length > 0) {
+    return c.json({ error: 'You have already redeemed this code.' }, 400);
+  }
+
+  // Record the redemption
+  await query(
+    'INSERT INTO referral_redemptions (redeemer_uuid, code_used, referrer_uuid, reward_paid) VALUES ($1, $2, $3, TRUE)',
+    [mcUuid, code, ownerUuid]
+  );
+
+  // Increment owner's redemption count
+  await query('UPDATE referral_codes SET total_redemptions = total_redemptions + 1 WHERE code = $1', [code]);
+
+  return c.json({ ok: true, message: `Redeemed code ${code}! You and the code owner both get a reward in-game.` });
+});
