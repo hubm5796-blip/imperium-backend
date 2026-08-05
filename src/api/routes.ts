@@ -1890,3 +1890,57 @@ api.get('/marketplace/mine', requireBotAuth, async (c) => {
   );
   return c.json({ listings: result.rows });
 });
+
+/* ---------------------------------------------------------- Legion Management */
+
+/**
+ * POST /api/legion/create — create a new legion (in-game command dispatch).
+ */
+api.post('/legion/create', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  let body: { name?: string };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+  const name = (body.name ?? '').trim();
+  if (!name || name.length < 3 || name.length > 20) {
+    return c.json({ error: 'Legion name must be 3-20 characters' }, 400);
+  }
+  try {
+    const response = await sendCommandWithResponse('DISPATCH_COMMAND', {
+      command: `legion create ${name}`,
+      uuid,
+    }, 5_000);
+    return c.json({ ok: response.ok, error: response.error }, response.ok ? 200 : 502);
+  } catch { return c.json({ error: 'Plugin did not respond' }, 504); }
+});
+
+/**
+ * POST /api/legion/leave — leave current legion.
+ */
+api.post('/legion/leave', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  try {
+    const response = await sendCommandWithResponse('DISPATCH_COMMAND', {
+      command: 'legion leave',
+      uuid,
+    }, 5_000);
+    return c.json({ ok: response.ok, error: response.error }, response.ok ? 200 : 502);
+  } catch { return c.json({ error: 'Plugin did not respond' }, 504); }
+});
+
+/**
+ * POST /api/legion/invite — invite a player to your legion.
+ */
+api.post('/legion/invite', requireAuth, requireLinked, async (c) => {
+  const uuid = c.var.mcUuid!;
+  let body: { username?: string };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+  const username = (body.username ?? '').trim();
+  if (!username) return c.json({ error: 'Missing username' }, 400);
+  try {
+    const response = await sendCommandWithResponse('DISPATCH_COMMAND', {
+      command: `legion invite ${username}`,
+      uuid,
+    }, 5_000);
+    return c.json({ ok: response.ok, error: response.error }, response.ok ? 200 : 502);
+  } catch { return c.json({ error: 'Plugin did not respond' }, 504); }
+});
