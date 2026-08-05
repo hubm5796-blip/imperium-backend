@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "deploy": "wrangler deploy",
     "register-commands": "tsx src/bot/registerCommands.ts",
-    "register-commands:guild": "tsx src/bot/registerCommands.ts --guild"
+    "register-commands:guild": "tsx src/bot/registerCommands.ts --guild",
+    "test": "vitest run"
   },
   "dependencies": {
     "@discordjs/builders": "^1.14.1",
@@ -34,6 +35,7 @@
     "@types/pg": "^8.20.3",
     "tsx": "^4.23.5",
     "typescript": "^5.6.0",
+    "vitest": "^4.1.10",
     "wrangler": "^4.118.0"
   },
   "overrides": {
