@@ -316,16 +316,58 @@ export async function getPlayerProfile(uuid: string): Promise<PlayerProfile | nu
 }
 
 /**
- * Resolve a username to its Minecraft UUID via the plugin-maintained registry
- * (kept current on every join). Case-insensitive exact match — usernames
- * (including Bedrock/Floodgate-prefixed ones) are matched as typed.
+ * Resolve a username to its Minecraft UUID. Primary source is the
+ * plugin-maintained `player_names` registry (kept current on every join,
+ * covers Java + Bedrock). If that misses (player never joined the server),
+ * fall back to Mojang's profile API for Java Edition usernames so gifting
+ * works before the recipient has logged in. Bedrock players (`.prefix`) have
+ * no Mojang equivalent — they must have joined at least once.
+ *
+ * Resolved Mojang UUIDs are cached into `player_names` so subsequent lookups
+ * (checkout, webhook delivery) are instant and don't re-hit Mojang.
  */
 export async function getUuidByUsername(username: string): Promise<string | null> {
   const result = await query<{ uuid: string }>(
     'SELECT uuid FROM player_names WHERE LOWER(username) = LOWER($1)',
     [username],
   );
-  return result.rows[0]?.uuid ?? null;
+  if (result.rows[0]?.uuid) return result.rows[0].uuid;
+
+  // Bedrock/Floodgate usernames start with "." — no Mojang equivalent exists.
+  if (username.startsWith('.')) return null;
+
+  // Java Edition: ask Mojang. Use the username-at-time API (no rate limit
+  // concern — this fires only when gifting to a player who never joined).
+  try {
+    const res = await fetch(
+      `https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(username)}`,
+      { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { id?: string; name?: string };
+    if (!data.id) return null;
+
+    // Mojang returns the UUID as a 32-char hex string (no dashes). Format it
+    // into the standard 8-4-4-4-12 dashed form the rest of the codebase uses.
+    const hex = data.id.replace(/-/g, '');
+    const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+
+    // Cache into player_names so the plugin's join handler and future lookups
+    // find it instantly. INSERT OR IGNORE (ON CONFLICT DO NOTHING) — if the
+    // player joins later, the plugin's upsert updates the row with the
+    // authoritative username casing.
+    try {
+      await query(
+        'INSERT INTO player_names (uuid, username) VALUES ($1, $2) ON CONFLICT (uuid) DO NOTHING',
+        [uuid, data.name ?? username],
+      );
+    } catch {
+      // Non-fatal — the UUID is resolved even if the cache write fails.
+    }
+    return uuid;
+  } catch {
+    return null;
+  }
 }
 
 /**
