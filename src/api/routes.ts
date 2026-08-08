@@ -1443,7 +1443,7 @@ api.post('/store/gift-checkout', storeAuth, async (c) => {
 
   const recipientUuid = await getUuidByUsername(recipientUsername);
   if (!recipientUuid) {
-    return c.json({ error: 'No player found with that username — have they joined the server before?' }, 404);
+    return c.json({ error: `No player found with username "${recipientUsername}" — they must have joined the server at least once, or be a valid Java Edition account.` }, 404);
   }
   if (recipientUuid === buyerUuid) {
     return c.json({ error: 'Use the normal checkout to buy for yourself' }, 400);
@@ -1461,11 +1461,18 @@ api.post('/store/gift-checkout', storeAuth, async (c) => {
     return c.json({ url: session.url, recipientUsername });
   } catch (err) {
     if (err instanceof PaynowApiError) {
-      logger.warn({ err: err.body, status: err.status, buyerUuid, recipientUuid }, 'PayNow gift checkout creation failed');
-      return c.json({ error: err.message }, 502);
+      logger.warn({ err: err.body, status: err.status, buyerUuid, recipientUuid, recipientUsername, productId: body.productId }, 'PayNow gift checkout creation failed');
+      const userFriendly = err.status === 400
+        ? 'PayNow rejected the checkout request. The product ID may be invalid.'
+        : err.status === 401 || err.status === 403
+        ? 'PayNow authentication failed. Please contact an administrator.'
+        : err.status === 404
+        ? 'Product or customer not found in PayNow.'
+        : `PayNow error (${err.status}). Please try again or contact support.`;
+      return c.json({ error: userFriendly }, 502);
     }
-    logger.error({ err, buyerUuid, recipientUuid }, 'Gift checkout creation failed');
-    return c.json({ error: 'Failed to create gift checkout session' }, 500);
+    logger.error({ err: err instanceof Error ? { message: err.message, stack: err.stack } : err, buyerUuid, recipientUuid, recipientUsername, productId: body.productId }, 'Gift checkout creation failed (unexpected)');
+    return c.json({ error: 'Failed to create gift checkout session. Please try again or contact support with this info.' }, 500);
   }
 });
 
