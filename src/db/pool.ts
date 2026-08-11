@@ -42,6 +42,14 @@ export function initPool(connectionString: string): void {
     max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
+    // Supabase pooler (PgBouncer/Supavisor on :6543) can present a cert that
+    // Node's default CA bundle refuses to verify, and sslmode=require in the
+    // URL alone parses to ssl:true which then hard-fails the handshake with
+    // SELF_SIGNED_CERTIFICATE_IN_CHAIN / UNABLE_TO_VERIFY_LEAF_SIGNATURE.
+    // Accept the cert explicitly: the connection is still TLS-encrypted, just
+    // not pinned to a CA. This explicit ssl option governs over sslmode in the
+    // connection string.
+    ssl: { rejectUnauthorized: false },
   });
   pool.on('error', (err) => {
     logger.error({ err }, 'Unexpected error on idle pg client');
