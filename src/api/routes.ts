@@ -2075,5 +2075,13 @@ api.post('/refcode/redeem', requireBotAuth, async (c) => {
   // Increment owner's redemption count
   await query('UPDATE referral_codes SET total_redemptions = total_redemptions + 1 WHERE code = $1', [code]);
 
-  return c.json({ ok: true, message: `Redeemed code ${code}! You and the code owner both get a reward in-game.` });
+  // Return the owner's identity so the plugin can pay them their referral reward in-game. The reward
+  // itself is granted by the Minecraft plugin (EconomyService.depositOffline) — the backend never
+  // touches in-game currency. ownerName is included only for a nicer chat message to the redeemer.
+  return c.json({
+    ok: true,
+    message: `Redeemed code ${code}! You and the code owner both get a reward in-game.`,
+    ownerUuid,
+    ownerName: owner.rows[0].username,
+  });
 });
