@@ -114,6 +114,7 @@ function socketConfig(): RedisSocketConfig {
     host: env.redis.host,
     port: env.redis.port,
     password: env.redis.password || undefined,
+    username: env.redis.username || undefined,
     tls: env.redis.tls,
   };
 }

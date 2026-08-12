@@ -32,6 +32,9 @@ export interface RedisSocketConfig {
   host: string;
   port: number;
   password?: string;
+  /** ACL username (e.g. "default" for Layerbase/Upstash). When set, AUTH is sent as two-arg
+   *  `AUTH <username> <password>`; otherwise one-arg `AUTH <password>` (legacy). */
+  username?: string;
   /** Upstash (and most managed Redis providers) require TLS, no exceptions; a bare requirepass self-host typically doesn't use it. */
   tls?: boolean;
 }
@@ -161,7 +164,7 @@ export async function redisCommand(
     const reader = new ChunkReader(socket.readable.getReader());
 
     if (config.password) {
-      await writer.write(encodeCommand(['AUTH', config.password]));
+      await writer.write(encodeCommand(config.username ? ['AUTH', config.username, config.password] : ['AUTH', config.password]));
       await readReply(reader);
     }
 
@@ -206,7 +209,7 @@ export async function redisSubscribeOnce(
     const reader = new ChunkReader(socket.readable.getReader());
 
     if (config.password) {
-      await writer.write(encodeCommand(['AUTH', config.password]));
+      await writer.write(encodeCommand(config.username ? ['AUTH', config.username, config.password] : ['AUTH', config.password]));
       await readReply(reader);
     }
 

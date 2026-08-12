@@ -119,6 +119,7 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
       host: optional('REDIS_HOST', 'localhost'),
       port: optionalInt('REDIS_PORT', 6379),
       password: optional('REDIS_PASSWORD'),
+      username: optional('REDIS_USERNAME'),
       tls: optionalBool('REDIS_TLS', false),
     },
     webpanelHmacSecret: required('WEBPANEL_HMAC_SECRET'),
