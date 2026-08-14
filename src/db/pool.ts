@@ -2,6 +2,7 @@ import { Pool, type QueryResult, type QueryResultRow } from 'pg';
 import { deleteCachedJson, getCachedJson, setCachedJson } from './redis.js';
 import { logger } from '../utils/logger.js';
 import {
+  CURRENCY_ALIASES,
   CURRENCY_COLUMNS,
   type CurrencyBalanceRow,
   type DiscordLinkRow,
@@ -481,17 +482,13 @@ export async function getPlayerBalances(
     goldenCoins: 0,
   };
 
-  // Reverse lookup: db column -> friendly key.
-  const columnToKey = Object.fromEntries(
-    Object.entries(CURRENCY_COLUMNS).map(([k, v]) => [v, k]),
-  ) as Record<string, keyof typeof CURRENCY_COLUMNS>;
-
+  // Reverse lookup accepts BOTH canonical and legacy row keys (see CURRENCY_ALIASES).
   for (const row of result.rows) {
-    const key = columnToKey[row.currency.toLowerCase()];
+    const key = CURRENCY_ALIASES[row.currency.toLowerCase()];
     if (key) {
-      // Only Denarius (money) is stored in minor units; tokens/beacons/gc are whole numbers.
+      // Only Denarius is stored in minor units; the other currencies are whole numbers.
       balances[key] =
-        row.currency.toLowerCase() === 'money'
+        key === 'denarius'
           ? minorUnitsToDisplay(row.balance)
           : Number(row.balance);
     }

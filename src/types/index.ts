@@ -150,15 +150,34 @@ export interface ResponseEnvelope {
   [key: string]: unknown;
 }
 
-/** Mapping from internal currency label to legacy db column name. */
+/**
+ * Mapping from internal currency label to the currency_balances.currency row key.
+ * CANONICAL RENAME (2026-08-14): the plugin migrated every row to the branded names
+ * (denarius/auctoritas/civitas/aureus) — the legacy keys (money/tokens/beacons/gc)
+ * remain mapped in CURRENCY_ALIASES so any straggler row still resolves.
+ */
 export const CURRENCY_COLUMNS = {
-  denarius: 'money',
-  tokens: 'tokens',
-  beacons: 'beacons',
-  goldenCoins: 'gc',
+  denarius: 'denarius',
+  tokens: 'auctoritas',
+  beacons: 'civitas',
+  goldenCoins: 'aureus',
 } as const;
 
 export type CurrencyKey = keyof typeof CURRENCY_COLUMNS;
+
+/**
+ * Row key (canonical OR legacy) -> internal currency label.
+ */
+export const CURRENCY_ALIASES: Record<string, CurrencyKey> = {
+  denarius: 'denarius',
+  money: 'denarius',
+  auctoritas: 'tokens',
+  tokens: 'tokens',
+  civitas: 'beacons',
+  beacons: 'beacons',
+  aureus: 'goldenCoins',
+  gc: 'goldenCoins',
+};
 
 /** Number of minor units per display unit. */
 export const MINOR_UNITS_PER_UNIT = 100;
