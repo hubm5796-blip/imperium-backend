@@ -489,7 +489,11 @@ export async function getPlayerBalances(
   for (const row of result.rows) {
     const key = columnToKey[row.currency.toLowerCase()];
     if (key) {
-      balances[key] = minorUnitsToDisplay(row.balance);
+      // Only Denarius (money) is stored in minor units; tokens/beacons/gc are whole numbers.
+      balances[key] =
+        row.currency.toLowerCase() === 'money'
+          ? minorUnitsToDisplay(row.balance)
+          : Number(row.balance);
     }
   }
 

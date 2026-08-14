@@ -224,6 +224,7 @@ api.get('/auth/me', requireAuth, async (c) => {
       : null,
     mcLinked: c.var.mcUuid !== null,
     mcUuid: c.var.mcUuid,
+    mcUsername: c.var.mcUuid ? await getNameByUuid(c.var.mcUuid).catch(() => null) : null,
   });
 });
 
@@ -464,6 +465,7 @@ api.get('/player/profile', async (c) => {
     username: resolvedUsername ?? `Player`,
     rank: p.rank?.level ?? p.rank_level ?? p.rank ?? 0,
     prestigeLevel: p.prestige?.level ?? p.prestige_level ?? p.prestige ?? 0,
+    prestige: p.prestige?.level ?? p.prestige_level ?? p.prestige ?? 0,
     denarius: balances.denarius ?? 0,
     auctoritas: balances.tokens ?? 0,
     civitas: balances.beacons ?? 0,
@@ -635,34 +637,39 @@ api.get('/admin/player', async (c) => {
     return c.json({ error: 'Player not found' }, 404);
   }
 
-  const profile = await getPlayerProfile(uuid);
-  if (!profile) {
-    return c.json({ uuid, error: 'Profile data not available yet' }, 200);
-  }
-
-  const balances = await getPlayerBalances(uuid);
-  let username: string | null = null;
   try {
-    username = await getNameByUuid(uuid);
-  } catch {
-    // Best effort
-  }
+    const profile = await getPlayerProfile(uuid);
+    if (!profile) {
+      return c.json({ uuid, error: 'Profile data not available yet' }, 200);
+    }
 
-  const p = profile as any;
-  return c.json({
-    uuid,
-    username: username ?? 'Player',
-    rank: p.rank?.level ?? 0,
-    prestige: p.prestige?.level ?? 0,
-    denarius: balances.denarius,
-    auctoritas: balances.tokens,
-    civitas: balances.beacons,
-    aureus: balances.goldenCoins,
-    blocksMined: p.stats?.blocksMined ?? 0,
-    playtimeSeconds: Number(p.stats?.playTime ?? 0),
-    pvpKills: p.stats?.pvpKills ?? 0,
-    pvpDeaths: p.stats?.pvpDeaths ?? 0,
-  });
+    const balances = await getPlayerBalances(uuid);
+    let username: string | null = null;
+    try {
+      username = await getNameByUuid(uuid);
+    } catch {
+      // Best effort
+    }
+
+    const p = profile as any;
+    return c.json({
+      uuid,
+      username: username ?? 'Player',
+      rank: p.rank?.level ?? 0,
+      prestige: p.prestige?.level ?? 0,
+      denarius: balances.denarius,
+      auctoritas: balances.tokens,
+      civitas: balances.beacons,
+      aureus: balances.goldenCoins,
+      blocksMined: p.stats?.blocksMined ?? 0,
+      playtimeSeconds: Number(p.stats?.playTime ?? 0),
+      pvpKills: p.stats?.pvpKills ?? 0,
+      pvpDeaths: p.stats?.pvpDeaths ?? 0,
+    });
+  } catch (err) {
+    logger.error({ err, uuid }, 'Admin player lookup failed');
+    return c.json({ error: 'Failed to load player data' }, 500);
+  }
 });
 
 /**
@@ -786,11 +793,11 @@ api.get('/player/permissions', async (c) => {
   // Query LuckPerms groups from the database (the plugin writes them)
   let groups: string[] = [];
   try {
-    const result = await query<{ group_name: string }>(
-      `SELECT group_name FROM luckperms_players WHERE uuid = $1`,
+    const result = await query<{ primary_group: string }>(
+      `SELECT primary_group FROM luckperms_players WHERE uuid = $1`,
       [uuid],
     );
-    groups = result.rows.map((r: { group_name: string }) => r.group_name.toLowerCase());
+    groups = result.rows.map((r: { primary_group: string }) => r.primary_group.toLowerCase());
   } catch {
     // LuckPerms table may not exist or have a different name
   }

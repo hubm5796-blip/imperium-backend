@@ -55,13 +55,18 @@
 		"DISCORD_PUBLIC_KEY": "2340504d65c62d22bab9f1150577536a0fc79d42019247dc9815bca349b45594",
 		"DISCORD_REDIRECT_URI": "https://imperiummc.net/auth/callback",
 		"PAYNOW_STORE_ID": "586713008948903936",
+		"REDIS_HOST": "imperiummc-firm-quartz.cloud.layerbase.dev",
 		"REDIS_PORT": "6379",
+		"REDIS_PASSWORD": "ZH9SBmPXK3x166IfKQpsKGaX",
 		"REDIS_TLS": "true",
 		"NODE_ENV": "production"
 	}
 	// True secrets (JWT_SECRET, PAYNOW_API_KEY, DISCORD_CLIENT_SECRET,
-	// DISCORD_BOT_TOKEN, WEBPANEL_HMAC_SECRET, BOT_API_TOKEN, REDIS_HOST,
-	// REDIS_PASSWORD, PAYNOW_WEBHOOK_SECRETS) are padlocked "Secret" entries
+	// DISCORD_BOT_TOKEN, WEBPANEL_HMAC_SECRET, BOT_API_TOKEN,
+	// PAYNOW_WEBHOOK_SECRETS) are padlocked "Secret" entries
 	// in the dashboard and go through `wrangler secret put <NAME>` — those DO
 	// persist across Git deploys independently of this file.
+	// NOTE: REDIS_HOST + REDIS_PASSWORD are now in vars above (pointing at
+	// layerbase). If old dashboard secrets exist for these names, delete them
+	// so the vars take effect, OR run: wrangler secret delete REDIS_HOST; wrangler secret delete REDIS_PASSWORD
 }

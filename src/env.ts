@@ -28,6 +28,7 @@ export interface EnvShape {
     host: string;
     port: number;
     password: string;
+    username: string;
     /** Managed providers (Upstash, etc.) require TLS; a bare requirepass self-host typically doesn't use it. */
     tls: boolean;
   };
