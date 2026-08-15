@@ -819,6 +819,36 @@ api.get('/player/permissions', async (c) => {
 
 /* ---------------------------------------------------------------- Public */
 
+/** GET /api/__dbdebug — TEMP cutover diagnostic: tries several Postgres
+ * endpoints from inside the Worker and reports each outcome. Remove after
+ * the Supabase cutover is verified. */
+api.get('/__dbdebug', async (c) => {
+  const { Client } = await import('pg');
+  const PW = 'KCxtU9fjBMkZDRC&';
+  const targets: Array<{ label: string; host: string; port: number; user: string }> = [
+    { label: 'pooler-6543-txn', host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, user: 'postgres.rgqgaiwcuqmidbxggayk' },
+    { label: 'pooler-5432-session', host: 'aws-0-us-east-1.pooler.supabase.com', port: 5432, user: 'postgres.rgqgaiwcuqmidbxggayk' },
+    { label: 'direct-5432', host: 'db.rgqgaiwcuqmidbxggayk.supabase.co', port: 5432, user: 'postgres' },
+  ];
+  const results = await Promise.all(targets.map(async (t) => {
+    const client = new Client({
+      host: t.host, port: t.port, database: 'postgres', user: t.user, password: PW,
+      ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 8000,
+    });
+    const start = Date.now();
+    try {
+      await client.connect();
+      const r = await client.query('SELECT 1 AS ok');
+      await client.end();
+      return { label: t.label, ok: true, ms: Date.now() - start, rows: r.rowCount };
+    } catch (e) {
+      try { await client.end(); } catch { /* already dead */ }
+      return { label: t.label, ok: false, ms: Date.now() - start, err: String(e).slice(0, 300) };
+    }
+  }));
+  return c.json({ results });
+});
+
 /** GET /api/leaderboards/:type — top 20 by denarius | blocks | prestige | playtime. */
 api.get('/leaderboards/:type', async (c) => {
   const type: string = c.req.param("type") ?? "";
