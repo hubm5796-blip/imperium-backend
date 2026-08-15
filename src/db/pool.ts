@@ -35,7 +35,6 @@ import { minorUnitsToDisplay } from '../utils/money.js';
 class WorkerPgSocket extends EventEmitter {
   writable = false;
   destroyed = false;
-  private _upgrading = false;
   private _upgraded = false;
   private _cfSocket: Socket | null = null;
   private _cfWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -52,16 +51,19 @@ class WorkerPgSocket extends EventEmitter {
       const { connect: cfConnect } = await import('cloudflare:sockets');
       this._cfSocket = cfConnect(
         { hostname: host, port },
-        { secureTransport: 'starttls', allowHalfOpen: false },
+        { secureTransport: 'starttls' },
       );
+      // The raw socket's `closed` settles (and can REJECT) the moment
+      // startTls() swaps it for the TLS socket — that is expected lifecycle,
+      // not an error. Swallow it; only the upgraded socket's closed matters.
+      this._cfSocket.closed.catch(() => {});
+      await this._cfSocket.opened;
       this._cfWriter = this._cfSocket.writable.getWriter();
-      this._addClosedHandler();
       this._cfReader = this._cfSocket.readable.getReader();
       // SSLRequest flow: pg waits for the server's 1-byte 'S' before calling
       // startTls, so only forward the FIRST read; the regular pump starts
       // after the upgrade.
-      this._listenOnce().catch((e) => this.emit('error', e));
-      await this._cfWriter.ready;
+      this._listenOnce().catch((e: unknown) => this.emit('error', e));
       this.writable = true;
       this.emit('connect');
       return this;
@@ -120,7 +122,7 @@ class WorkerPgSocket extends EventEmitter {
     const servername = typeof options.servername === 'string' ? options.servername : undefined;
     this._cfWriter!.releaseLock();
     this._cfReader!.releaseLock();
-    this._upgrading = true;
+    this._upgraded = true;
     // workers-types' TlsOptions predates servername; the runtime accepts it
     // (verified live — SNI is required for the Supabase pooler's cert).
     this._cfSocket = this._cfSocket!.startTls(
@@ -128,20 +130,12 @@ class WorkerPgSocket extends EventEmitter {
     );
     this._cfWriter = this._cfSocket.writable.getWriter();
     this._cfReader = this._cfSocket.readable.getReader();
-    this._addClosedHandler();
-    this._listen().catch((e) => this.emit('error', e));
-  }
-
-  private _addClosedHandler(): void {
-    this._cfSocket!.closed.then(() => {
-      if (!this._upgrading) {
-        this._cfSocket = null;
-        this.emit('close');
-      } else {
-        this._upgrading = false;
-        this._upgraded = true;
-      }
-    }).catch((e) => this.emit('error', e));
+    // The TLS socket's closed is the connection's real lifecycle.
+    this._cfSocket.closed.then(() => {
+      this._cfSocket = null;
+      this.emit('close');
+    }).catch((e: unknown) => this.emit('error', e));
+    this._listen().catch((e: unknown) => this.emit('error', e));
   }
 }
 
