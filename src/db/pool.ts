@@ -1,4 +1,5 @@
 import { Pool, type QueryResult, type QueryResultRow } from 'pg';
+import { EventEmitter } from 'node:events';
 import { deleteCachedJson, getCachedJson, setCachedJson } from './redis.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -16,21 +17,145 @@ import {
 import { minorUnitsToDisplay } from '../utils/money.js';
 
 /**
- * Lazily-initialized PostgreSQL connection pool on `pg`. The TLS option is
- * environment-conditional, and the difference is load-bearing:
+ * Postgres-over-TCP from inside Cloudflare Workers, using ONLY primitives
+ * proven against the live runtime (2026-08-15 probe session):
  *
- *  - Workers' nodejs_compat `node:tls` shim does NOT implement the
- *    `rejectUnauthorized` option — passing it (as an ssl object does) throws
- *    ERR_OPTION_NOT_IMPLEMENTED and every connection dies before auth
- *    ("Connection terminated unexpectedly"). On Workers we pass `ssl: true`,
- *    which routes the handshake through the shim's default — Cloudflare's
- *    native startTls(), which is TLS-encrypted but not CA-pinned.
- *  - Real Node rejects the Supabase pooler's cert chain under default
- *    verification, so local dev passes the explicit lenient ssl object.
+ *   ✅ cloudflare:sockets connect({hostname, port}, {secureTransport:'starttls'})
+ *   ✅ plaintext SSLRequest packet → server 'S'
+ *   ✅ socket.startTls({servername}) → native TLS handshake
  *
- * Verified against the live Worker 2026-08-15: cloudflare:sockets TCP and
- * node:net connect fine to the Supabase pooler; node:tls works only without
- * the unsupported option.
+ * Everything else fails in workerd: node:tls rejects the rejectUnauthorized
+ * option outright (ERR_OPTION_NOT_IMPLEMENTED) and its no-opts path errors
+ * with "proxy request failed"; pg-cloudflare 1.4.0 (pg's bundled CF socket)
+ * dies pre-auth with "Connection terminated unexpectedly" — it dials with the
+ * string address form and forwards pg's whole options bag (incl. .socket and
+ * ALPNProtocols) into startTls. This class is pg-cloudflare's shape with
+ * those two details fixed.
+ */
+class WorkerPgSocket extends EventEmitter {
+  writable = false;
+  destroyed = false;
+  private _upgrading = false;
+  private _upgraded = false;
+  private _cfSocket: Socket | null = null;
+  private _cfWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  private _cfReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+  setNoDelay() { return this; }
+  setKeepAlive() { return this; }
+  ref() { return this; }
+  unref() { return this; }
+
+  async connect(port: number, host: string, connectListener?: () => void) {
+    try {
+      if (connectListener) this.once('connect', connectListener);
+      const { connect: cfConnect } = await import('cloudflare:sockets');
+      this._cfSocket = cfConnect(
+        { hostname: host, port },
+        { secureTransport: 'starttls', allowHalfOpen: false },
+      );
+      this._cfWriter = this._cfSocket.writable.getWriter();
+      this._addClosedHandler();
+      this._cfReader = this._cfSocket.readable.getReader();
+      // SSLRequest flow: pg waits for the server's 1-byte 'S' before calling
+      // startTls, so only forward the FIRST read; the regular pump starts
+      // after the upgrade.
+      this._listenOnce().catch((e) => this.emit('error', e));
+      await this._cfWriter.ready;
+      this.writable = true;
+      this.emit('connect');
+      return this;
+    } catch (e) {
+      this.emit('error', e);
+      return this;
+    }
+  }
+
+  private async _listen(): Promise<void> {
+    for (;;) {
+      const { done, value } = await this._cfReader!.read();
+      if (done) break;
+      this.emit('data', Buffer.from(value));
+    }
+  }
+
+  private async _listenOnce(): Promise<void> {
+    const { done, value } = await this._cfReader!.read();
+    if (!done && value) this.emit('data', Buffer.from(value));
+  }
+
+  write(data: Uint8Array | string, _encoding?: string, callback?: (err?: Error) => void): boolean {
+    const cb = callback ?? (() => {});
+    try {
+      if (typeof data === 'string') data = Buffer.from(data);
+      if (data.length === 0) { cb(); return true; }
+      this._cfWriter!.write(data).then(() => cb(), (err) => cb(err));
+      return true;
+    } catch (e) {
+      cb(e as Error);
+      return false;
+    }
+  }
+
+  end(data?: Uint8Array, _encoding?: string, callback?: () => void): this {
+    this.write(data ?? Buffer.alloc(0), undefined, () => {
+      this._cfSocket?.close();
+      callback?.();
+    });
+    return this;
+  }
+
+  destroy(): this {
+    this.destroyed = true;
+    this.end();
+    return this;
+  }
+
+  /** pg's CF-path upgrade hook: getSecureStream calls socket.startTls(options). */
+  startTls(options: { servername?: string } & Record<string, unknown>) {
+    if (this._upgraded) {
+      this.emit('error', new Error('startTls() called twice'));
+      return;
+    }
+    const servername = typeof options.servername === 'string' ? options.servername : undefined;
+    this._cfWriter!.releaseLock();
+    this._cfReader!.releaseLock();
+    this._upgrading = true;
+    // workers-types' TlsOptions predates servername; the runtime accepts it
+    // (verified live — SNI is required for the Supabase pooler's cert).
+    this._cfSocket = this._cfSocket!.startTls(
+      (servername ? { servername } : {}) as Parameters<Socket['startTls']>[0],
+    );
+    this._cfWriter = this._cfSocket.writable.getWriter();
+    this._cfReader = this._cfSocket.readable.getReader();
+    this._addClosedHandler();
+    this._listen().catch((e) => this.emit('error', e));
+  }
+
+  private _addClosedHandler(): void {
+    this._cfSocket!.closed.then(() => {
+      if (!this._upgrading) {
+        this._cfSocket = null;
+        this.emit('close');
+      } else {
+        this._upgrading = false;
+        this._upgraded = true;
+      }
+    }).catch((e) => this.emit('error', e));
+  }
+}
+
+/**
+ * Lazily-initialized PostgreSQL connection pool on `pg`.
+ *
+ * On Workers (detected via userAgent), connections run through WorkerPgSocket
+ * above (pg's `stream` may be a per-connection factory function — see
+ * pg/lib/connection.js) and `ssl: true` keeps pg on its SSLRequest→startTls
+ * flow with no ssl options object (any object drags rejectUnauthorized into
+ * workerd's unimplemented node:tls path).
+ *
+ * In real Node the pool uses node:net/node:tls directly; the Supabase pooler
+ * cert chain is not publicly verifiable, so pass the lenient ssl object.
  */
 const IS_CLOUDFLARE_WORKERS =
   typeof navigator !== 'undefined' && /Cloudflare-Workers/i.test(navigator.userAgent ?? '');
@@ -44,6 +169,8 @@ export function initPool(connectionString: string): void {
   // cleanly — it queues past the limit and connection-acquire calls silently
   // time out, which upstream code that does `catch { return null }` then
   // reports as "not found" even when the row genuinely exists.
+  // pg's PoolConfig types don't know `stream` may be a per-connection factory
+  // (pg/lib/connection.js supports it), so cast the Workers branch.
   pool = new Pool({
     connectionString,
     max: 5,
@@ -51,8 +178,10 @@ export function initPool(connectionString: string): void {
     connectionTimeoutMillis: 5_000,
     // No sslmode=... in the connection string either: this repo's pg parses
     // sslmode=require as verify-full and lets it override this option.
-    ssl: IS_CLOUDFLARE_WORKERS ? true : { rejectUnauthorized: false },
-  });
+    ...(IS_CLOUDFLARE_WORKERS
+      ? { ssl: true as const, stream: () => new WorkerPgSocket() }
+      : { ssl: { rejectUnauthorized: false } }),
+  } as ConstructorParameters<typeof Pool>[0]);
   pool.on('error', (err) => {
     logger.error({ err }, 'Unexpected error on idle pg client');
   });
