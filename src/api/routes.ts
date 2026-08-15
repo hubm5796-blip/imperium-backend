@@ -856,13 +856,13 @@ api.get('/__dbdebug', async (c) => {
     });
   });
 
-  // 3. node:tls via the shim.
-  await probe('node-tls-connect', async () => {
+  // 3. node:tls via the shim — WITHOUT the unsupported rejectUnauthorized option.
+  await probe('node-tls-noopts', async () => {
     const tls = await import('node:tls');
     return await new Promise((resolve, reject) => {
-      const s = tls.connect({ host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, servername: 'aws-0-us-east-1.pooler.supabase.com', rejectUnauthorized: false });
+      const s = tls.connect({ host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, servername: 'aws-0-us-east-1.pooler.supabase.com' });
       const t = setTimeout(() => { s.destroy(); reject(new Error('tls handshake timeout')); }, 6000);
-      s.on('secureConnect', () => { clearTimeout(t); s.destroy(); resolve('node:tls secureConnect'); });
+      s.on('secureConnect', () => { clearTimeout(t); s.destroy(); resolve('node:tls secureConnect (no opts)'); });
       s.on('error', (e) => { clearTimeout(t); reject(e); });
     });
   });
@@ -871,7 +871,7 @@ api.get('/__dbdebug', async (c) => {
   await probe('pg-over-manual-tls', async () => {
     const tls = await import('node:tls');
     const { Client } = await import('pg');
-    const tlsSock = tls.connect({ host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, servername: 'aws-0-us-east-1.pooler.supabase.com', rejectUnauthorized: false });
+    const tlsSock = tls.connect({ host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, servername: 'aws-0-us-east-1.pooler.supabase.com' });
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => { tlsSock.destroy(); reject(new Error('tls handshake timeout')); }, 6000);
       tlsSock.on('secureConnect', () => { clearTimeout(t); resolve(); });

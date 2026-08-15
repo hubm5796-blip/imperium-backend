@@ -1,5 +1,4 @@
-import postgres, { type Sql } from 'postgres';
-import type { QueryResult, QueryResultRow } from 'pg';
+import { Pool, type QueryResult, type QueryResultRow } from 'pg';
 import { deleteCachedJson, getCachedJson, setCachedJson } from './redis.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -17,37 +16,45 @@ import {
 import { minorUnitsToDisplay } from '../utils/money.js';
 
 /**
- * Lazily-initialized PostgreSQL connection pool built on postgres.js (not `pg`).
- * `pg` could not complete its TLS upgrade over nodejs_compat sockets from
- * inside Workers — every endpoint died with "Connection terminated
- * unexpectedly" before auth (2026-08-15 cutover attempt), because pg's
- * tls.connect({socket}) path was never exercised by the Hyperdrive local
- * proxy that used to serve prod. postgres.js implements TLS itself over
- * cloudflare:sockets and is the driver with first-class Workers support.
- * The query() surface below is unchanged: $1-style params, { rows } results,
- * NUMERIC/BIGINT as strings, timestamptz as Date — matching pg's row shapes
- * the rest of the codebase was written against.
+ * Lazily-initialized PostgreSQL connection pool on `pg`. The TLS option is
+ * environment-conditional, and the difference is load-bearing:
+ *
+ *  - Workers' nodejs_compat `node:tls` shim does NOT implement the
+ *    `rejectUnauthorized` option — passing it (as an ssl object does) throws
+ *    ERR_OPTION_NOT_IMPLEMENTED and every connection dies before auth
+ *    ("Connection terminated unexpectedly"). On Workers we pass `ssl: true`,
+ *    which routes the handshake through the shim's default — Cloudflare's
+ *    native startTls(), which is TLS-encrypted but not CA-pinned.
+ *  - Real Node rejects the Supabase pooler's cert chain under default
+ *    verification, so local dev passes the explicit lenient ssl object.
+ *
+ * Verified against the live Worker 2026-08-15: cloudflare:sockets TCP and
+ * node:net connect fine to the Supabase pooler; node:tls works only without
+ * the unsupported option.
  */
-let sql: Sql | null = null;
+const IS_CLOUDFLARE_WORKERS =
+  typeof navigator !== 'undefined' && /Cloudflare-Workers/i.test(navigator.userAgent ?? '');
+
+let pool: Pool | null = null;
 
 export function initPool(connectionString: string): void {
-  if (sql) return;
+  if (pool) return;
   // max: 5, not 10 -- Cloudflare Workers hard-caps a single invocation to 6
   // concurrent connections total. A pool sized above that cap doesn't error
   // cleanly — it queues past the limit and connection-acquire calls silently
   // time out, which upstream code that does `catch { return null }` then
   // reports as "not found" even when the row genuinely exists.
-  sql = postgres(connectionString, {
+  pool = new Pool({
+    connectionString,
     max: 5,
-    idle_timeout: 30,
-    connect_timeout: 5,
-    // The Supabase pooler presents a cert Node's default CA bundle refuses to
-    // verify. Accept it explicitly: the connection is still TLS-encrypted,
-    // just not pinned to a CA.
-    ssl: { rejectUnauthorized: false },
-    // The transaction pooler (Supavisor :6543) multiplexes server-side and
-    // cannot host session-level prepared statements.
-    prepare: false,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    // No sslmode=... in the connection string either: this repo's pg parses
+    // sslmode=require as verify-full and lets it override this option.
+    ssl: IS_CLOUDFLARE_WORKERS ? true : { rejectUnauthorized: false },
+  });
+  pool.on('error', (err) => {
+    logger.error({ err }, 'Unexpected error on idle pg client');
   });
 }
 
@@ -70,34 +77,28 @@ function getD1(): D1Database {
   return d1;
 }
 
-function getSql(): Sql {
-  if (!sql) {
+function getPool(): Pool {
+  if (!pool) {
     throw new Error('Postgres pool not initialized — initPool() must run before any query');
   }
-  return sql;
+  return pool;
 }
 
 /** Drains the pool on graceful shutdown (Node dev entrypoint only — Workers has no shutdown hook). */
 export async function closePool(): Promise<void> {
-  if (sql) await sql.end({ timeout: 5 });
-  sql = null;
+  if (pool) await pool.end();
 }
 
 export async function query<T extends QueryResultRow>(
   text: string,
   params: ReadonlyArray<unknown>,
 ): Promise<QueryResult<T>> {
-  const result = await getSql().unsafe(text, params as unknown as []);
-  const rows = Array.from(result as unknown as Iterable<T>);
-  // Shape the result like pg's QueryResult so every call site's
-  // `.rows` / `rowCount` access keeps working unchanged.
-  return {
-    rows,
-    rowCount: (result as unknown as { count?: number }).count ?? rows.length,
-    command: '',
-    oid: 0,
-    fields: [],
-  } as QueryResult<T>;
+  const client = await getPool().connect();
+  try {
+    return await client.query<T>(text, params as unknown[]);
+  } finally {
+    client.release();
+  }
 }
 
 /**
