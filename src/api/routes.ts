@@ -959,6 +959,70 @@ api.get('/__dbdebug', async (c) => {
     return 'manual pg handshake ok (S + startTls)';
   });
 
+  // 8. Full manual handshake using the REAL WorkerPgSocket class, incl. a
+  //    hand-built StartupMessage — traces every event with timing.
+  await probe('my-socket-trace', async () => {
+    const { WorkerPgSocket: Sock } = await import('../db/pool.js');
+    const HOST = 'aws-0-us-east-1.pooler.supabase.com';
+    const sock = new Sock();
+    const trace: string[] = [];
+    const t0 = Date.now();
+    const log = (m: string) => trace.push(`${Date.now() - t0}ms ${m}`);
+    for (const ev of ['connect', 'close', 'error'] as const) {
+      sock.on(ev, (...a: unknown[]) => log(`event:${ev} ${String(a[0]).slice(0, 120)}`));
+    }
+    await sock.connect(6543, HOST);
+    log('connected');
+    const firstByte = await new Promise<string>((resolve, reject) => {
+      sock.once('data', (b: Buffer) => resolve(b.toString('utf8')));
+      sock.write(new Uint8Array([0, 0, 0, 8, 4, 210, 22, 47]));
+      setTimeout(() => reject(new Error('no S within 5s')), 5000);
+    });
+    log('sslreply:' + JSON.stringify(firstByte));
+    if (firstByte[0] !== 'S') return { trace, note: 'server refused SSL' };
+    sock.startTls({ servername: HOST });
+    log('startTls called');
+    // StartupMessage: proto 3.0, user + database
+    const params = Buffer.from(`user\0postgres.rgqgaiwcuqmidbxggayk\0database\0postgres\0\0`, 'utf8');
+    const body = Buffer.alloc(4 + 4 + params.length);
+    body.writeUInt32BE(196608, 4);
+    params.copy(body, 8);
+    body.writeUInt32BE(body.length, 0);
+    const reply = await new Promise<string>((resolve, reject) => {
+      sock.once('data', (b: Buffer) => resolve(b.subarray(0, 24).toString('hex')));
+      sock.write(body);
+      setTimeout(() => reject(new Error('no startup reply within 6s')), 6000);
+    });
+    log('startup reply hex:' + reply);
+    sock.destroy();
+    return { trace };
+  });
+
+  // 9. pg Client wired to the WorkerPgSocket via the stream factory.
+  await probe('pg-with-my-socket', async () => {
+    const { WorkerPgSocket: Sock } = await import('../db/pool.js');
+    const { Client } = await import('pg');
+    const client = new Client({
+      stream: (() => new Sock()) as never,
+      ssl: true,
+      host: 'aws-0-us-east-1.pooler.supabase.com',
+      port: 6543,
+      user: 'postgres.rgqgaiwcuqmidbxggayk',
+      password: 'KCxtU9fjBMkZDRC&',
+      database: 'postgres',
+    } as never);
+    try {
+      await Promise.race([
+        client.connect(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('pg connect timeout 8s')), 8000)),
+      ]);
+      const r = await client.query('SELECT 1 AS ok');
+      return { sample: r.rows[0] };
+    } finally {
+      await client.end().catch(() => {});
+    }
+  });
+
   return c.json({
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'no-navigator',
     results,

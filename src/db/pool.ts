@@ -32,7 +32,7 @@ import { minorUnitsToDisplay } from '../utils/money.js';
  * ALPNProtocols) into startTls. This class is pg-cloudflare's shape with
  * those two details fixed.
  */
-class WorkerPgSocket extends EventEmitter {
+export class WorkerPgSocket extends EventEmitter {
   writable = false;
   destroyed = false;
   private _upgraded = false;
