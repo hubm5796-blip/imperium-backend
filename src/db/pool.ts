@@ -36,6 +36,7 @@ class WorkerPgSocket extends EventEmitter {
   writable = false;
   destroyed = false;
   private _upgraded = false;
+  private _tlsReady: Promise<void> | null = null;
   private _host = '';
   private _cfSocket: Socket | null = null;
   private _cfWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -88,9 +89,15 @@ class WorkerPgSocket extends EventEmitter {
     if (!done && value) this.emit('data', Buffer.from(value));
   }
 
-  write(data: Uint8Array | string, _encoding?: string, callback?: (err?: Error) => void): boolean {
+  async write(data: Uint8Array | string, _encoding?: string, callback?: (err?: Error) => void): Promise<boolean> {
     const cb = callback ?? (() => {});
     try {
+      // After startTls(), the TLS socket must finish its handshake (opened)
+      // before the first write — pg sends the startup message immediately,
+      // and writing mid-handshake tears the connection down.
+      if (this._tlsReady) {
+        try { await this._tlsReady; } catch (e) { cb(e as Error); return false; }
+      }
       if (typeof data === 'string') data = Buffer.from(data);
       if (data.length === 0) { cb(); return true; }
       this._cfWriter!.write(data).then(() => cb(), (err) => cb(err));
@@ -130,13 +137,17 @@ class WorkerPgSocket extends EventEmitter {
     this._cfReader!.releaseLock();
     this._upgraded = true;
     // workers-types' TlsOptions predates servername; the runtime accepts it.
-    this._cfSocket = this._cfSocket!.startTls(
+    const tlsSock = this._cfSocket!.startTls(
       { servername } as Parameters<Socket['startTls']>[0],
     );
-    this._cfWriter = this._cfSocket.writable.getWriter();
-    this._cfReader = this._cfSocket.readable.getReader();
+    this._cfSocket = tlsSock;
+    // Gate post-upgrade writes on the TLS handshake completing.
+    this._tlsReady = tlsSock.opened.then(() => undefined);
+    this._tlsReady.catch(() => {});
+    this._cfWriter = tlsSock.writable.getWriter();
+    this._cfReader = tlsSock.readable.getReader();
     // The TLS socket's closed is the connection's real lifecycle.
-    this._cfSocket.closed.then(() => {
+    tlsSock.closed.then(() => {
       this._cfSocket = null;
       this.emit('close');
     }).catch((e: unknown) => this.emit('error', e));
