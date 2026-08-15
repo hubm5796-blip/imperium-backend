@@ -22,6 +22,8 @@ import { createApp } from './app.js';
 export interface WorkerBindings {
   HYPERDRIVE: Hyperdrive;
   CACHE_DB: D1Database;
+  /** Direct Postgres URL (Supabase pooler) — overrides HYPERDRIVE when set. */
+  DATABASE_URL?: string;
   DISCORD_CLIENT_ID: string;
   DISCORD_CLIENT_SECRET: string;
   DISCORD_REDIRECT_URI: string;
@@ -51,7 +53,12 @@ export default {
     // Idempotent per warm isolate — only the first request on a given
     // isolate actually builds env/opens the pool; later ones reuse both.
     initEnvFromBindings(bindings as unknown as Record<string, unknown>);
-    initPool(bindings.HYPERDRIVE.connectionString);
+    // DATABASE_URL (a plain var in wrangler.jsonc, pointing at Supabase) wins
+    // when present. The HYPERDRIVE binding was provisioned against the dead
+    // Neon DB and repointing it requires dashboard access — until that
+    // happens (or permanently), the direct Supabase pooler connection is the
+    // live path. pool.ts already sets TLS + max:5 for exactly this target.
+    initPool(bindings.DATABASE_URL || bindings.HYPERDRIVE.connectionString);
     initD1(bindings.CACHE_DB);
     // Forwarding bindings+ctx is required, not cosmetic: without a real
     // ExecutionContext, c.executionCtx.waitUntil() in interactions.ts has

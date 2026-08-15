@@ -13,16 +13,15 @@
 	// unreachable, this is a fresh database — schema bootstrapped via the
 	// plugin's own SchemaInitializer against the same instance).
 	//
-	// ⚠️ STILL POINTING AT THE DEAD NEON DB (2026-08-15). worker.ts connects via
-	// `bindings.HYPERDRIVE.connectionString` — DATABASE_URL is Node-dev only —
-	// so every API response served stale Neon data (empty player_stats, frozen
-	// balances, 1101s on prestige) regardless of code deploys. The game data
-	// lives in Supabase (aws-0-us-east-1.pooler.supabase.com:6543, same creds as
-	// backend .env / rebuild-currency-balances.cjs). Repoint with:
+	// ⚠️ STILL POINTING AT THE DEAD NEON DB (2026-08-15). worker.ts now
+	// prefers the DATABASE_URL var above (Supabase) and only falls back to
+	// this binding, so the Hyperdrive config no longer gates prod traffic.
+	// Optional cleanup with dashboard/wrangler access:
 	//   npx wrangler hyperdrive update 9e292633772945a7ba3869c5f3261886 \
 	//     --connection-string="postgresql://postgres.rgqgaiwcuqmidbxggayk:<PW>@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
-	// (Hyperdrive needs the DIRECT port 5432 endpoint, not the 6543 transaction
-	// pooler — it pools itself.)
+	// (Hyperdrive wants the DIRECT/session 5432 endpoint, not the 6543
+	// transaction pooler — it pools itself.) After repointing, either remove
+	// DATABASE_URL from vars or keep it — it wins either way.
 	"hyperdrive": [
 		{
 			"binding": "HYPERDRIVE",
@@ -62,6 +61,7 @@
 	// dashboard (not a "Secret") — same wipe risk applied to all of them.
 	"vars": {
 		"BACKEND_API_BASE": "https://api.imperiummc.net",
+		"DATABASE_URL": "postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC&@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require",
 		"DISCORD_CLIENT_ID": "1520285608906330293",
 		"DISCORD_PUBLIC_KEY": "2340504d65c62d22bab9f1150577536a0fc79d42019247dc9815bca349b45594",
 		"DISCORD_REDIRECT_URI": "https://imperiummc.net/auth/callback",
