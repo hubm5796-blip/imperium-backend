@@ -1104,6 +1104,47 @@ api.get('/__dbdebug', async (c) => {
     return out;
   });
 
+  // 13. REAL post-TLS write matrix: full handshake INCLUDING startup write+read.
+  await probe('tls-write-matrix', async () => {
+    const { connect } = await import('cloudflare:sockets');
+    const targets = [
+      { label: 'pooler-6543', host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, user: 'postgres.rgqgaiwcuqmidbxggayk' },
+      { label: 'pooler-5432', host: 'aws-0-us-east-1.pooler.supabase.com', port: 5432, user: 'postgres.rgqgaiwcuqmidbxggayk' },
+      { label: 'direct-5432', host: 'db.rgqgaiwcuqmidbxggayk.supabase.co', port: 5432, user: 'postgres' },
+    ];
+    const out: Record<string, string> = {};
+    for (const t of targets) {
+      try {
+        const sock = connect({ hostname: t.host, port: t.port }, { secureTransport: 'starttls' } as never);
+        await sock.opened;
+        const w = sock.writable.getWriter();
+        await w.write(new Uint8Array([0, 0, 0, 8, 4, 210, 22, 47]));
+        const r = sock.readable.getReader();
+        const first = await Promise.race([r.read(), new Promise((_, rej) => setTimeout(() => rej(new Error('no S 4s')), 4000))]) as { value?: Uint8Array };
+        const code = String.fromCharCode(first.value![0]);
+        r.releaseLock();
+        w.releaseLock();
+        if (code !== 'S') { out[t.label] = 'ssl-refused(' + code + ')'; continue; }
+        const tls = sock.startTls({ servername: t.host } as never);
+        await Promise.race([tls.opened, new Promise((_, rej) => setTimeout(() => rej(new Error('open-timeout')), 5000))]);
+        const tw = tls.writable.getWriter();
+        const tr = tls.readable.getReader();
+        const params = Buffer.from(`user\0${t.user}\0database\0postgres\0\0`, 'utf8');
+        const body = Buffer.alloc(8 + params.length);
+        body.writeUInt32BE(body.length, 0);
+        body.writeUInt32BE(196608, 4);
+        params.copy(body, 8);
+        await tw.write(body);
+        const reply = await Promise.race([tr.read(), new Promise((_, rej) => setTimeout(() => rej(new Error('no startup reply 5s')), 5000))]) as { value?: Uint8Array };
+        out[t.label] = 'reply ' + Buffer.from(reply.value!.slice(0, 12)).toString('hex');
+        tls.close();
+      } catch (e) {
+        out[t.label] = String(e).slice(0, 80);
+      }
+    }
+    return out;
+  });
+
   return c.json({
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'no-navigator',
     results,

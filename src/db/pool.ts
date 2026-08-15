@@ -37,6 +37,18 @@ export class WorkerPgSocket extends EventEmitter {
   destroyed = false;
   private _upgraded = false;
   private _tlsReady: Promise<void> | null = null;
+  private _tlsSettled: 'unused' | 'pending' | 'resolved' | 'rejected' = 'unused';
+
+  debugState(): Record<string, unknown> {
+    return {
+      upgraded: this._upgraded,
+      tlsSettled: this._tlsSettled,
+      hasSocket: this._cfSocket !== null,
+      host: this._host,
+      writable: this.writable,
+      destroyed: this.destroyed,
+    };
+  }
   private _host = '';
   private _cfSocket: Socket | null = null;
   private _cfWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -142,8 +154,9 @@ export class WorkerPgSocket extends EventEmitter {
     );
     this._cfSocket = tlsSock;
     // Gate post-upgrade writes on the TLS handshake completing.
+    this._tlsSettled = 'pending';
     this._tlsReady = tlsSock.opened.then(() => undefined);
-    this._tlsReady.catch(() => {});
+    this._tlsReady.then(() => { this._tlsSettled = 'resolved'; }, () => { this._tlsSettled = 'rejected'; });
     this._cfWriter = tlsSock.writable.getWriter();
     this._cfReader = tlsSock.readable.getReader();
     // The TLS socket's closed is the connection's real lifecycle.
