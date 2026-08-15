@@ -1069,6 +1069,41 @@ api.get('/__dbdebug', async (c) => {
     return { replyHex: Buffer.from(reply.value!.slice(0, 24)).toString('hex') };
   });
 
+  // 12. TLS handshake reliability matrix: 3 attempts per endpoint.
+  await probe('tls-matrix', async () => {
+    const { connect } = await import('cloudflare:sockets');
+    const targets = [
+      { label: 'pooler-6543', host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543 },
+      { label: 'pooler-5432', host: 'aws-0-us-east-1.pooler.supabase.com', port: 5432 },
+      { label: 'direct-5432', host: 'db.rgqgaiwcuqmidbxggayk.supabase.co', port: 5432 },
+    ];
+    const out: Record<string, string[]> = {};
+    for (const t of targets) {
+      out[t.label] = [];
+      for (let i = 0; i < 3; i++) {
+        try {
+          const sock = connect({ hostname: t.host, port: t.port }, { secureTransport: 'starttls' } as never);
+          await sock.opened;
+          const w = sock.writable.getWriter();
+          await w.write(new Uint8Array([0, 0, 0, 8, 4, 210, 22, 47]));
+          const r = sock.readable.getReader();
+          const first = await Promise.race([r.read(), new Promise((_, rej) => setTimeout(() => rej(new Error('no S 4s')), 4000))]) as { value?: Uint8Array };
+          const code = String.fromCharCode(first.value![0]);
+          r.releaseLock();
+          w.releaseLock();
+          if (code !== 'S') { out[t.label].push('ssl-refused(' + code + ')'); sock.close(); continue; }
+          const tls = sock.startTls({ servername: t.host } as never);
+          await Promise.race([tls.opened, new Promise((_, rej) => setTimeout(() => rej(new Error('open-timeout')), 5000))]);
+          tls.close();
+          out[t.label].push('OK');
+        } catch (e) {
+          out[t.label].push(String(e).slice(0, 60));
+        }
+      }
+    }
+    return out;
+  });
+
   return c.json({
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'no-navigator',
     results,
