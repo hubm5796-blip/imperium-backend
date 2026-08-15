@@ -905,6 +905,34 @@ api.get('/__dbdebug', async (c) => {
     }
   });
 
+  // 5. CF socket + native startTls, no options.
+  await probe('cf-starttls-noargs', async () => {
+    const { connect } = await import('cloudflare:sockets');
+    const sock = connect({ hostname: 'aws-0-us-east-1.pooler.supabase.com', port: 6543 });
+    await sock.opened;
+    const tlsSock = sock.startTls();
+    await Promise.race([
+      tlsSock.opened,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('startTls open timeout 6s')), 6000)),
+    ]);
+    tlsSock.close();
+    return 'cf startTls() ok';
+  });
+
+  // 6. CF socket + native startTls with explicit servername (SNI).
+  await probe('cf-starttls-sni', async () => {
+    const { connect } = await import('cloudflare:sockets');
+    const sock = connect({ hostname: 'aws-0-us-east-1.pooler.supabase.com', port: 6543 });
+    await sock.opened;
+    const tlsSock = sock.startTls({ servername: 'aws-0-us-east-1.pooler.supabase.com' } as never);
+    await Promise.race([
+      tlsSock.opened,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('startTls open timeout 6s')), 6000)),
+    ]);
+    tlsSock.close();
+    return 'cf startTls({servername}) ok';
+  });
+
   return c.json({
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'no-navigator',
     results,
