@@ -856,13 +856,15 @@ api.get('/__dbdebug', async (c) => {
     });
   });
 
-  // 3. Full pg path — let pg pick its own socket impl (auto Cloudflare detection).
-  await probe('pg-full-path', async () => {
+  // 3. Full pg path — direct TLS negotiation (no plaintext SSLRequest packet;
+  //    Supavisor's transaction port drops plaintext startup packets).
+  await probe('pg-direct-tls', async () => {
     const { Client } = await import('pg');
     const client = new Client({
       connectionString: 'postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC&@aws-0-us-east-1.pooler.supabase.com:6543/postgres',
       ssl: true,
-    });
+      sslNegotiation: 'direct',
+    } as never);
     try {
       await Promise.race([
         client.connect(),
