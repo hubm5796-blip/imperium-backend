@@ -53,11 +53,10 @@ export default {
     // Idempotent per warm isolate — only the first request on a given
     // isolate actually builds env/opens the pool; later ones reuse both.
     initEnvFromBindings(bindings as unknown as Record<string, unknown>);
-    // DATABASE_URL (a plain var in wrangler.jsonc, pointing at Supabase) wins
-    // when present. The HYPERDRIVE binding was provisioned against the dead
-    // Neon DB and repointing it requires dashboard access — until that
-    // happens (or permanently), the direct Supabase pooler connection is the
-    // live path. pool.ts already sets TLS + max:5 for exactly this target.
+    // Hyperdrive is the connection path (TLS terminates inside Cloudflare —
+    // direct pg/TLS from workerd cannot reach Supabase: node:tls shims are
+    // broken and cloudflare:sockets startTls rejects the pooler cert chain).
+    // A plain DATABASE_URL var is accepted as a Node-dev/local override only.
     initPool(bindings.DATABASE_URL || bindings.HYPERDRIVE.connectionString);
     initD1(bindings.CACHE_DB);
     // Forwarding bindings+ctx is required, not cosmetic: without a real

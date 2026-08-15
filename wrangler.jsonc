@@ -13,15 +13,16 @@
 	// unreachable, this is a fresh database — schema bootstrapped via the
 	// plugin's own SchemaInitializer against the same instance).
 	//
-	// ⚠️ STILL POINTING AT THE DEAD NEON DB (2026-08-15). worker.ts now
-	// prefers the DATABASE_URL var above (Supabase) and only falls back to
-	// this binding, so the Hyperdrive config no longer gates prod traffic.
-	// Optional cleanup with dashboard/wrangler access:
+	// ⚠️ STILL POINTING AT THE DEAD NEON DB (2026-08-15). This binding is the
+	// ONLY way this Worker can reach Postgres: workerd's node:tls shims are
+	// broken, and cloudflare:sockets startTls rejects the Supabase pooler
+	// certificate chain on every endpoint (verified by live probing — direct
+	// pg from the Worker is impossible). Until it is repointed, the API serves
+	// stale Neon data. Repoint with (needs `wrangler login` once):
 	//   npx wrangler hyperdrive update 9e292633772945a7ba3869c5f3261886 \
 	//     --connection-string="postgresql://postgres.rgqgaiwcuqmidbxggayk:<PW>@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
 	// (Hyperdrive wants the DIRECT/session 5432 endpoint, not the 6543
-	// transaction pooler — it pools itself.) After repointing, either remove
-	// DATABASE_URL from vars or keep it — it wins either way.
+	// transaction pooler — it pools itself. PW is in backend .env.)
 	"hyperdrive": [
 		{
 			"binding": "HYPERDRIVE",
@@ -61,12 +62,6 @@
 	// dashboard (not a "Secret") — same wipe risk applied to all of them.
 	"vars": {
 		"BACKEND_API_BASE": "https://api.imperiummc.net",
-		// No ?sslmode= here on purpose: this repo's pg version parses
-		// sslmode=require as verify-full and lets it OVERRIDE pool.ts's explicit
-		// ssl:{rejectUnauthorized:false} — the handshake then fails on the
-		// Supabase pooler cert chain ("Database unavailable" on every route).
-		// pool.ts's own ssl option provides TLS with lenient verification.
-		"DATABASE_URL": "postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC&@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
 		"DISCORD_CLIENT_ID": "1520285608906330293",
 		"DISCORD_PUBLIC_KEY": "2340504d65c62d22bab9f1150577536a0fc79d42019247dc9815bca349b45594",
 		"DISCORD_REDIRECT_URI": "https://imperiummc.net/auth/callback",
