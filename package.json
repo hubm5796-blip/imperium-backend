@@ -26,6 +26,7 @@
     "jose": "^6.2.8",
     "nanoid": "^5.0.0",
     "pg": "^8.13.0",
+    "postgres": "^3.4.9",
     "zod": "^3.23.0"
   },
   "devDependencies": {

@@ -819,33 +819,38 @@ api.get('/player/permissions', async (c) => {
 
 /* ---------------------------------------------------------------- Public */
 
-/** GET /api/__dbdebug — TEMP cutover diagnostic: tries several Postgres
- * endpoints from inside the Worker and reports each outcome. Remove after
- * the Supabase cutover is verified. */
+/** GET /api/__dbdebug — TEMP cutover diagnostic: probes the real pool
+ * (postgres.js) plus a raw `pg` client for contrast. Remove after the
+ * Supabase cutover is verified. */
 api.get('/__dbdebug', async (c) => {
-  const { Client } = await import('pg');
-  const PW = 'KCxtU9fjBMkZDRC&';
-  const targets: Array<{ label: string; host: string; port: number; user: string }> = [
-    { label: 'pooler-6543-txn', host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, user: 'postgres.rgqgaiwcuqmidbxggayk' },
-    { label: 'pooler-5432-session', host: 'aws-0-us-east-1.pooler.supabase.com', port: 5432, user: 'postgres.rgqgaiwcuqmidbxggayk' },
-    { label: 'direct-5432', host: 'db.rgqgaiwcuqmidbxggayk.supabase.co', port: 5432, user: 'postgres' },
-  ];
-  const results = await Promise.all(targets.map(async (t) => {
+  const results: Array<{ label: string; ok: boolean; ms: number; err?: string; sample?: unknown }> = [];
+  {
+    const start = Date.now();
+    try {
+      const r = await query<{ ok: number }>('SELECT 1 AS ok', []);
+      results.push({ label: 'pool-postgres-js', ok: true, ms: Date.now() - start, sample: r.rows[0] });
+    } catch (e) {
+      results.push({ label: 'pool-postgres-js', ok: false, ms: Date.now() - start, err: String(e).slice(0, 300) });
+    }
+  }
+  {
+    const { Client } = await import('pg');
     const client = new Client({
-      host: t.host, port: t.port, database: 'postgres', user: t.user, password: PW,
+      host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, database: 'postgres',
+      user: 'postgres.rgqgaiwcuqmidbxggayk', password: 'KCxtU9fjBMkZDRC&',
       ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 8000,
     });
     const start = Date.now();
     try {
       await client.connect();
-      const r = await client.query('SELECT 1 AS ok');
+      await client.query('SELECT 1');
       await client.end();
-      return { label: t.label, ok: true, ms: Date.now() - start, rows: r.rowCount };
+      results.push({ label: 'raw-pg-6543', ok: true, ms: Date.now() - start });
     } catch (e) {
       try { await client.end(); } catch { /* already dead */ }
-      return { label: t.label, ok: false, ms: Date.now() - start, err: String(e).slice(0, 300) };
+      results.push({ label: 'raw-pg-6543', ok: false, ms: Date.now() - start, err: String(e).slice(0, 300) });
     }
-  }));
+  }
   return c.json({ results });
 });
 

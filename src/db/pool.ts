@@ -1,4 +1,5 @@
-import { Pool, type QueryResult, type QueryResultRow } from 'pg';
+import postgres, { type Sql } from 'postgres';
+import type { QueryResult, QueryResultRow } from 'pg';
 import { deleteCachedJson, getCachedJson, setCachedJson } from './redis.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -16,44 +17,37 @@ import {
 import { minorUnitsToDisplay } from '../utils/money.js';
 
 /**
- * Lazily-initialized PostgreSQL connection pool. Not created at module load
- * time: on Workers, the connection string comes from the Hyperdrive binding
- * (`c.env.HYPERDRIVE.connectionString`), which is only available per-request,
- * not at module scope. `initPool()` is idempotent — a Hono middleware calls
- * it on every request, but only the first call on a given warm isolate
- * actually creates the pool; later calls reuse it, same as the old eager
- * module-level singleton did within one Node process.
+ * Lazily-initialized PostgreSQL connection pool built on postgres.js (not `pg`).
+ * `pg` could not complete its TLS upgrade over nodejs_compat sockets from
+ * inside Workers — every endpoint died with "Connection terminated
+ * unexpectedly" before auth (2026-08-15 cutover attempt), because pg's
+ * tls.connect({socket}) path was never exercised by the Hyperdrive local
+ * proxy that used to serve prod. postgres.js implements TLS itself over
+ * cloudflare:sockets and is the driver with first-class Workers support.
+ * The query() surface below is unchanged: $1-style params, { rows } results,
+ * NUMERIC/BIGINT as strings, timestamptz as Date — matching pg's row shapes
+ * the rest of the codebase was written against.
  */
-let pool: Pool | null = null;
+let sql: Sql | null = null;
 
 export function initPool(connectionString: string): void {
-  if (pool) return;
+  if (sql) return;
   // max: 5, not 10 -- Cloudflare Workers hard-caps a single invocation to 6
-  // concurrent connections total (https://developers.cloudflare.com/hyperdrive/,
-  // confirmed via the platform's own gotchas doc). A pool sized above that cap
-  // doesn't error cleanly -- it queues past the limit and connection-acquire
-  // calls silently time out at connectionTimeoutMillis, which upstream code
-  // that does `catch { return null }` (e.g. getUuidByDiscordId call sites)
-  // then reports as "not found" even when the row genuinely exists. This is
-  // exactly what was happening: a live, already-linked Discord account was
-  // being told "not linked" because the DB call queued past 6 connections in
-  // flight and timed out at 5s, not because the link didn't exist.
-  pool = new Pool({
-    connectionString,
+  // concurrent connections total. A pool sized above that cap doesn't error
+  // cleanly — it queues past the limit and connection-acquire calls silently
+  // time out, which upstream code that does `catch { return null }` then
+  // reports as "not found" even when the row genuinely exists.
+  sql = postgres(connectionString, {
     max: 5,
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 5_000,
-    // Supabase pooler (PgBouncer/Supavisor on :6543) can present a cert that
-    // Node's default CA bundle refuses to verify, and sslmode=require in the
-    // URL alone parses to ssl:true which then hard-fails the handshake with
-    // SELF_SIGNED_CERTIFICATE_IN_CHAIN / UNABLE_TO_VERIFY_LEAF_SIGNATURE.
-    // Accept the cert explicitly: the connection is still TLS-encrypted, just
-    // not pinned to a CA. This explicit ssl option governs over sslmode in the
-    // connection string.
+    idle_timeout: 30,
+    connect_timeout: 5,
+    // The Supabase pooler presents a cert Node's default CA bundle refuses to
+    // verify. Accept it explicitly: the connection is still TLS-encrypted,
+    // just not pinned to a CA.
     ssl: { rejectUnauthorized: false },
-  });
-  pool.on('error', (err) => {
-    logger.error({ err }, 'Unexpected error on idle pg client');
+    // The transaction pooler (Supavisor :6543) multiplexes server-side and
+    // cannot host session-level prepared statements.
+    prepare: false,
   });
 }
 
@@ -76,28 +70,34 @@ function getD1(): D1Database {
   return d1;
 }
 
-function getPool(): Pool {
-  if (!pool) {
+function getSql(): Sql {
+  if (!sql) {
     throw new Error('Postgres pool not initialized — initPool() must run before any query');
   }
-  return pool;
+  return sql;
 }
 
 /** Drains the pool on graceful shutdown (Node dev entrypoint only — Workers has no shutdown hook). */
 export async function closePool(): Promise<void> {
-  if (pool) await pool.end();
+  if (sql) await sql.end({ timeout: 5 });
+  sql = null;
 }
 
 export async function query<T extends QueryResultRow>(
   text: string,
   params: ReadonlyArray<unknown>,
 ): Promise<QueryResult<T>> {
-  const client = await getPool().connect();
-  try {
-    return await client.query<T>(text, params as unknown[]);
-  } finally {
-    client.release();
-  }
+  const result = await getSql().unsafe(text, params as unknown as []);
+  const rows = Array.from(result as unknown as Iterable<T>);
+  // Shape the result like pg's QueryResult so every call site's
+  // `.rows` / `rowCount` access keeps working unchanged.
+  return {
+    rows,
+    rowCount: (result as unknown as { count?: number }).count ?? rows.length,
+    command: '',
+    oid: 0,
+    fields: [],
+  } as QueryResult<T>;
 }
 
 /**
