@@ -494,10 +494,15 @@ export async function getPlayerBalances(
 
 /** Fetch raw stats row for a UUID (blocks, pvp, playtime). */
 export async function getPlayerStats(uuid: string): Promise<PlayerStatsRow | null> {
+  // play_time comes from PlaytimeService's table (player_stats.play_time is dead,
+  // never incremented); COALESCE keeps the column shape the profile code expects.
   const result = await query<PlayerStatsRow>(
-    `SELECT blocks_mined, play_time, pvp_kills, pvp_deaths, pvp_trophies
-       FROM player_stats
-      WHERE uuid = $1`,
+    `SELECT ps.blocks_mined,
+            COALESCE(pl.total_secs, 0) AS play_time,
+            ps.pvp_kills, ps.pvp_deaths, ps.pvp_trophies
+       FROM player_stats ps
+       LEFT JOIN player_playtime pl ON pl.uuid = ps.uuid
+      WHERE ps.uuid = $1`,
     [uuid],
   );
   return result.rows[0] ?? null;
@@ -598,11 +603,13 @@ export async function getLeaderboard(
   }
 
   if (type === 'playtime') {
+    // player_stats.play_time is dead (never incremented); PlaytimeService tracks
+    // real playtime in its own player_playtime table.
     const result = await query<{ uuid: string; play_time: string; name: string | null }>(
-      `SELECT ps.uuid, ps.play_time, pn.username AS name
-         FROM player_stats ps
-         LEFT JOIN player_names pn ON ps.uuid = pn.uuid
-        ORDER BY ps.play_time DESC
+      `SELECT pl.uuid, pl.total_secs AS play_time, pn.username AS name
+         FROM player_playtime pl
+         LEFT JOIN player_names pn ON pl.uuid = pn.uuid
+        ORDER BY pl.total_secs DESC
         LIMIT $1`,
       [cap],
     );
