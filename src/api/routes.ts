@@ -819,38 +819,47 @@ api.get('/player/permissions', async (c) => {
 
 /* ---------------------------------------------------------------- Public */
 
-/** GET /api/__dbdebug — TEMP cutover diagnostic: probes the real pool
- * (postgres.js) plus a raw `pg` client for contrast. Remove after the
- * Supabase cutover is verified. */
+/** GET /api/__dbdebug — TEMP cutover diagnostic: socket-level probes.
+ * Remove after the Supabase cutover is verified. */
 api.get('/__dbdebug', async (c) => {
   const results: Array<{ label: string; ok: boolean; ms: number; err?: string; sample?: unknown }> = [];
-  {
+  const probe = async (label: string, fn: () => Promise<unknown>) => {
     const start = Date.now();
     try {
-      const r = await query<{ ok: number }>('SELECT 1 AS ok', []);
-      results.push({ label: 'pool-postgres-js', ok: true, ms: Date.now() - start, sample: r.rows[0] });
+      const sample = await fn();
+      results.push({ label, ok: true, ms: Date.now() - start, sample });
     } catch (e) {
-      results.push({ label: 'pool-postgres-js', ok: false, ms: Date.now() - start, err: String(e).slice(0, 300) });
+      results.push({ label, ok: false, ms: Date.now() - start, err: String(e).slice(0, 400) });
     }
-  }
-  {
-    const { Client } = await import('pg');
-    const client = new Client({
-      host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, database: 'postgres',
-      user: 'postgres.rgqgaiwcuqmidbxggayk', password: 'KCxtU9fjBMkZDRC&',
-      ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 8000,
+  };
+
+  // 1. Raw TCP socket from cloudflare:sockets to the Supabase pooler.
+  await probe('cf-socket-tcp-6543', async () => {
+    const { connect } = await import('cloudflare:sockets');
+    const sock = connect({ hostname: 'aws-0-us-east-1.pooler.supabase.com', port: 6543 });
+    await Promise.race([
+      sock.opened,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('open timeout 6s')), 6000)),
+    ]);
+    sock.close();
+    return 'tcp socket opened';
+  });
+
+  // 2. postgres.js single client (max 1, no pool retry storm).
+  await probe('postgres-js-single', async () => {
+    const postgres = (await import('postgres')).default;
+    const one = postgres('postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC&@aws-0-us-east-1.pooler.supabase.com:6543/postgres', {
+      max: 1, idle_timeout: 5, connect_timeout: 8,
+      ssl: { rejectUnauthorized: false }, prepare: false,
     });
-    const start = Date.now();
     try {
-      await client.connect();
-      await client.query('SELECT 1');
-      await client.end();
-      results.push({ label: 'raw-pg-6543', ok: true, ms: Date.now() - start });
-    } catch (e) {
-      try { await client.end(); } catch { /* already dead */ }
-      results.push({ label: 'raw-pg-6543', ok: false, ms: Date.now() - start, err: String(e).slice(0, 300) });
+      const r = await one.unsafe('SELECT 1 AS ok', []);
+      return { sample: r[0] };
+    } finally {
+      await one.end({ timeout: 2 }).catch(() => {});
     }
-  }
+  });
+
   return c.json({ results });
 });
 
