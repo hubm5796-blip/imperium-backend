@@ -61,7 +61,12 @@
 	// dashboard (not a "Secret") — same wipe risk applied to all of them.
 	"vars": {
 		"BACKEND_API_BASE": "https://api.imperiummc.net",
-		"DATABASE_URL": "postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC&@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require",
+		// No ?sslmode= here on purpose: this repo's pg version parses
+		// sslmode=require as verify-full and lets it OVERRIDE pool.ts's explicit
+		// ssl:{rejectUnauthorized:false} — the handshake then fails on the
+		// Supabase pooler cert chain ("Database unavailable" on every route).
+		// pool.ts's own ssl option provides TLS with lenient verification.
+		"DATABASE_URL": "postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC&@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
 		"DISCORD_CLIENT_ID": "1520285608906330293",
 		"DISCORD_PUBLIC_KEY": "2340504d65c62d22bab9f1150577536a0fc79d42019247dc9815bca349b45594",
 		"DISCORD_REDIRECT_URI": "https://imperiummc.net/auth/callback",
