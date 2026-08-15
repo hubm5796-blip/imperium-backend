@@ -856,42 +856,57 @@ api.get('/__dbdebug', async (c) => {
     });
   });
 
-  // 3. node:tls via the shim — WITHOUT the unsupported rejectUnauthorized option.
-  await probe('node-tls-noopts', async () => {
-    const tls = await import('node:tls');
-    return await new Promise((resolve, reject) => {
-      const s = tls.connect({ host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, servername: 'aws-0-us-east-1.pooler.supabase.com' });
-      const t = setTimeout(() => { s.destroy(); reject(new Error('tls handshake timeout')); }, 6000);
-      s.on('secureConnect', () => { clearTimeout(t); s.destroy(); resolve('node:tls secureConnect (no opts)'); });
-      s.on('error', (e) => { clearTimeout(t); reject(e); });
-    });
-  });
-
-  // 4. pg Client over a manually established node:tls socket.
-  await probe('pg-over-manual-tls', async () => {
-    const tls = await import('node:tls');
+  // 3. Full pg path — let pg pick its own socket impl (auto Cloudflare detection).
+  await probe('pg-full-path', async () => {
     const { Client } = await import('pg');
-    const tlsSock = tls.connect({ host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, servername: 'aws-0-us-east-1.pooler.supabase.com' });
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => { tlsSock.destroy(); reject(new Error('tls handshake timeout')); }, 6000);
-      tlsSock.on('secureConnect', () => { clearTimeout(t); resolve(); });
-      tlsSock.on('error', (e) => { clearTimeout(t); reject(e); });
+    const client = new Client({
+      connectionString: 'postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC&@aws-0-us-east-1.pooler.supabase.com:6543/postgres',
+      ssl: true,
     });
-    const client = new Client({ stream: tlsSock as unknown as never, ssl: false, user: 'postgres.rgqgaiwcuqmidbxggayk', password: 'KCxtU9fjBMkZDRC&', database: 'postgres' });
     try {
       await Promise.race([
         client.connect(),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('pg connect timeout')), 8000)),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('pg connect timeout 8s')), 8000)),
       ]);
       const r = await client.query('SELECT 1 AS ok');
       return { sample: r.rows[0] };
     } finally {
-      try { tlsSock.destroy(); } catch { /* dead */ }
-      try { await client.end().catch(() => {}); } catch { /* dead */ }
+      await client.end().catch(() => {});
     }
   });
 
-  return c.json({ results });
+  // 4. pg with an explicitly-provided pg-cloudflare CloudflareSocket as the stream.
+  await probe('pg-cf-socket-stream', async () => {
+    const pgCf = await import('pg-cloudflare');
+    const { Client } = await import('pg');
+    const CFSocket = (pgCf as unknown as { CloudflareSocket?: new (ssl: boolean) => unknown }).CloudflareSocket;
+    if (!CFSocket) return 'pg-cloudflare resolved to EMPTY module (workerd export condition not applied by bundler)';
+    const stream = new CFSocket(true) as never;
+    const client = new Client({
+      stream,
+      ssl: true,
+      host: 'aws-0-us-east-1.pooler.supabase.com',
+      port: 6543,
+      user: 'postgres.rgqgaiwcuqmidbxggayk',
+      password: 'KCxtU9fjBMkZDRC&',
+      database: 'postgres',
+    } as never);
+    try {
+      await Promise.race([
+        client.connect(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('pg connect timeout 8s')), 8000)),
+      ]);
+      const r = await client.query('SELECT 1 AS ok');
+      return { sample: r.rows[0] };
+    } finally {
+      await client.end().catch(() => {});
+    }
+  });
+
+  return c.json({
+    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'no-navigator',
+    results,
+  });
 });
 
 /** GET /api/leaderboards/:type — top 20 by denarius | blocks | prestige | playtime. */
