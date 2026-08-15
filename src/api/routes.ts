@@ -933,6 +933,32 @@ api.get('/__dbdebug', async (c) => {
     return 'cf startTls({servername}) ok';
   });
 
+  // 7. Full manual handshake: TCP(starttls) -> SSLRequest -> 'S' -> startTls.
+  await probe('cf-manual-pg-handshake', async () => {
+    const { connect } = await import('cloudflare:sockets');
+    const HOST = 'aws-0-us-east-1.pooler.supabase.com';
+    const sock = connect({ hostname: HOST, port: 6543 }, { secureTransport: 'starttls' } as never);
+    await sock.opened;
+    const w = sock.writable.getWriter();
+    await w.write(new Uint8Array([0, 0, 0, 8, 4, 210, 22, 47])); // SSLRequest
+    const r = sock.readable.getReader();
+    const first = await Promise.race([
+      r.read(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('sslrequest reply timeout')), 5000)),
+    ]) as { value?: Uint8Array };
+    const code = first && first.value ? String.fromCharCode(first.value[0]) : '(empty)';
+    r.releaseLock();
+    w.releaseLock();
+    if (code !== 'S') return 'server reply to SSLRequest: ' + JSON.stringify(code);
+    const tls = sock.startTls({ servername: HOST } as never);
+    await Promise.race([
+      tls.opened,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('startTls open timeout 6s')), 6000)),
+    ]);
+    tls.close();
+    return 'manual pg handshake ok (S + startTls)';
+  });
+
   return c.json({
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'no-navigator',
     results,
