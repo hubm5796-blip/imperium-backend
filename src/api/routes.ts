@@ -833,19 +833,18 @@ api.get('/leaderboards/:type', async (c) => {
   let rows;
   try {
     rows = await getLeaderboard(type, limit);
-    // Add 1-based rank and a display username for the bot's embeds.
-    const entries = rows.map((row, i) => ({
-      rank: i + 1,
-      uuid: row.uuid,
-      username: row.name ?? row.uuid,
-      value: row.value,
-      secondary: row.secondary,
-    }));
-    return c.json({ type, entries });
-  } catch (e) {
-    // TEMP DIAGNOSTIC (playtime 1101): remove once resolved.
-    return c.json({ type, entries: [], error: 'Database unavailable', detail: String(e) }, 503);
+  } catch {
+    return c.json({ type, entries: [], error: 'Database unavailable' }, 503);
   }
+  // Add 1-based rank and a display username for the bot's embeds.
+  const entries = rows.map((row, i) => ({
+    rank: i + 1,
+    uuid: row.uuid,
+    username: row.name ?? row.uuid,
+    value: row.value,
+    secondary: row.secondary,
+  }));
+  return c.json({ type, entries });
 });
 
 /**
