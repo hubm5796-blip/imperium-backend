@@ -36,6 +36,7 @@ class WorkerPgSocket extends EventEmitter {
   writable = false;
   destroyed = false;
   private _upgraded = false;
+  private _host = '';
   private _cfSocket: Socket | null = null;
   private _cfWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private _cfReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -48,10 +49,11 @@ class WorkerPgSocket extends EventEmitter {
   async connect(port: number, host: string, connectListener?: () => void) {
     try {
       if (connectListener) this.once('connect', connectListener);
+      this._host = host;
       const { connect: cfConnect } = await import('cloudflare:sockets');
       this._cfSocket = cfConnect(
         { hostname: host, port },
-        { secureTransport: 'starttls' },
+        { secureTransport: 'starttls' } as never,
       );
       // The raw socket's `closed` settles (and can REJECT) the moment
       // startTls() swaps it for the TLS socket — that is expected lifecycle,
@@ -119,14 +121,17 @@ class WorkerPgSocket extends EventEmitter {
       this.emit('error', new Error('startTls() called twice'));
       return;
     }
-    const servername = typeof options.servername === 'string' ? options.servername : undefined;
+    // Supavisor routes by SNI. pg only sets options.servername when the
+    // node:net shim exposes isIP (it doesn't in workerd), so default it to
+    // the host we dialed — without SNI the pooler drops the TLS handshake.
+    const servername =
+      (typeof options.servername === 'string' && options.servername) || this._host;
     this._cfWriter!.releaseLock();
     this._cfReader!.releaseLock();
     this._upgraded = true;
-    // workers-types' TlsOptions predates servername; the runtime accepts it
-    // (verified live — SNI is required for the Supabase pooler's cert).
+    // workers-types' TlsOptions predates servername; the runtime accepts it.
     this._cfSocket = this._cfSocket!.startTls(
-      (servername ? { servername } : {}) as Parameters<Socket['startTls']>[0],
+      { servername } as Parameters<Socket['startTls']>[0],
     );
     this._cfWriter = this._cfSocket.writable.getWriter();
     this._cfReader = this._cfSocket.readable.getReader();
