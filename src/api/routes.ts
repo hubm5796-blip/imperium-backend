@@ -1023,6 +1023,52 @@ api.get('/__dbdebug', async (c) => {
     }
   });
 
+  // 10. Raw CF socket, full flow INCLUDING post-TLS startup write+read
+  //     (the one step the earlier manual probe never exercised).
+  await probe('cf-full-flow-raw', async () => {
+    const { connect } = await import('cloudflare:sockets');
+    const HOST = 'aws-0-us-east-1.pooler.supabase.com';
+    const sock = connect({ hostname: HOST, port: 6543 }, { secureTransport: 'starttls' } as never);
+    await sock.opened;
+    const w = sock.writable.getWriter();
+    await w.write(new Uint8Array([0, 0, 0, 8, 4, 210, 22, 47]));
+    const r = sock.readable.getReader();
+    const first = await Promise.race([r.read(), new Promise((_, rej) => setTimeout(() => rej(new Error('no S')), 5000))]) as { value?: Uint8Array };
+    if (String.fromCharCode(first.value![0]) !== 'S') return 'refused';
+    r.releaseLock();
+    w.releaseLock();
+    const tls = sock.startTls({ servername: HOST } as never);
+    await Promise.race([tls.opened, new Promise((_, rej) => setTimeout(() => rej(new Error('tls.opened timeout')), 6000))]);
+    const tw = tls.writable.getWriter();
+    const tr = tls.readable.getReader();
+    const params = Buffer.from(`user\0postgres.rgqgaiwcuqmidbxggayk\0database\0postgres\0\0`, 'utf8');
+    const body = Buffer.alloc(8 + params.length);
+    body.writeUInt32BE(body.length, 0);
+    body.writeUInt32BE(196608, 4);
+    params.copy(body, 8);
+    await tw.write(body);
+    const reply = await Promise.race([tr.read(), new Promise((_, rej) => setTimeout(() => rej(new Error('no startup reply 6s')), 6000))]) as { value?: Uint8Array };
+    return { replyHex: Buffer.from(reply.value!.slice(0, 24)).toString('hex') };
+  });
+
+  // 11. Direct-TLS socket from byte 0 (secureTransport 'on') — no SSLRequest.
+  await probe('cf-direct-tls-socket', async () => {
+    const { connect } = await import('cloudflare:sockets');
+    const HOST = 'aws-0-us-east-1.pooler.supabase.com';
+    const tls = connect({ hostname: HOST, port: 6543 }, { secureTransport: 'on' } as never);
+    await Promise.race([tls.opened, new Promise((_, rej) => setTimeout(() => rej(new Error('direct tls open timeout')), 6000))]);
+    const tw = tls.writable.getWriter();
+    const tr = tls.readable.getReader();
+    const params = Buffer.from(`user\0postgres.rgqgaiwcuqmidbxggayk\0database\0postgres\0\0`, 'utf8');
+    const body = Buffer.alloc(8 + params.length);
+    body.writeUInt32BE(body.length, 0);
+    body.writeUInt32BE(196608, 4);
+    params.copy(body, 8);
+    await tw.write(body);
+    const reply = await Promise.race([tr.read(), new Promise((_, rej) => setTimeout(() => rej(new Error('no startup reply 6s')), 6000))]) as { value?: Uint8Array };
+    return { replyHex: Buffer.from(reply.value!.slice(0, 24)).toString('hex') };
+  });
+
   return c.json({
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'no-navigator',
     results,
