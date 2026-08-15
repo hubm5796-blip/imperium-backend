@@ -845,18 +845,49 @@ api.get('/__dbdebug', async (c) => {
     return 'tcp socket opened';
   });
 
-  // 2. postgres.js single client (max 1, no pool retry storm).
-  await probe('postgres-js-single', async () => {
-    const postgres = (await import('postgres')).default;
-    const one = postgres('postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC&@aws-0-us-east-1.pooler.supabase.com:6543/postgres', {
-      max: 1, idle_timeout: 5, connect_timeout: 8,
-      ssl: { rejectUnauthorized: false }, prepare: false,
+  // 2. node:net via the nodejs_compat shim.
+  await probe('node-net-connect', async () => {
+    const net = await import('node:net');
+    return await new Promise((resolve, reject) => {
+      const s = net.connect({ host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543 });
+      const t = setTimeout(() => { s.destroy(); reject(new Error('net connect timeout')); }, 6000);
+      s.on('connect', () => { clearTimeout(t); s.destroy(); resolve('node:net connected'); });
+      s.on('error', (e) => { clearTimeout(t); reject(e); });
     });
+  });
+
+  // 3. node:tls via the shim.
+  await probe('node-tls-connect', async () => {
+    const tls = await import('node:tls');
+    return await new Promise((resolve, reject) => {
+      const s = tls.connect({ host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, servername: 'aws-0-us-east-1.pooler.supabase.com', rejectUnauthorized: false });
+      const t = setTimeout(() => { s.destroy(); reject(new Error('tls handshake timeout')); }, 6000);
+      s.on('secureConnect', () => { clearTimeout(t); s.destroy(); resolve('node:tls secureConnect'); });
+      s.on('error', (e) => { clearTimeout(t); reject(e); });
+    });
+  });
+
+  // 4. pg Client over a manually established node:tls socket.
+  await probe('pg-over-manual-tls', async () => {
+    const tls = await import('node:tls');
+    const { Client } = await import('pg');
+    const tlsSock = tls.connect({ host: 'aws-0-us-east-1.pooler.supabase.com', port: 6543, servername: 'aws-0-us-east-1.pooler.supabase.com', rejectUnauthorized: false });
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => { tlsSock.destroy(); reject(new Error('tls handshake timeout')); }, 6000);
+      tlsSock.on('secureConnect', () => { clearTimeout(t); resolve(); });
+      tlsSock.on('error', (e) => { clearTimeout(t); reject(e); });
+    });
+    const client = new Client({ stream: tlsSock as unknown as never, ssl: false, user: 'postgres.rgqgaiwcuqmidbxggayk', password: 'KCxtU9fjBMkZDRC&', database: 'postgres' });
     try {
-      const r = await one.unsafe('SELECT 1 AS ok', []);
-      return { sample: r[0] };
+      await Promise.race([
+        client.connect(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('pg connect timeout')), 8000)),
+      ]);
+      const r = await client.query('SELECT 1 AS ok');
+      return { sample: r.rows[0] };
     } finally {
-      await one.end({ timeout: 2 }).catch(() => {});
+      try { tlsSock.destroy(); } catch { /* dead */ }
+      try { await client.end().catch(() => {}); } catch { /* dead */ }
     }
   });
 
