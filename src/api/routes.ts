@@ -73,6 +73,9 @@ import { isDonorSubscriptionProduct, isLifetimeProduct } from '../paynow/constan
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
 import type { AppContextVariables } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { expansionApi } from './expansion/index.js';
+import { fetchExpansionBoard, isExpansionBoard } from './expansion/leaderboards.js';
+import { swrJson } from './expansion/cache.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -477,14 +480,45 @@ api.get('/player/profile', async (c) => {
     trophies: p.stats?.pvpTrophies ?? p.pvpTrophies ?? p.pvp_trophies ?? 0,
   };
 
+  // Legion membership + KOTH record for the Discord /profile card (12c) and
+  // the web profile page (12b). Both are best-effort lookups — a missing
+  // table or no row simply leaves the null default rather than failing.
+  const extras: { legion: string | null; kothRecord: string | null } = { legion: null, kothRecord: null };
+  try {
+    const legion = await query<{ name: string }>(
+      `SELECT l.name
+         FROM legion_members m
+         JOIN legions l ON l.name = m.legion_name
+        WHERE m.player_uuid = $1
+        LIMIT 1`,
+      [uuid],
+    );
+    extras.legion = legion.rows[0]?.name ?? null;
+  } catch {
+    // Legion tables unavailable — omit.
+  }
+  try {
+    const koth = await query<{ total: string | null }>(
+      `SELECT SUM(value)::text AS total
+         FROM leaderboard_stats
+        WHERE uuid = $1 AND category = 'KOTH_WINS' AND period = 'ALL_TIME'`,
+      [uuid],
+    );
+    const kothWins = Number(koth.rows[0]?.total ?? 0);
+    extras.kothRecord = kothWins > 0 ? `${kothWins} win${kothWins === 1 ? '' : 's'}` : null;
+  } catch {
+    // leaderboard_stats unavailable — omit.
+  }
+
   // 15s TTL: long enough to collapse the dashboard's own 3 redundant calls
   // into one real read, short enough that a fresh purchase/rank-up/balance
   // change shows up on the next page load rather than feeling stale.
   // setCachedJson already fails open internally (logs, never throws) — fire
   // without awaiting so a slow/unreachable Redis never delays the response.
-  void setCachedJson(cacheKey, fields, 15);
+  // The legion/KOTH extras ride inside the same cached envelope.
+  void setCachedJson(cacheKey, { ...fields, ...extras }, 15);
 
-  return c.json({ ...fields, discordId });
+  return c.json({ ...fields, ...extras, discordId });
 });
 
 /** GET /api/player/balances — the four currencies, converted from minor units. */
@@ -819,34 +853,6 @@ api.get('/player/permissions', async (c) => {
 
 /* ---------------------------------------------------------------- Public */
 
-/** GET /api/leaderboards/:type — top 20 by denarius | blocks | prestige | playtime. */
-api.get('/leaderboards/:type', async (c) => {
-  const type: string = c.req.param("type") ?? "";
-  if (type !== 'denarius' && type !== 'blocks' && type !== 'prestige' && type !== 'playtime') {
-    return c.json(
-      { error: "Invalid leaderboard type; must be 'denarius', 'blocks', 'prestige', or 'playtime'" },
-      400,
-    );
-  }
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
-  let rows;
-  try {
-    rows = await getLeaderboard(type, limit);
-  } catch {
-    return c.json({ type, entries: [], error: 'Database unavailable' }, 503);
-  }
-  // Add 1-based rank and a display username for the bot's embeds.
-  const entries = rows.map((row, i) => ({
-    rank: i + 1,
-    uuid: row.uuid,
-    username: row.name ?? row.uuid,
-    value: row.value,
-    secondary: row.secondary,
-  }));
-  return c.json({ type, entries });
-});
-
 /**
  * GET /api/leaderboards/parkour/:course — fastest completions for a course.
  * Public (no auth). The plugin stores records in `parkour_records`; names aren't
@@ -926,6 +932,55 @@ api.get('/leaderboards/waves', async (c) => {
   return c.json({ entries });
 });
 
+/**
+ * GET /api/leaderboards/:type — top N by board.
+ *
+ * Registered AFTER the specific /leaderboards/{parkour/:course,elo,waves}
+ * routes so those static paths win over this parameter route (registration
+ * order decides in Hono — registered first, this route used to shadow
+ * /leaderboards/elo and /leaderboards/waves into its own 400).
+ *
+ * Legacy boards (denarius | blocks | prestige | playtime) keep their original
+ * response shape. The 12a expansion adds rank | legion | koth | colosseum
+ * (see src/api/expansion/leaderboards.ts for their entry shapes). All boards
+ * are public (anonymous-OK) and served through the SWR cache: 60s fresh,
+ * 5min stale-while-revalidate, plus Cache-Control so any CDN honors the same.
+ */
+api.get('/leaderboards/:type', async (c) => {
+  const type: string = c.req.param("type") ?? "";
+  const legacyTypes = ['denarius', 'blocks', 'prestige', 'playtime'];
+  if (!legacyTypes.includes(type) && !isExpansionBoard(type)) {
+    return c.json(
+      { error: "Invalid leaderboard type; must be 'denarius', 'blocks', 'prestige', 'playtime', 'rank', 'legion', 'koth', or 'colosseum'" },
+      400,
+    );
+  }
+  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
+  const limit = Math.min(Math.max(Number.isNaN(limitRaw) ? 20 : limitRaw, 1), 100);
+
+  try {
+    return await swrJson(c, `leaderboard:${type}:${limit}:v1`, async () => {
+      if (isExpansionBoard(type)) {
+        // Expansion boards build their own entry shapes.
+        return { type, entries: (await fetchExpansionBoard(type, limit)).entries };
+      }
+      // Type validated above against the legacy allowlist; the cast only satisfies getLeaderboard's union parameter.
+      const rows = await getLeaderboard(type as 'denarius' | 'blocks' | 'prestige' | 'playtime', limit);
+      // Add 1-based rank and a display username for the bot's embeds.
+      const entries = rows.map((row, i) => ({
+        rank: i + 1,
+        uuid: row.uuid,
+        username: row.name ?? row.uuid,
+        value: row.value,
+        secondary: row.secondary,
+      }));
+      return { type, entries };
+    });
+  } catch {
+    return c.json({ type, entries: [], error: 'Database unavailable' }, 503);
+  }
+});
+
 /** GET /api/server/status — online player count from Redis (live) or DB. */
 api.get('/server/status', async (c) => {
   try {
@@ -936,10 +991,30 @@ api.get('/server/status', async (c) => {
     // expired/never-written) means the server is actually down. Conflating "0 players"
     // with "offline" made an empty-but-live server read as Offline in Discord/the site.
     const isUp = count !== null;
+
+    // Online names for the Discord /online embed (12c: "player list + current
+    // festival"). Names are public in-game (tab list), so this stays public;
+    // best-effort from the online_players snapshot — a missing/empty table
+    // degrades to just the count, never an error.
+    let players: string[] = [];
+    try {
+      const names = await query<{ username: string | null }>(
+        `SELECT pn.username FROM online_players op
+          LEFT JOIN player_names pn ON pn.uuid = op.uuid
+         ORDER BY op.uuid
+         LIMIT 100`,
+        [],
+      );
+      players = names.rows.map((row) => row.username).filter((name): name is string => Boolean(name));
+    } catch {
+      // Table may not exist yet — keep the empty list.
+    }
+
     return c.json({
       online: isUp,
       playerCount: count ?? 0,
       maxPlayers: 200,
+      players,
       timestamp: Date.now(),
       source: count === null ? 'unknown' : 'redis',
     });
@@ -948,6 +1023,7 @@ api.get('/server/status', async (c) => {
       online: false,
       playerCount: 0,
       maxPlayers: 200,
+      players: [],
       timestamp: Date.now(),
       source: 'unavailable',
     });
@@ -2092,3 +2168,11 @@ api.post('/refcode/redeem', requireBotAuth, async (c) => {
     ownerName: owner.rows[0].username,
   });
 });
+
+/* --------------------------------------------------- 12a API expansion */
+
+// Player codex/fleet, dungeons, seasons, economy flow-summary, legion public
+// cards, vote callbacks, and the web shop. Mounted at the root so these paths
+// sit directly under /api and share attachUser + globalRateLimit above.
+// See docs/api.md for the full route table and the web_queue contract.
+api.route('/', expansionApi);

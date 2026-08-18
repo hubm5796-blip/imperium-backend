@@ -1,10 +1,12 @@
-import type { MiddlewareHandler } from 'hono';
+import { timingSafeEqual } from 'node:crypto';
+import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import {
   AUTH_COOKIE_NAME,
   clearAuthCookieOptions,
   verifyJwt,
 } from '../auth/jwt.js';
+import { env } from '../env.js';
 import { getUuidByDiscordId } from '../db/pool.js';
 import type { AppContextVariables } from '../types/index.js';
 
@@ -64,6 +66,26 @@ export const requireLinked: MiddlewareHandler<AuthEnv> = async (c, next) => {
   }
   await next();
 };
+
+/**
+ * Trusted-server check for the expansion's machine-to-machine endpoints
+ * (Discord worker, frontend edge proxies): the request must carry
+ * `X-Bot-Token` matching the `BOT_API_TOKEN` Workers secret. Timing-safe,
+ * same discipline as `requireBotAuth` in routes.ts (that one predates the
+ * expansion and stays local — this is the shared export for new modules).
+ */
+export function botTokenMatches(c: Context): boolean {
+  const token = c.req.header('X-Bot-Token');
+  if (!env.botApiToken || !token) return false;
+  try {
+    const a = Buffer.from(env.botApiToken);
+    const b = Buffer.from(token);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
 
 /** Re-exported so routes can clear the cookie on logout. */
 export { AUTH_COOKIE_NAME, clearAuthCookieOptions };

@@ -35,6 +35,8 @@ export interface WorkerBindings {
   REDIS_PASSWORD: string;
   WEBPANEL_HMAC_SECRET: string;
   BOT_API_TOKEN: string;
+  /** Per-site vote callback keys ("site1:key1,site2:key2") — secret, via `wrangler secret put`. */
+  VOTE_CALLBACK_KEYS?: string;
   NODE_ENV: string;
   PAYNOW_API_KEY: string;
   PAYNOW_STORE_ID: string;

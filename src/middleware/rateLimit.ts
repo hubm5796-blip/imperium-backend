@@ -143,3 +143,19 @@ export const authRateLimit = rateLimit(10, 60_000, 'auth');
  * infeasible within a code's 15-minute lifetime.
  */
 export const webcodeRateLimit = rateLimit(8, 5 * 60_000, 'webcode');
+
+/* ------------------------------------------------- 12a expansion classes */
+
+/**
+ * Explicit read-class limiter for the public expansion read endpoints
+ * (leaderboards, seasons, economy flow-summary, legion cards, shop catalog).
+ * Same numbers as globalRateLimit but namespaced separately so the read class
+ * keeps its documented 60/min contract even if the global default changes.
+ */
+export const readRateLimit = rateLimit(60, 60_000, 'read');
+
+/** Write-class limiter for expansion write endpoints (vote callbacks): 10/min. */
+export const writeRateLimit = rateLimit(10, 60_000, 'write');
+
+/** Stricter limiter for shop order placement (spends currency in-game): 5/min. */
+export const shopWriteRateLimit = rateLimit(5, 60_000, 'shop');

@@ -34,6 +34,13 @@ export interface EnvShape {
   };
   webpanelHmacSecret: string;
   /**
+   * Per-site shared secrets for vote-site callback endpoints (POST /api/vote/:site),
+   * parsed from VOTE_CALLBACK_KEYS as a comma-separated list of `site:key` pairs
+   * (same convention as PAYNOW_WEBHOOK_SECRETS). A vote site's callback must send
+   * its key in the `X-Vote-Key` header; the key is compared timing-safely.
+   */
+  voteCallbackKeys: Record<string, string>;
+  /**
    * Shared secret required on bot-only endpoints (/link/confirm, DELETE /link,
    * /player/profile with ?uuid=/?discord_id=). The bot sends it in the
    * `X-Bot-Token` header. Optional in dev; if unset, bot-auth-only checks fail.
@@ -53,6 +60,25 @@ export interface EnvShape {
 }
 
 type Getter = (key: string, fallback?: string) => string | undefined;
+
+/**
+ * Parse a comma-separated `name:key` map ("site1:key1,site2:key2") into a
+ * Record with lowercased names and trimmed values. Empty/missing input → {}.
+ */
+function parseKeyMap(raw: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw) return out;
+  for (const pair of raw.split(',')) {
+    const trimmed = pair.trim();
+    if (!trimmed) continue;
+    const sep = trimmed.indexOf(':');
+    if (sep <= 0) continue; // no name, or empty name
+    const name = trimmed.slice(0, sep).trim().toLowerCase();
+    const value = trimmed.slice(sep + 1).trim();
+    if (name && value) out[name] = value;
+  }
+  return out;
+}
 
 function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape {
   function required(key: string, fallback?: string): string {
@@ -124,6 +150,10 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
       tls: optionalBool('REDIS_TLS', false),
     },
     webpanelHmacSecret: required('WEBPANEL_HMAC_SECRET'),
+    // VOTE_CALLBACK_KEYS is "site1:key1,site2:key2". Optional — an empty map
+    // means no vote sites are configured and every vote callback 404s (unknown
+    // site), which is the safe default until keys are provisioned.
+    voteCallbackKeys: parseKeyMap(optional('VOTE_CALLBACK_KEYS')),
     // BOT_API_TOKEN is required in production — without it, all bot-auth endpoints
     // (linking, profile lookups, store checkout) silently 401. Fail loudly instead.
     botApiToken: nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN'),
