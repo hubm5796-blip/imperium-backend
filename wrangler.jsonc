@@ -68,7 +68,7 @@
 		"PAYNOW_STORE_ID": "586713008948903936",
 		"REDIS_HOST": "imperiummc-firm-quartz.cloud.layerbase.dev",
 		"REDIS_PORT": "6379",
-		"REDIS_PASSWORD": "nzjjSl0_q6RDOOvxXoaXb-mgAtiF8W5m",
+		"REDIS_PASSWORD": "ZH9SBmPXK3x166IfKQpsKGaX",
 		"REDIS_TLS": "true",
 		"WEBPANEL_HMAC_SECRET": "gDageWRSC2tPULSuSa2XhVksDA_rhaASS5sgJsKDpGk",
 		"NODE_ENV": "production"
