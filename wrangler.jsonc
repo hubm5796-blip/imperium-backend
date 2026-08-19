@@ -70,10 +70,11 @@
 		"REDIS_PORT": "6379",
 		"REDIS_PASSWORD": "ZH9SBmPXK3x166IfKQpsKGaX",
 		"REDIS_TLS": "true",
+		"WEBPANEL_HMAC_SECRET": "gDageWRSC2tPULSuSa2XhVksDA_rhaASS5sgJsKDpGk",
 		"NODE_ENV": "production"
 	}
 	// True secrets (JWT_SECRET, PAYNOW_API_KEY, DISCORD_CLIENT_SECRET,
-	// DISCORD_BOT_TOKEN, WEBPANEL_HMAC_SECRET, BOT_API_TOKEN,
+	// DISCORD_BOT_TOKEN, BOT_API_TOKEN,
 	// PAYNOW_WEBHOOK_SECRETS) are padlocked "Secret" entries
 	// in the dashboard and go through `wrangler secret put <NAME>` — those DO
 	// persist across Git deploys independently of this file.
