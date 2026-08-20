@@ -3,6 +3,7 @@ import { env, initEnvFromProcess } from './env.js';
 import { createApp } from './app.js';
 import { initPool, closePool } from './db/pool.js';
 import { logger } from './utils/logger.js';
+import { alertError } from './utils/errorAlerts.js';
 
 // env must be populated before anything below reads it (route handlers only
 // read env at call time, so this just needs to finish before the first
@@ -34,9 +35,11 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 // the logger so the failing promise has a name and a stack before any exit.
 process.on('unhandledRejection', (reason) => {
   logger.error({ reason: String(reason) }, 'Unhandled promise rejection');
+  alertError('unhandledRejection', String(reason));
 });
 process.on('uncaughtException', (err) => {
   logger.error({ err }, 'Uncaught exception — exiting nonzero');
+  alertError('uncaughtException', err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err));
   process.exitCode = 1;
 });
 

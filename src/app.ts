@@ -8,6 +8,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { api } from './api/routes.js';
 import { discordInteractions } from './bot/interactions.js';
 import { logger } from './utils/logger.js';
+import { alertError } from './utils/errorAlerts.js';
 import type { AppContextVariables } from './types/index.js';
 
 export function createApp() {
@@ -61,7 +62,11 @@ export function createApp() {
   // Catch any uncaught exception from a route handler so we never leak a stack
   // trace or hang the request; log the real error and return a generic 500.
   app.onError((err, c) => {
-    logger.error({ err }, 'Unhandled error');
+    logger.error({ err, method: c.req.method, path: c.req.path }, 'Unhandled error');
+    alertError(
+      'unhandled',
+      `${c.req.method} ${c.req.path} — ${err instanceof Error ? `${err.message} | ${(err.stack ?? '').split('\n')[1] ?? ''}` : String(err)}`,
+    );
     return c.json({ error: 'Internal Server Error' }, 500);
   });
   // Consistent JSON 404 for unmatched routes.

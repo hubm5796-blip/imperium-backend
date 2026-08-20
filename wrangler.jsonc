@@ -71,7 +71,10 @@
 		"REDIS_PASSWORD": "ZH9SBmPXK3x166IfKQpsKGaX",
 		"REDIS_TLS": "true",
 		"WEBPANEL_HMAC_SECRET": "gDageWRSC2tPULSuSa2XhVksDA_rhaASS5sgJsKDpGk",
-		"NODE_ENV": "production"
+		"NODE_ENV": "production",
+		// Staff error-alert webhook (error-visibility pipeline). Empty = alerting off;
+		// paste a Discord webhook URL (or set it as a dashboard Secret) to arm it.
+		"STAFF_ALERT_WEBHOOK_URL": ""
 	}
 	// True secrets (JWT_SECRET, PAYNOW_API_KEY, DISCORD_CLIENT_SECRET,
 	// DISCORD_BOT_TOKEN, BOT_API_TOKEN,

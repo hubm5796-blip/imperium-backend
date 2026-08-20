@@ -46,6 +46,8 @@ export interface EnvShape {
    * `X-Bot-Token` header. Optional in dev; if unset, bot-auth-only checks fail.
    */
   botApiToken: string;
+  /** Discord webhook for staff error alerts — optional; unset = alerting off. */
+  staffAlertWebhookUrl?: string;
   port: number;
   nodeEnv: string;
   isProduction: boolean;
@@ -157,6 +159,7 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     // BOT_API_TOKEN is required in production — without it, all bot-auth endpoints
     // (linking, profile lookups, store checkout) silently 401. Fail loudly instead.
     botApiToken: nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN'),
+    staffAlertWebhookUrl: optional('STAFF_ALERT_WEBHOOK_URL') || '',
     port: optionalInt('PORT', 3001),
     nodeEnv,
     isProduction: nodeEnv === 'production',
