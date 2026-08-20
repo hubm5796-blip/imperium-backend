@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { api } from './api/routes.js';
+import { v2Api } from './api/v2/index.js';
 import { discordInteractions } from './bot/interactions.js';
 import { logger } from './utils/logger.js';
 import { rateLimitV2 } from './middleware/rateLimitV2.js';
@@ -70,6 +71,8 @@ export function createApp() {
   );
 
   app.route('/api', api);
+  // V6 05-01: the versioned contract surface (envelope + cursors + openapi.json).
+  app.route('/api/v2', v2Api);
   // Discord's Interactions Endpoint URL — configured in the Discord
   // Developer Portal to point at https://api.imperiummc.net/discord/interactions.
   app.route('/discord/interactions', discordInteractions);

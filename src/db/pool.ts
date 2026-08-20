@@ -1040,3 +1040,98 @@ export async function getPlayerLegion(uuid: string): Promise<{ legion: LegionInf
     })),
   };
 }
+
+/**
+ * V6 05-01: keyset-cursor variant for the v2 leaderboards. Instead of
+ * LIMIT/OFFSET (unstable across inserts — page 2 can repeat page 1's tail
+ * when a new top row lands mid-scroll), pages continue from an explicit
+ * (value, uuid) cursor: rows strictly after the cursor in the board's sort
+ * order. One explicit query per board (same style as getLeaderboard above —
+ * no string assembly).
+ */
+export interface LeaderboardPage {
+  rows: Array<{ uuid: string; name: string | null; value: number; secondary?: number }>;
+  /** (value, uuid) of the last row — encoded by the route into the opaque cursor. */
+  nextCursor: { value: number; uuid: string } | null;
+  approxTotal: number | null;
+}
+
+function cursorPredicate(
+  valueCol: string,
+  uuidCol: string,
+  cursor: { value: number; uuid: string } | null,
+  extraWhere = '',
+): { where: string; params: Array<string | number> } {
+  if (!cursor) return { where: extraWhere ? ` WHERE ${extraWhere}` : '', params: [] };
+  const keyset = `(${valueCol} < $1 OR (${valueCol} = $1 AND ${uuidCol} > $2))`;
+  const combined = extraWhere ? `${extraWhere} AND ${keyset}` : keyset;
+  return { where: ` WHERE ${combined}`, params: [cursor.value, cursor.uuid] };
+}
+
+export async function getLeaderboardPage(
+  type: 'denarius' | 'blocks' | 'prestige' | 'playtime',
+  limit: number,
+  cursor: { value: number; uuid: string } | null,
+): Promise<LeaderboardPage> {
+  const cap = Math.min(Math.max(limit, 1), 100);
+  const rows: LeaderboardPage['rows'] = [];
+
+  if (type === 'denarius') {
+    const { where, params } = cursorPredicate('cb.balance', 'cb.uuid', cursor, `cb.currency = '${CURRENCY_COLUMNS.denarius}'`);
+    const result = await query<{ uuid: string; balance: string; name: string | null }>(
+      `SELECT cb.uuid, cb.balance, pn.username AS name
+         FROM currency_balances cb
+         LEFT JOIN player_names pn ON cb.uuid = pn.uuid
+        ${where}
+        ORDER BY cb.balance DESC, cb.uuid ASC
+        LIMIT $${params.length + 1}`,
+      [...params, cap],
+    );
+    for (const r of result.rows) rows.push({ uuid: r.uuid, name: r.name, value: minorUnitsToDisplay(r.balance) });
+  } else if (type === 'blocks') {
+    const { where, params } = cursorPredicate('ps.blocks_mined', 'ps.uuid', cursor);
+    const result = await query<{ uuid: string; blocks_mined: string; name: string | null }>(
+      `SELECT ps.uuid, ps.blocks_mined, pn.username AS name
+         FROM player_stats ps
+         LEFT JOIN player_names pn ON ps.uuid = pn.uuid
+        ${where}
+        ORDER BY ps.blocks_mined DESC, ps.uuid ASC
+        LIMIT $${params.length + 1}`,
+      [...params, cap],
+    );
+    for (const r of result.rows) rows.push({ uuid: r.uuid, name: r.name, value: Number(r.blocks_mined) });
+  } else if (type === 'playtime') {
+    const { where, params } = cursorPredicate('pl.total_secs', 'pl.uuid', cursor);
+    const result = await query<{ uuid: string; total_secs: string; name: string | null }>(
+      `SELECT pl.uuid, pl.total_secs, pn.username AS name
+         FROM player_playtime pl
+         LEFT JOIN player_names pn ON pl.uuid = pl.uuid
+        ${where}
+        ORDER BY pl.total_secs DESC, pl.uuid ASC
+        LIMIT $${params.length + 1}`,
+      [...params, cap],
+    );
+    for (const r of result.rows) rows.push({ uuid: r.uuid, name: r.name, value: Number(r.total_secs) });
+  } else {
+    const { where, params } = cursorPredicate('pd.prestige_level', 'pd.uuid', cursor);
+    const result = await query<{ uuid: string; prestige_level: string; prestige_points: string; name: string | null }>(
+      `SELECT pd.uuid, pd.prestige_level, pd.prestige_points, pn.username AS name
+         FROM prestige_data pd
+         LEFT JOIN player_names pn ON pd.uuid = pn.uuid
+        ${where}
+        ORDER BY pd.prestige_level DESC, pd.prestige_points DESC, pd.uuid ASC
+        LIMIT $${params.length + 1}`,
+      [...params, cap],
+    );
+    for (const r of result.rows) {
+      rows.push({ uuid: r.uuid, name: r.name, value: Number(r.prestige_level), secondary: Number(r.prestige_points) });
+    }
+  }
+
+  const last = rows[rows.length - 1];
+  return {
+    rows,
+    nextCursor: rows.length === cap && last ? { value: last.value, uuid: last.uuid } : null,
+    approxTotal: null,
+  };
+}
