@@ -59,7 +59,15 @@ export function createApp() {
   app.get('/', (c) =>
     c.json({ name: 'ImperiumMC API', status: 'ok', version: '1.0.0' }),
   );
-  app.get('/health', (c) => c.json({ status: 'ok' }));
+  // V6 01-08: health reports the deployed version so the bot/frontend/backend compatibility
+  // matrix is queryable (and deploys are confirmable with a single curl).
+  app.get('/health', (c) =>
+    c.json({
+      status: 'ok',
+      version: '1.0.0',
+      deployedAt: new Date().toISOString(),
+    }),
+  );
 
   app.route('/api', api);
   // Discord's Interactions Endpoint URL — configured in the Discord
