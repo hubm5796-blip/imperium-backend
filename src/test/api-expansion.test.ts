@@ -101,7 +101,7 @@ beforeEach(() => {
 /* ------------------------------------------------------------ Leaderboards */
 
 describe('GET /api/leaderboards/:board (expansion boards)', () => {
-  it('koth: 200, ranked entries from leaderboard_stats, cache headers set', async () => {
+  it('colosseum: 200, ranked entries from leaderboard_stats, cache headers set', async () => {
     stubQuery([
       {
         match: (sql) => sql.includes('FROM leaderboard_stats'),
@@ -111,13 +111,13 @@ describe('GET /api/leaderboards/:board (expansion boards)', () => {
         ],
       },
     ]);
-    const res = await app.request('/api/leaderboards/koth?limit=2', reqInit(nextIp()));
+    const res = await app.request('/api/leaderboards/colosseum?limit=2', reqInit(nextIp()));
     expect(res.status).toBe(200);
     expect(res.headers.get('X-Cache')).toBe('MISS');
     expect(res.headers.get('Cache-Control')).toContain('max-age=60');
     expect(res.headers.get('Cache-Control')).toContain('stale-while-revalidate');
     const body = (await res.json()) as { type: string; entries: Array<{ rank: number; username: string; value: number }> };
-    expect(body.type).toBe('koth');
+    expect(body.type).toBe('colosseum');
     expect(body.entries).toHaveLength(2);
     expect(body.entries[0]).toMatchObject({ rank: 1, username: 'Caesar', value: 900 });
     expect(body.entries[1]).toMatchObject({ rank: 2, username: 'Titus', value: 400 });
@@ -154,10 +154,10 @@ describe('GET /api/leaderboards/:board (expansion boards)', () => {
 
   it('cache HIT short-circuits the database entirely', async () => {
     vi.mocked(getCachedJsonMock).mockResolvedValueOnce({
-      data: { type: 'koth', entries: [{ rank: 1, uuid: TEST_UUID, username: 'Cached', value: 1 }] },
+      data: { type: 'colosseum', entries: [{ rank: 1, uuid: TEST_UUID, username: 'Cached', value: 1 }] },
       fetchedAt: Date.now(), // fresh — must be served without revalidation
     });
-    const res = await app.request('/api/leaderboards/koth', reqInit(nextIp()));
+    const res = await app.request('/api/leaderboards/colosseum', reqInit(nextIp()));
     expect(res.status).toBe(200);
     expect(res.headers.get('X-Cache')).toBe('HIT');
     expect(vi.mocked(queryMock)).not.toHaveBeenCalled();
