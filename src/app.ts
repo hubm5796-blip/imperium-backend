@@ -8,6 +8,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { api } from './api/routes.js';
 import { discordInteractions } from './bot/interactions.js';
 import { logger } from './utils/logger.js';
+import { rateLimitV2 } from './middleware/rateLimitV2.js';
 import { alertError } from './utils/errorAlerts.js';
 import type { AppContextVariables } from './types/index.js';
 
@@ -37,6 +38,12 @@ export function createApp() {
   );
 
   app.use('*', secureHeaders());
+
+  // RATE LIMITING V2 (V6 05-05): cost classes + principal dimension. Composes WITH
+  // the existing per-route v1 limiters (they stay first-line caps); this layer adds
+  // weighted budgets and per-account fairness. Fail-open on limiter errors is the v1
+  // convention — availability over limiting.
+  app.use('*', rateLimitV2());
 
   // Simple request logger.
   app.use('*', async (c, next) => {
