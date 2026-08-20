@@ -12,6 +12,7 @@ import { legionsApi } from './legions.js';
 import { webshopApi } from './webshop.js';
 import { communityApi } from './community.js';
 import { adminViewsApi } from './adminViews.js';
+import { publicApi } from './publicProfiles.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -26,3 +27,6 @@ expansionApi.route('/', webshopApi);
 expansionApi.route('/', communityApi);
 expansionApi.route('/', adminViewsApi);
 expansionApi.route('/dungeons', dungeonsApi);
+// V6 /v2 wave starts here: public, unauthenticated projections with their own
+// privacy-scoped schemas (04-03 public profiles is the first resident).
+expansionApi.route('/v2/public', publicApi);

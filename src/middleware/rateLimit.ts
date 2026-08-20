@@ -159,3 +159,10 @@ export const writeRateLimit = rateLimit(10, 60_000, 'write');
 
 /** Stricter limiter for shop order placement (spends currency in-game): 5/min. */
 export const shopWriteRateLimit = rateLimit(5, 60_000, 'shop');
+
+/**
+ * V6 04-03 public profile reads: 30/min per IP. Tighter than the read class
+ * because the endpoint is name-keyed and unauthenticated — this is the bound
+ * on username-enumeration scraping (404s still consume budget).
+ */
+export const publicProfileRateLimit = rateLimit(30, 60_000, 'public-profile');
