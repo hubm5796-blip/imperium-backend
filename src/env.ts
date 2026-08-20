@@ -46,6 +46,9 @@ export interface EnvShape {
    * `X-Bot-Token` header. Optional in dev; if unset, bot-auth-only checks fail.
    */
   botApiToken: string;
+  /** Owner DM overrides for error alerts — optional; defaults to username search. */
+  ownerDiscordId?: string;
+  ownerDiscordUsername?: string;
   /** Discord webhook for staff error alerts — optional; unset = alerting off. */
   staffAlertWebhookUrl?: string;
   port: number;
@@ -160,6 +163,8 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     // (linking, profile lookups, store checkout) silently 401. Fail loudly instead.
     botApiToken: nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN'),
     staffAlertWebhookUrl: optional('STAFF_ALERT_WEBHOOK_URL') || '',
+    ownerDiscordId: optional('OWNER_DISCORD_ID') || '',
+    ownerDiscordUsername: optional('OWNER_DISCORD_USERNAME') || '',
     port: optionalInt('PORT', 3001),
     nodeEnv,
     isProduction: nodeEnv === 'production',

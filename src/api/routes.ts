@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import {
@@ -73,6 +73,7 @@ import { isDonorSubscriptionProduct, isLifetimeProduct } from '../paynow/constan
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
 import type { AppContextVariables } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { alertError } from '../utils/errorAlerts.js';
 import { expansionApi } from './expansion/index.js';
 import { fetchExpansionBoard, isExpansionBoard } from './expansion/leaderboards.js';
 import { swrJson } from './expansion/cache.js';
@@ -2156,6 +2157,61 @@ api.post('/refcode/custom', requireBotAuth, async (c) => {
  * POST /api/refcode/redeem — redeem a referral code.
  * Both redeemer and code owner get a reward.
  */
+/**
+ * POST /api/errors/report — the PLUGIN's error-visibility pipeline feeds first-sighting
+ * error alerts and hourly digests here (owner directive 2026-08-19). Auth is EITHER the
+ * shared X-Bot-Token OR an HMAC-SHA256 signature over the raw body using the same
+ * webpanel secret the plugin and backend already share — no new secret to provision.
+ * Every accepted report fans out through alertError (staff webhook + owner DM).
+ */
+api.post('/errors/report', async (c) => {
+  const raw = await c.req.text();
+
+  const token = c.req.header('X-Bot-Token');
+  let authed = false;
+  if (env.botApiToken && token) {
+    const a = Buffer.from(env.botApiToken);
+    const b = Buffer.from(token);
+    if (a.length === b.length) {
+      try {
+        authed = timingSafeEqual(a, b);
+      } catch {
+        authed = false;
+      }
+    }
+  }
+  if (!authed) {
+    // HMAC path: X-Imperium-Signature = hex(HMAC-SHA256(webpanelHmacSecret, rawBody))
+    const sigHeader = c.req.header('X-Imperium-Signature');
+    if (sigHeader && env.webpanelHmacSecret) {
+      const expected = createHmac('sha256', env.webpanelHmacSecret).update(raw).digest('hex');
+      const a = Buffer.from(expected);
+      const b = Buffer.from(sigHeader);
+      if (a.length === b.length) {
+        try {
+          authed = timingSafeEqual(a, b);
+        } catch {
+          authed = false;
+        }
+      }
+    }
+  }
+  if (!authed) return c.json({ error: 'Unauthorized' }, 401);
+
+  let body: { kind?: unknown; detail?: unknown };
+  try {
+    body = JSON.parse(raw) as typeof body;
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+  const kind = typeof body.kind === 'string' ? body.kind.slice(0, 60) : 'plugin-error';
+  const detail = typeof body.detail === 'string' ? body.detail.slice(0, 1500) : '';
+  if (!detail) return c.json({ error: 'Missing detail' }, 400);
+
+  alertError(kind, detail);
+  return c.json({ ok: true });
+});
+
 api.post('/refcode/redeem', requireBotAuth, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
