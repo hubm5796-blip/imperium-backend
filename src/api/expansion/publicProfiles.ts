@@ -32,6 +32,38 @@ export const publicApi = new Hono<ApiEnv>();
  * followed by the gamertag (allows spaces, stripped to 16 chars upstream). */
 const USERNAME_PATTERN = /^[A-Za-z0-9_. -]{1,20}$/;
 
+/** How long a previously-built profile may be re-served after the database
+ * stops answering. Public profile data is not transactional — a slightly
+ * stale rank during an outage beats a 503 on a page linked from everywhere. */
+const STALE_SERVE_MS = 10 * 60_000;
+
+const staleProfiles = new Map<string, { profile: PublicProfile; at: number }>();
+
+/** The synced player_ranks.rank_name has been observed carrying the numeric
+ * level ("24") rather than the in-game Roman form. The game says XXIV, the
+ * web says XXIV too — derive it when the stored name isn't Roman already. */
+function toRoman(n: number): string {
+  if (!Number.isFinite(n) || n < 1 || n > 3999) return String(n);
+  const table: Array<[number, string]> = [
+    [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
+    [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+  ];
+  let out = '';
+  let rest = Math.floor(n);
+  for (const [value, numeral] of table) {
+    while (rest >= value) {
+      out += numeral;
+      rest -= value;
+    }
+  }
+  return out;
+}
+
+function romanizeRankName(rankName: string | null | undefined, level: number): string | null {
+  if (rankName && !/^\d+$/.test(rankName)) return rankName; // already a name/Roman
+  return level >= 1 ? toRoman(level) : null;
+}
+
 /** The public profile payload — the privacy contract lives HERE. Anything not
  * in this interface must never be added without re-reading the "public vs
  * private" table in MASTER-PLAN-V6/04-WEB-PLATFORM/03-PLAYER-PROFILES.md. */
@@ -66,6 +98,22 @@ publicApi.get('/player/:username', publicProfileRateLimit, async (c) => {
   if (!rawName || !USERNAME_PATTERN.test(rawName)) {
     return c.json({ error: 'Invalid username' }, 400);
   }
+  const nameKey = rawName.toLowerCase();
+
+  /** Serve the last good build when the database is failing, else the passed
+   *  status. Keeps the public page alive through DB flaps (observed 2026-08-20:
+   *  Hyperdrive idle-reap storms) with data at most STALE_SERVE_MS old. */
+  const staleOr = (status: 503) => {
+    const entry = staleProfiles.get(nameKey);
+    if (entry && Date.now() - entry.at <= STALE_SERVE_MS) {
+      return c.json(
+        { ...entry.profile, stale: true },
+        200,
+        { 'Cache-Control': 'public, max-age=30, s-maxage=60', 'X-Stale-Profile': '1' },
+      );
+    }
+    return c.json({ error: status === 503 ? 'Registry unavailable' : 'Unexpected' }, status);
+  };
 
   // Resolve from the plugin-maintained registry only. LOWER() on both sides:
   // canonical casing comes back from the row, not from the caller.
@@ -79,7 +127,7 @@ publicApi.get('/player/:username', publicProfileRateLimit, async (c) => {
     uuid = found.rows[0]?.uuid ?? null;
     canonicalName = found.rows[0]?.username ?? null;
   } catch {
-    return c.json({ error: 'Registry unavailable' }, 503);
+    return staleOr(503);
   }
   if (!uuid || !canonicalName) {
     // Never joined (or unknown) — a flat 404 carries no information beyond
@@ -93,9 +141,25 @@ publicApi.get('/player/:username', publicProfileRateLimit, async (c) => {
     return c.json(cached, 200, { 'Cache-Control': 'public, max-age=30, s-maxage=60' });
   }
 
-  const profile = await buildPublicProfile(uuid, canonicalName);
+  // Distinguish "no profile row" (a real 404) from "the profile read failed"
+  // (an outage that must not masquerade as a missing player).
+  let profile: Awaited<ReturnType<typeof buildPublicProfile>> | null;
+  try {
+    profile = await buildPublicProfile(uuid, canonicalName);
+  } catch {
+    return staleOr(503);
+  }
   if (!profile) {
     return c.json({ error: 'Player not found' }, 404);
+  }
+
+  staleProfiles.set(nameKey, { profile, at: Date.now() });
+  if (staleProfiles.size > 500) {
+    // Bound the map: drop the oldest half — profiles are cheap to rebuild.
+    const entries = [...staleProfiles.entries()].sort((a, b) => a[1].at - b[1].at);
+    for (const [key] of entries.slice(0, Math.floor(entries.length / 2))) {
+      staleProfiles.delete(key);
+    }
   }
 
   // Fire-and-forget: a Redis outage must never delay or fail the response.
@@ -103,11 +167,13 @@ publicApi.get('/player/:username', publicProfileRateLimit, async (c) => {
   return c.json(profile, 200, { 'Cache-Control': 'public, max-age=30, s-maxage=60' });
 });
 
-/** Assemble the public projection. Every optional table degrades to a null /
- * zero default on error — a missing achievements table must not take the whole
- * profile down (same degrade-gracefully pattern as the rest of the expansion). */
+/** Assemble the public projection. Throws ONLY on a failed core profile read
+ *  (an outage); returns null when the uuid genuinely has no profile row (404).
+ *  Every optional table degrades to a null / zero default on error — a missing
+ *  achievements table must not take the whole profile down (same
+ *  degrade-gracefully pattern as the rest of the expansion). */
 async function buildPublicProfile(uuid: string, username: string): Promise<PublicProfile | null> {
-  const p = await getPlayerProfile(uuid).catch(() => null);
+  const p = await getPlayerProfile(uuid); // throws propagate → caller staleOr(503)
   if (!p) return null;
 
   // Balances: pick ONLY the public fields out of the helper's full result.
@@ -128,7 +194,7 @@ async function buildPublicProfile(uuid: string, username: string): Promise<Publi
     bedrock: username.startsWith('.'),
     online: false,
     rank: p.rank?.level ?? 0,
-    rankName: p.rank?.name ?? null,
+    rankName: romanizeRankName(p.rank?.name, p.rank?.level ?? 0),
     prestige: p.prestige?.level ?? 0,
     legion: null,
     denarius,

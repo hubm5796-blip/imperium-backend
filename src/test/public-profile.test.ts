@@ -82,14 +82,17 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps implementations — reset the cross-test default
+  // explicitly so one test's cache-hit mock doesn't leak into the next.
+  vi.mocked(cacheGetMock).mockResolvedValue(null);
 });
 
 /** Wire a fully-populated player through every stub. */
-function stubRichPlayer() {
+function stubRichPlayer(username = 'Maximus') {
   stubQuery([
     {
       match: (sql) => sql.includes('FROM player_names'),
-      rows: [{ uuid: TEST_UUID, username: 'Maximus' }],
+      rows: [{ uuid: TEST_UUID, username }],
     },
     {
       match: (sql) => sql.includes('FROM online_players'),
@@ -272,6 +275,75 @@ describe('GET /api/v2/public/player/:username', () => {
     // the sync); the bedrock flag assertion lives in the rich-player shape,
     // so here we just verify the dotted name routes (not a 400).
     expect([200, 404]).toContain(res.status);
+  });
+
+  it('romanizes a numeric synced rankName', async () => {
+    stubQuery([
+      {
+        match: (sql) => sql.includes('FROM player_names'),
+        rows: [{ uuid: TEST_UUID, username: 'Maximus' }],
+      },
+    ]);
+    (profileMock as ReturnType<typeof vi.fn>).mockResolvedValue({
+      uuid: TEST_UUID,
+      rank: { level: 24, name: '24', progress: 0 }, // synced name carries the level
+      prestige: null,
+      stats: null,
+    });
+    (balancesMock as ReturnType<typeof vi.fn>).mockResolvedValue({
+      denarius: 0, tokens: 0, beacons: 0, goldenCoins: 0,
+    });
+    (achievementsMock as ReturnType<typeof vi.fn>).mockResolvedValue({ achievements: [] });
+    (parkourMock as ReturnType<typeof vi.fn>).mockResolvedValue({ records: [] });
+
+    const res = await app.request('/api/v2/public/player/maximus', reqInit());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.rankName).toBe('XXIV');
+  });
+
+  it('returns 503 (not 404) when the profile read fails mid-outage', async () => {
+    // Fresh player — the stale map legitimately serves previously-built
+    // profiles during outages, so this test must use one never served.
+    stubQuery([
+      {
+        match: (sql) => sql.includes('FROM player_names'),
+        rows: [{ uuid: TEST_UUID, username: 'Outagius' }],
+      },
+    ]);
+    (profileMock as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('connection terminated'));
+
+    const res = await app.request('/api/v2/public/player/outagius', reqInit());
+    // The name resolved, so the player EXISTS — an outage must not report
+    // them as never-joined.
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe('Registry unavailable');
+  });
+
+  it('serves a stale profile when the database stops answering', async () => {
+    // Distinct player: the stale map is module-level and persists across
+    // tests, so this test must populate it itself to be deterministic.
+    stubRichPlayer('Staleius');
+    const first = await app.request('/api/v2/public/player/staleius', reqInit());
+    expect(first.status).toBe(200);
+    expect((await first.json() as Record<string, unknown>).stale).toBeUndefined();
+
+    // Database goes down entirely: even the registry lookup fails now.
+    (queryMock as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new Error('connection terminated');
+    });
+
+    const second = await app.request('/api/v2/public/player/staleius', reqInit());
+    expect(second.status).toBe(200); // stale-serve, not 503
+    const body = (await second.json()) as Record<string, unknown>;
+    expect(body.stale).toBe(true);
+    expect(body.username).toBe('Staleius');
+    expect(second.headers.get('X-Stale-Profile')).toBe('1');
+
+    // A player never served before still 503s during the outage.
+    const other = await app.request('/api/v2/public/player/someoneelse', reqInit());
+    expect(other.status).toBe(503);
   });
 
   it('rate limits enumeration at 30/min per IP', async () => {
