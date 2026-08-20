@@ -15,6 +15,7 @@ import { adminViewsApi } from './adminViews.js';
 import { publicApi } from './publicProfiles.js';
 import { memberApi } from './memberRoles.js';
 import { webhooksApi } from './webhookAdmin.js';
+import { sseApi } from './sse/stream.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -35,3 +36,4 @@ expansionApi.route('/dungeons', dungeonsApi);
 expansionApi.route('/v2/public', publicApi);
 expansionApi.route('/v2', memberApi);
 expansionApi.route('/v2', webhooksApi);
+expansionApi.route('/v2', sseApi);
