@@ -19,12 +19,53 @@ import { logger } from '../../utils/logger.js';
 export const SWR_FRESH_MS = 60_000;
 /** Serve responses older-than-fresh but younger than this immediately, while revalidating in the background. */
 export const SWR_STALE_MS = 5 * 60_000;
-/** Redis TTL for cached entries — covers fresh + stale windows plus headroom for serve-stale-on-error. */
-const SWR_REDIS_TTL_SECONDS = 15 * 60;
+/**
+ * Redis TTL for cached entries. 24h, NOT 15min: this entry is the serve-stale-on-error
+ * bridge. During a database outage the fetcher throws and the newest cached value is
+ * served "no matter its age" — but with a 15-minute TTL that value EVAPORATED a quarter
+ * hour into the outage, and every consumer 503'd for the rest of it (observed live
+ * 2026-08-20: leaderboards empty for 20+ hours while the game host was down, even though
+ * a perfectly good snapshot existed at outage start). 24h bridges overnight outages;
+ * staleness under normal operation is unchanged (fresh/stale decisions use `fetchedAt`,
+ * and STALE-ERROR responses are X-Cache-marked).
+ */
+const SWR_REDIS_TTL_SECONDS = 24 * 60 * 60;
+/** Hard cap on how old an in-memory last-good value may be before even the outage
+ *  bridge refuses it — a day-old snapshot beats an empty page, a month-old one is a lie. */
+const SWR_LAST_GOOD_MAX_MS = 24 * 60 * 60 * 1000;
 
 interface CacheEntry<T> {
   data: T;
   fetchedAt: number;
+}
+
+/**
+ * Per-isolate last-good values (V6 2026-08-20): the second leg of the outage
+ * bridge. Redis is the primary stale-on-error store, but a deploy recycles
+ * every isolate at once and a Redis flush/TTL sweep can empty the primary —
+ * this map keeps serving whatever this isolate last fetched successfully.
+ * Bounded by SWR_LAST_GOOD_MAX_MS and by map size (public boards: a few
+ * dozen keys of small JSON — no eviction needed in practice).
+ */
+const lastGood = new Map<string, CacheEntry<unknown>>();
+
+function rememberGood<T>(cacheKey: string, data: T): void {
+  lastGood.set(cacheKey, { data, fetchedAt: Date.now() });
+  if (lastGood.size > 500) {
+    // Drop the oldest half — entries are cheap to repopulate.
+    const keys = [...lastGood.entries()].sort((a, b) => a[1].fetchedAt - b[1].fetchedAt);
+    for (const [key] of keys.slice(0, Math.floor(keys.length / 2))) lastGood.delete(key);
+  }
+}
+
+function recallGood<T>(cacheKey: string): CacheEntry<T> | null {
+  const entry = lastGood.get(cacheKey) as CacheEntry<T> | undefined;
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > SWR_LAST_GOOD_MAX_MS) {
+    lastGood.delete(cacheKey);
+    return null;
+  }
+  return entry;
 }
 
 /** Run `p` to completion after the response is sent (waitUntil on Workers, fire-and-forget on Node). */
@@ -122,6 +163,7 @@ export async function swrJson<T>(
   const revalidate = async (): Promise<void> => {
     try {
       const fresh = await fetcher();
+      rememberGood(cacheKey, fresh);
       await setCachedJson(cacheKey, { data: fresh, fetchedAt: Date.now() }, SWR_REDIS_TTL_SECONDS);
     } catch (err) {
       logger.warn({ err, cacheKey }, 'SWR background revalidation failed — stale value retained');
@@ -140,12 +182,14 @@ export async function swrJson<T>(
   }
 
   // Miss (or long-stale): fetch synchronously; on failure fall back to the
-  // newest cached value no matter its age (serve-stale-on-error).
+  // newest cached value no matter its age (serve-stale-on-error) — Redis
+  // first, then this isolate's last-good memory.
   try {
     const fresh = await fetcher();
     if (fresh === undefined) {
       return c.json({ error: 'Not Found' }, 404);
     }
+    rememberGood(cacheKey, fresh);
     afterResponse(
       c,
       setCachedJson(cacheKey, { data: fresh, fetchedAt: Date.now() }, SWR_REDIS_TTL_SECONDS),
@@ -157,6 +201,11 @@ export async function swrJson<T>(
     if (entry) {
       logger.warn({ err, cacheKey }, 'SWR fetch failed — serving stale cache value');
       return buildResponse(entry.data, 'STALE-ERROR');
+    }
+    const good = recallGood<never>(cacheKey);
+    if (good) {
+      logger.warn({ err, cacheKey }, 'SWR fetch failed and Redis entry expired — serving isolate last-good value');
+      return buildResponse(good.data, 'STALE-ERROR');
     }
     throw err;
   }
