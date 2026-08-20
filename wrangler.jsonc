@@ -1,6 +1,11 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"main": "src/worker.ts",
+	// V6 05-03: the outbound-webhook cron — drains the delivery queue and
+	// tails web_events for game-moment pushes. <=20 POSTs per invocation.
+	"triggers": {
+		"crons": ["* * * * *"]
+	},
 	// Matches the existing "imperium-backend-prod" Worker (dashboard name) so
 	// Cloudflare's Git integration deploys new commits to that same Worker.
 	"name": "imperium-backend-prod",

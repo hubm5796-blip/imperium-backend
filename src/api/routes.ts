@@ -77,6 +77,7 @@ import { alertError } from '../utils/errorAlerts.js';
 import { expansionApi } from './expansion/index.js';
 import { fetchExpansionBoard, isExpansionBoard } from './expansion/leaderboards.js';
 import { swrJson } from './expansion/cache.js';
+import { emit } from '../webhooks/deliver.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 

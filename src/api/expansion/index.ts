@@ -14,6 +14,7 @@ import { communityApi } from './community.js';
 import { adminViewsApi } from './adminViews.js';
 import { publicApi } from './publicProfiles.js';
 import { memberApi } from './memberRoles.js';
+import { webhooksApi } from './webhookAdmin.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -33,3 +34,4 @@ expansionApi.route('/dungeons', dungeonsApi);
 // bot-gated v2 aggregates (02-07 member summary for the role-sync engine).
 expansionApi.route('/v2/public', publicApi);
 expansionApi.route('/v2', memberApi);
+expansionApi.route('/v2', webhooksApi);

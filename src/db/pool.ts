@@ -64,7 +64,7 @@ export function initD1(db: D1Database): void {
   d1 = db;
 }
 
-function getD1(): D1Database {
+export function getD1(): D1Database {
   if (!d1) {
     throw new Error('D1 binding not initialized — initD1() must run before any cache-table query');
   }
