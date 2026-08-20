@@ -1,4 +1,4 @@
-// 12a expansion: new leaderboard boards (rank / legion / koth / colosseum)
+// 12a expansion: new leaderboard boards (rank / legion / colosseum)
 // behind GET /api/leaderboards/:board. The route itself lives in routes.ts
 // (registered there since before the expansion); this module owns the queries
 // and response shapes for the new boards.
@@ -6,13 +6,15 @@
 // Data sources:
 //  - rank:   player_ranks (live table, updated by the plugin)
 //  - legion: legions + legion_members (live tables)
-//  - koth / colosseum: leaderboard_stats, the plugin's generic leaderboard
+//  - colosseum: leaderboard_stats, the plugin's generic leaderboard
 //    table, under categories KOTH_WINS / COLOSSEUM_POINTS. The plugin must
 //    record these categories for the boards to return live data (documented
 //    in docs/api.md); until then the boards serve empty entries.
 import { query } from '../../db/pool.js';
 
-export const EXPANSION_BOARDS = ['rank', 'legion', 'koth', 'colosseum'] as const;
+// KOTH board removed 2026-08-20 — the plugin feature is deleted (owner directive); the board
+// served a category nothing writes anymore.
+export const EXPANSION_BOARDS = ['rank', 'legion', 'colosseum'] as const;
 export type ExpansionBoard = (typeof EXPANSION_BOARDS)[number];
 
 export function isExpansionBoard(value: string): value is ExpansionBoard {
@@ -20,8 +22,7 @@ export function isExpansionBoard(value: string): value is ExpansionBoard {
 }
 
 /** leaderboard_stats categories exposed as public boards (allowlist — arbitrary categories stay private). */
-const LEADERBOARD_CATEGORY_BY_BOARD: Record<'koth' | 'colosseum', string> = {
-  koth: 'KOTH_WINS',
+const LEADERBOARD_CATEGORY_BY_BOARD: Record<'colosseum', string> = {
   colosseum: 'COLOSSEUM_POINTS',
 };
 
