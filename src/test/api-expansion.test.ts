@@ -123,7 +123,7 @@ describe('GET /api/leaderboards/:board (expansion boards)', () => {
     expect(body.entries[1]).toMatchObject({ rank: 2, username: 'Titus', value: 400 });
     // category allowlist was applied via a bound parameter ($1), not string interpolation
     const call = vi.mocked(queryMock).mock.calls[0];
-    expect(call?.[1]?.[0]).toBe('KOTH_WINS');
+    expect(call?.[1]?.[0]).toBe('COLOSSEUM_POINTS');
   });
 
   it('rejects unknown board types with 400', async () => {
