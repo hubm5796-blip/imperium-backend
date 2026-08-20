@@ -29,6 +29,17 @@ async function shutdown(signal: string): Promise<void> {
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
+// Fire-and-forget promises that reject (void setCachedJson(...), background
+// fans) crash modern Node with an unhelpful top-level trace. Route them through
+// the logger so the failing promise has a name and a stack before any exit.
+process.on('unhandledRejection', (reason) => {
+  logger.error({ reason: String(reason) }, 'Unhandled promise rejection');
+});
+process.on('uncaughtException', (err) => {
+  logger.error({ err }, 'Uncaught exception — exiting nonzero');
+  process.exitCode = 1;
+});
+
 // The Discord bot no longer runs as a separate gateway process — Discord
 // posts interactions directly to /discord/interactions (see
 // src/bot/interactions.ts), served by this same app. Run

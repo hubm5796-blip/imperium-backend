@@ -317,7 +317,10 @@ export async function consumeLinkCode(code: string): Promise<LinkCodeRecord | nu
   await redisCommand(socketConfig(), ['DEL', key]);
   try {
     return JSON.parse(raw) as LinkCodeRecord;
-  } catch {
+  } catch (err) {
+    // The DEL above already burned the single-use code — the player sees
+    // "invalid code" for a code they genuinely held. Log the corruption.
+    logger.warn({ err: String(err), key }, 'link code record corrupt — code consumed but unusable');
     return null;
   }
 }
@@ -339,7 +342,8 @@ export async function consumeLoginCode(
     const parsed = JSON.parse(raw) as { uuid?: string; username?: string };
     if (!parsed.uuid) return null;
     return { uuid: parsed.uuid, username: parsed.username };
-  } catch {
+  } catch (err) {
+    logger.warn({ err: String(err), key }, 'login code record corrupt — code consumed but unusable');
     return null;
   }
 }
@@ -405,7 +409,8 @@ export async function consumeSessionCode(code: string): Promise<SessionHandoff |
       discordUsername: parsed.discordUsername ?? null,
       discordAvatar: parsed.discordAvatar ?? null,
     };
-  } catch {
+  } catch (err) {
+    logger.warn({ err: String(err), key }, 'session code record corrupt — code consumed but unusable');
     return null;
   }
 }

@@ -435,10 +435,15 @@ api.get('/player/profile', async (c) => {
 
   // Get balances from PG, fall back to SQLite profile values
   let balances: any = { denarius: 0, tokens: 0, beacons: 0, goldenCoins: 0 };
+  let balancesDegraded = false;
   try {
     balances = await getPlayerBalances(uuid);
-  } catch {
-    // PG not available — balances come from SQLite profile
+  } catch (err) {
+    // PG not available. WITHOUT the flag every consumer of this profile
+    // (dashboard, bot /balance) reports a rich player as flat broke with
+    // HTTP 200 and no trace of the outage.
+    balancesDegraded = true;
+    logger.warn({ uuid, err: String(err) }, 'balances degraded to zero — PG read failed');
   }
 
   // Two profile shapes flow through here:
@@ -518,7 +523,7 @@ api.get('/player/profile', async (c) => {
   // The legion/KOTH extras ride inside the same cached envelope.
   void setCachedJson(cacheKey, { ...fields, ...extras }, 15);
 
-  return c.json({ ...fields, ...extras, discordId });
+  return c.json({ ...fields, ...extras, discordId, ...(balancesDegraded ? { degraded: true } : {}) });
 });
 
 /** GET /api/player/balances — the four currencies, converted from minor units. */
@@ -740,7 +745,8 @@ api.post('/admin/punish', async (c) => {
       return c.json({ ok: true, result: response.data ?? null });
     }
     return c.json({ error: response.error ?? 'Plugin rejected the action' }, 502);
-  } catch {
+  } catch (err) {
+    logger.error({ err: String(err), target, action }, 'admin punish: plugin dispatch threw');
     return c.json({ error: 'Plugin did not respond — punishment may not be wired yet' }, 501);
   }
 });
@@ -770,7 +776,8 @@ api.post('/admin/broadcast', async (c) => {
       return c.json({ ok: true });
     }
     return c.json({ error: response.error ?? 'Plugin rejected the broadcast' }, 502);
-  } catch {
+  } catch (err) {
+    logger.error({ err: String(err) }, 'admin broadcast: plugin dispatch threw');
     return c.json({ error: 'Plugin did not respond — broadcast may not be wired yet' }, 501);
   }
 });
@@ -788,7 +795,8 @@ api.post('/admin/reload', async (c) => {
       return c.json({ ok: true });
     }
     return c.json({ error: response.error ?? 'Plugin rejected the reload' }, 502);
-  } catch {
+  } catch (err) {
+    logger.error({ err: String(err) }, 'admin reload: plugin dispatch threw');
     return c.json({ error: 'Plugin did not respond — reload may not be wired yet' }, 501);
   }
 });
@@ -815,7 +823,8 @@ api.get('/player/permissions', async (c) => {
   if (!uuid && discordId) {
     try {
       uuid = await getUuidByDiscordId(discordId);
-    } catch {
+    } catch (err) {
+      logger.warn({ err: String(err), discordId }, 'permissions: discord-id lookup failed — answering unprivileged');
       uuid = null;
     }
   }
@@ -832,8 +841,11 @@ api.get('/player/permissions', async (c) => {
       [uuid],
     );
     groups = result.rows.map((r: { primary_group: string }) => r.primary_group.toLowerCase());
-  } catch {
-    // LuckPerms table may not exist or have a different name
+  } catch (err) {
+    // LuckPerms table may not exist or have a different name — fail closed
+    // (all flags false), but log: this gates the website's admin panel, so an
+    // outage silently locking every staff member out must be traceable.
+    logger.warn({ err: String(err), uuid }, 'permissions: LuckPerms group query failed — all staff flags false');
   }
 
   // Derive admin flags from group names
@@ -1006,8 +1018,8 @@ api.get('/server/status', async (c) => {
         [],
       );
       players = names.rows.map((row) => row.username).filter((name): name is string => Boolean(name));
-    } catch {
-      // Table may not exist yet — keep the empty list.
+    } catch (err) {
+      logger.warn({ err: String(err) }, 'server/status: online_players query failed — returning count only');
     }
 
     return c.json({
@@ -1132,8 +1144,10 @@ api.post('/link/confirm', async (c) => {
   }
 
   // Hijack guard (security): refuse to silently rebind an already-linked UUID
-  // to a different Discord account. Throws are swallowed — PG being down falls
-  // through to the upsert, which will fail loudly if there's a real conflict.
+  // to a different Discord account. When the guard's DB read itself fails we
+  // FAIL CLOSED: the upsert below is ON CONFLICT DO UPDATE, so it would never
+  // "fail loudly" on a real conflict — the old fall-through let a transient
+  // read error during a working write window silently complete a hijack.
   try {
     const existing = await isAlreadyLinked(record.uuid);
     if (existing && existing !== discordId) {
@@ -1142,8 +1156,13 @@ api.post('/link/confirm', async (c) => {
         409,
       );
     }
-  } catch {
-    // PG guard unavailable — fall through to the write.
+  } catch (err) {
+    logger.error({
+      uuid: record.uuid,
+      discordId,
+      err: String(err),
+    }, 'link hijack-guard unavailable — refusing link (fail closed)');
+    return c.json({ error: 'Link check unavailable — try again shortly.' }, 503);
   }
 
   try {
@@ -1158,7 +1177,8 @@ api.post('/link/confirm', async (c) => {
       // player_names table missing or PG hiccup — degrade to the uuid.
     }
     return c.json({ ok: true, linked: true, discordId, uuid: record.uuid, username: username ?? record.uuid });
-  } catch {
+  } catch (err) {
+    logger.error({ uuid: record.uuid, discordId, err: String(err) }, 'failed to persist Discord link');
     return c.json({ error: 'Failed to persist link' }, 500);
   }
 });
@@ -1304,7 +1324,10 @@ api.get('/store/subscription', storeAuth, async (c) => {
     });
   } catch (err) {
     logger.error({ err, uuid }, 'Failed to fetch live PayNow subscription');
-    return c.json({ subscription: null });
+    // `available:false` lets the caller tell "genuinely not subscribed" from
+    // "PayNow is down" — the pre-fix body was indistinguishable from a real
+    // null, so active subscribers saw "no subscription" during outages.
+    return c.json({ subscription: null, available: false });
   }
 });
 
@@ -1682,6 +1705,10 @@ api.post('/webhooks/paynow', async (c) => {
         const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
         if (uuid && subscriptionId && productId) {
           await upsertCachedSubscription(uuid, subscriptionId, productId, status);
+        } else {
+          // An unresolvable customer is a PERMANENT gap (not a transient cache
+          // miss): the subscription cache silently desyncs from PayNow forever.
+          logger.error({ customerId, subscriptionId, eventType }, 'PayNow webhook: customer could not be resolved to a uuid — subscription cache NOT updated');
         }
         break;
       }
@@ -1692,6 +1719,8 @@ api.post('/webhooks/paynow', async (c) => {
         const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
         if (uuid && subscriptionId && productId) {
           await upsertCachedSubscription(uuid, subscriptionId, productId, 'canceled');
+        } else {
+          logger.error({ customerId, subscriptionId, eventType }, 'PayNow webhook cancel: customer could not be resolved to a uuid — subscription cache NOT updated');
         }
         break;
       }
@@ -1898,6 +1927,7 @@ api.post('/referrals/create', requireBotAuth, async (c) => {
     );
     return c.json({ ok: true, message: `Referral created. When ${referredUsername} reaches Rank V, you both get a reward!` });
   } catch (err) {
+    logger.error({ err: String(err), referrerUuid }, 'referral create failed');
     return c.json({ error: 'Failed to create referral.' }, 500);
   }
 });
@@ -2000,7 +2030,10 @@ api.post('/legion/create', requireAuth, requireLinked, async (c) => {
       uuid,
     }, 5_000);
     return c.json({ ok: response.ok, error: response.error }, response.ok ? 200 : 502);
-  } catch { return c.json({ error: 'Plugin did not respond' }, 504); }
+  } catch (err) {
+    logger.error({ err: String(err) }, 'legion dispatch: plugin did not respond');
+    return c.json({ error: 'Plugin did not respond' }, 504);
+  }
 });
 
 /**
@@ -2064,10 +2097,12 @@ api.get('/refcode/mine', requireBotAuth, async (c) => {
         [mcUuid, code]
       );
       return c.json({ code, isCustom: false, redemptions: 0 });
-    } catch {
+    } catch (err) {
+      logger.warn({ err: String(err), attempt: attempts }, 'refcode generation insert failed');
       attempts++;
     }
   }
+  logger.error({ mcUuid }, 'refcode generation exhausted 10 attempts');
   return c.json({ error: 'Failed to generate code' }, 500);
 });
 
@@ -2149,14 +2184,23 @@ api.post('/refcode/redeem', requireBotAuth, async (c) => {
     return c.json({ error: 'You have already redeemed this code.' }, 400);
   }
 
-  // Record the redemption
-  await query(
-    'INSERT INTO referral_redemptions (redeemer_uuid, code_used, referrer_uuid, reward_paid) VALUES ($1, $2, $3, TRUE)',
+  // Record the redemption AND bump the owner's counter. Single CTE statement =
+  // atomic: the pre-fix pair of separate queries could record a redemption as
+  // paid while the counter update failed (or vice versa), and a plugin crash
+  // between them left the ledger lying about a paid reward.
+  const redeemed = await query(
+    `WITH ins AS (
+       INSERT INTO referral_redemptions (redeemer_uuid, code_used, referrer_uuid, reward_paid)
+       VALUES ($1, $2, $3, TRUE)
+       RETURNING 1
+     )
+     UPDATE referral_codes SET total_redemptions = total_redemptions + 1
+      WHERE code = $2 RETURNING total_redemptions`,
     [mcUuid, code, ownerUuid]
   );
-
-  // Increment owner's redemption count
-  await query('UPDATE referral_codes SET total_redemptions = total_redemptions + 1 WHERE code = $1', [code]);
+  if (redeemed.rows.length === 0) {
+    logger.error({ code, mcUuid }, 'refcode redeem: counter update matched no rows — redemption recorded but owner count not incremented');
+  }
 
   // Return the owner's identity so the plugin can pay them their referral reward in-game. The reward
   // itself is granted by the Minecraft plugin (EconomyService.depositOffline) — the backend never

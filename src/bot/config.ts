@@ -5,6 +5,8 @@
 /** Roman-themed color palette (hex literals for EmbedBuilder).
  *  Aligned to the locked design-system tokens (01-DESIGN-SYSTEM §2): gold is
  *  #D4AF37, the same value used on the web frontend and the plugin GUI theme. */
+import { env } from '../env.js';
+
 export const COLORS = {
   gold: 0xd4af37,
   darkGray: 0x2c2c2c,
@@ -120,6 +122,27 @@ export function getBotConfig() {
   const linkedRoleId = process.env.DISCORD_LINKED_ROLE_ID;
   /** Optional: guild id for fast (per-guild) command registration during dev. */
   const devGuildId = process.env.DISCORD_DEV_GUILD_ID;
+
+  // WORKERS: secrets are NOT injected into process.env under the deployed
+  // Worker — they live in the shared env module after initEnvFromBindings.
+  // Reading only process.env made every bot->backend auth call silently 401
+  // and every linked-role grant silently skip in that deployment shape.
+  // env's proxy throws on access-before-init (standalone scripts), hence the
+  // try/catch fall-through — same contract as getCredentials below.
+  try {
+    if (env.discord.botToken) {
+      return {
+        token: env.discord.botToken,
+        apiBase,
+        apiToken: env.botApiToken || apiToken,
+        clientId: env.discord.clientId || clientId,
+        linkedRoleId,
+        devGuildId,
+      };
+    }
+  } catch {
+    // env not initialized (standalone script / pre-init) — process.env values stand.
+  }
   return { token, apiBase, apiToken, clientId, linkedRoleId, devGuildId };
 }
 

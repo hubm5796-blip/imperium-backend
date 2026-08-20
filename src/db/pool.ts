@@ -210,14 +210,19 @@ export async function setPaynowCustomerId(uuid: string, customerId: string): Pro
     `INSERT INTO paynow_customers (uuid, customer_id) VALUES ($1, $2)
      ON CONFLICT (uuid) DO UPDATE SET customer_id = EXCLUDED.customer_id`,
     [uuid, customerId],
-  ).catch(() => {
-    // Table might not exist yet on some deployments — fall back to the old column.
+  ).catch((err: unknown) => {
+    // Table might not exist yet on some deployments. MUST log: when this write
+    // silently fails the PayNow webhook can never resolve the customer back to
+    // a uuid, and every subscription cache update for this player is skipped.
+    logger.warn({ err: String(err), uuid }, 'paynow_customers upsert failed — webhook customer resolution will miss');
   });
   // Also update discord_links if a row exists (backward compat)
   await query(
     'UPDATE discord_links SET paynow_customer_id = $2 WHERE uuid = $1',
     [uuid, customerId],
-  ).catch(() => {});
+  ).catch((err: unknown) => {
+    logger.warn({ err: String(err), uuid }, 'discord_links paynow_customer_id backfill failed');
+  });
 }
 
 /**
@@ -708,7 +713,8 @@ export async function getPlayerSkills(
     const rank = Number(rankResult.rows[0]?.rank_level ?? 0);
     const prestige = Number(prestigeResult.rows[0]?.prestige_level ?? 0);
     earned = rank + prestige * 5;
-  } catch {
+  } catch (err) {
+    logger.warn({ err: String(err), uuid }, 'skill-points rank/prestige read failed — earned computed as 0');
     earned = 0;
   }
 

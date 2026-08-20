@@ -159,7 +159,7 @@ export class InteractionShim {
     // The interaction was already acked (e.g. reply() called after
     // deferReply()) — Discord no longer accepts a fresh ack at this point.
     // Send it as a followup message instead of silently dropping it.
-    await fetch(`${API_BASE}/webhooks/${this.raw.application_id}/${this.raw.token}`, {
+    const res = await fetch(`${API_BASE}/webhooks/${this.raw.application_id}/${this.raw.token}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -169,6 +169,12 @@ export class InteractionShim {
         flags: payload.ephemeral ? EPHEMERAL_FLAG : undefined,
       }),
     });
+    if (!res.ok) {
+      // fetch never throws on HTTP errors — without this check a Discord
+      // 4xx/5xx here means the user simply never sees the reply, with no
+      // trace (the exact "stuck on thinking" incident class).
+      console.error(`[shim] followup POST failed http=${res.status} — reply lost`);
+    }
     this.replied = true;
   }
 
@@ -178,7 +184,7 @@ export class InteractionShim {
     // today, but nothing enforces it) can't PATCH a message before Discord
     // has created it.
     await this.firstAck;
-    await fetch(`${API_BASE}/webhooks/${this.raw.application_id}/${this.raw.token}/messages/@original`, {
+    const res = await fetch(`${API_BASE}/webhooks/${this.raw.application_id}/${this.raw.token}/messages/@original`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -187,6 +193,12 @@ export class InteractionShim {
         components: payload.components,
       }),
     });
+    if (!res.ok) {
+      // Same class as the followup POST: a failed PATCH leaves the user on
+      // "Bot is thinking…" forever. editOriginalReply-style booleans are
+      // checked at every call site — this internal one must be too.
+      console.error(`[shim] editReply PATCH failed http=${res.status} — user stuck on thinking`);
+    }
     this.replied = true;
   }
 }

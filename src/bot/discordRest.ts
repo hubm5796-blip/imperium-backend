@@ -32,7 +32,14 @@ export async function fetchGuildMember(
   botToken: string,
 ): Promise<DiscordMember | null> {
   const res = await discordApiFetch(`/guilds/${guildId}/members/${userId}`, botToken);
-  if (!res.ok) return null;
+  if (!res.ok) {
+    if (res.status === 403 || res.status === 401) {
+      // Bot kicked/missing perms — without this log it's indistinguishable
+      // from "member left" and every dependent feature just degrades.
+      console.error(`[discordRest] member fetch ${res.status} for guild ${guildId} — bot credentials/permissions broken?`);
+    }
+    return null;
+  }
   return (await res.json()) as DiscordMember;
 }
 

@@ -36,8 +36,10 @@ export async function grantLinkedRole(interaction: InteractionShim): Promise<boo
     const member = await interaction.guild?.members.fetch(interaction.user.id);
     if (member?.roles.includes(linkedRoleId)) return true;
     return await addGuildMemberRole(interaction.guildId, interaction.user.id, linkedRoleId, token);
-  } catch {
-    // Missing permissions or role — surface nothing to the user.
+  } catch (err) {
+    // Missing permissions or role — surface nothing to the user, but leave
+    // an operator trace: role sync can otherwise be broken for weeks.
+    console.error(`[bot] linked-role grant failed for ${interaction.user.id}:`, err);
     return false;
   }
 }
@@ -48,8 +50,8 @@ export async function removeLinkedRole(interaction: InteractionShim): Promise<vo
   if (!linkedRoleId || !interaction.guildId || !token) return;
   try {
     await removeGuildMemberRole(interaction.guildId, interaction.user.id, linkedRoleId, token);
-  } catch {
-    // Non-fatal.
+  } catch (err) {
+    console.error(`[bot] linked-role remove failed for ${interaction.user.id}:`, err);
   }
 }
 
