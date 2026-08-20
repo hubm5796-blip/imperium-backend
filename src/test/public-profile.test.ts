@@ -56,13 +56,20 @@ function reqInit(): RequestInit {
   return { headers: { 'CF-Connecting-IP': nextIp() } };
 }
 
-/** Route one SQL statement to a rows array; anything unexpected throws loudly. */
+/** Route one SQL statement to a rows array; anything unexpected throws loudly
+ *  — phrased as a schema error so the route's mega→multi-query fallback path
+ *  engages exactly as it would for a missing table in production. */
 function stubQuery(handlers: Array<{ match: (sql: string) => boolean; rows: unknown[] }>) {
   (queryMock as ReturnType<typeof vi.fn>).mockImplementation(async (sql: string) => {
+    // The mega aggregate references nearly every table, so naive
+    // sql.includes(...) matchers collide with it; serve it only when a
+    // handler matches the aggregate shape itself.
+    const isMega = sql.includes('WITH me AS');
     for (const h of handlers) {
-      if (h.match(sql)) return { rows: h.rows };
+      const matched = isMega ? h.match(sql) && h.match('WITH me AS') : h.match(sql);
+      if (matched) return { rows: h.rows };
     }
-    throw new Error(`unexpected query in test: ${sql}`);
+    throw new Error(`relation does not exist (unstubbed in test): ${sql.slice(0, 80)}`);
   });
 }
 
@@ -91,7 +98,7 @@ beforeEach(() => {
 function stubRichPlayer(username = 'Maximus') {
   stubQuery([
     {
-      match: (sql) => sql.includes('FROM player_names'),
+      match: (sql) => sql.includes('FROM player_names') && !sql.includes('WITH me AS'),
       rows: [{ uuid: TEST_UUID, username }],
     },
     {
@@ -181,7 +188,7 @@ describe('GET /api/v2/public/player/:username', () => {
   it('404s for unknown usernames without any Mojang fallback', async () => {
     stubQuery([
       {
-        match: (sql) => sql.includes('FROM player_names'),
+        match: (sql) => sql.includes('FROM player_names') && !sql.includes('WITH me AS'),
         rows: [], // registry miss
       },
     ]);
@@ -203,13 +210,13 @@ describe('GET /api/v2/public/player/:username', () => {
   it('degrades to zero-defaults when optional tables are unavailable', async () => {
     stubQuery([
       {
-        match: (sql) => sql.includes('FROM player_names'),
+        match: (sql) => sql.includes('FROM player_names') && !sql.includes('WITH me AS'),
         rows: [{ uuid: TEST_UUID, username: 'Maximus' }],
       },
     ]);
     // Every other query (online/legion/koth/elo) throws → degrade path.
     (queryMock as ReturnType<typeof vi.fn>).mockImplementation(async (sql: string) => {
-      if (sql.includes('FROM player_names')) {
+      if (sql.includes('FROM player_names') && !sql.includes('WITH me AS')) {
         return { rows: [{ uuid: TEST_UUID, username: 'Maximus' }] };
       }
       throw new Error('table unavailable');
@@ -238,7 +245,7 @@ describe('GET /api/v2/public/player/:username', () => {
   it('serves a cache hit without touching Postgres', async () => {
     stubQuery([
       {
-        match: (sql) => sql.includes('FROM player_names'),
+        match: (sql) => sql.includes('FROM player_names') && !sql.includes('WITH me AS'),
         rows: [{ uuid: TEST_UUID, username: 'Maximus' }],
       },
     ]);
@@ -264,7 +271,7 @@ describe('GET /api/v2/public/player/:username', () => {
   it('marks Bedrock players', async () => {
     stubQuery([
       {
-        match: (sql) => sql.includes('FROM player_names'),
+        match: (sql) => sql.includes('FROM player_names') && !sql.includes('WITH me AS'),
         rows: [{ uuid: TEST_UUID, username: '.BedrockBob' }],
       },
     ]);
@@ -277,10 +284,76 @@ describe('GET /api/v2/public/player/:username', () => {
     expect([200, 404]).toContain(res.status);
   });
 
+  it('serves the single-round-trip aggregate without the fallback queries', async () => {
+    // The mega statement re-resolves the name itself and joins everything.
+    stubQuery([
+      {
+        match: (sql) => sql.includes('FROM player_names') && !sql.includes('WITH me AS'),
+        rows: [{ uuid: TEST_UUID, username: 'Maximus' }], // route's registry lookup
+      },
+      {
+        match: (sql) => sql.includes('WITH me AS'),
+        rows: [
+          {
+            uuid: TEST_UUID,
+            rank_level: '7',
+            rank_name: 'VII',
+            prestige_level: '3',
+            blocks_mined: '123456',
+            play_time: '3600000',
+            pvp_kills: '40',
+            pvp_deaths: '20',
+            pvp_trophies: '12',
+            denarius_minor: '25000000', // → 250000 display
+            civitas_minor: '432100', // → 4321 display
+            koth_wins: '8',
+            legion_name: 'XVII',
+            elo: '1850',
+            peak_elo: '1910',
+            ach_count: '2',
+            recent_ach: [
+              { achievement_id: 'miner_ii', completed_at: '300' },
+              { achievement_id: 'first_blood', completed_at: '200' },
+            ],
+            online: true,
+            parkour: [
+              { course_id: 'aqueduct', best_time_ms: '12400', completions: '6' },
+              { course_id: 'colosseum', best_time_ms: '33100', completions: '2' },
+              { course_id: 'sewers', best_time_ms: '51000', completions: '1' },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const res = await app.request('/api/v2/public/player/maximus', reqInit());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.username).toBe('Maximus');
+    expect(body.rankName).toBe('VII');
+    expect(body.denarius).toBe(250000); // minor units converted
+    expect(body.civitas).toBe(4321);
+    expect(body.kothWins).toBe(8);
+    expect(body.elo).toEqual({ rating: 1850, peak: 1910 });
+    expect(body.achievementCount).toBe(2);
+    expect(body.recentAchievements).toEqual(['miner_ii', 'first_blood']);
+    expect(body.online).toBe(true);
+    expect(body.parkourBests).toEqual([
+      { course: 'aqueduct', timeMs: 12400, completions: 6 },
+      { course: 'colosseum', timeMs: 33100, completions: 2 },
+      { course: 'sewers', timeMs: 51000, completions: 1 },
+    ]);
+    // The whole point: one aggregate statement, none of the per-table reads.
+    expect(profileMock).not.toHaveBeenCalled();
+    expect(balancesMock).not.toHaveBeenCalled();
+    expect(achievementsMock).not.toHaveBeenCalled();
+    expect(parkourMock).not.toHaveBeenCalled();
+  });
+
   it('romanizes a numeric synced rankName', async () => {
     stubQuery([
       {
-        match: (sql) => sql.includes('FROM player_names'),
+        match: (sql) => sql.includes('FROM player_names') && !sql.includes('WITH me AS'),
         rows: [{ uuid: TEST_UUID, username: 'Maximus' }],
       },
     ]);
@@ -307,7 +380,7 @@ describe('GET /api/v2/public/player/:username', () => {
     // profiles during outages, so this test must use one never served.
     stubQuery([
       {
-        match: (sql) => sql.includes('FROM player_names'),
+        match: (sql) => sql.includes('FROM player_names') && !sql.includes('WITH me AS'),
         rows: [{ uuid: TEST_UUID, username: 'Outagius' }],
       },
     ]);
@@ -349,7 +422,7 @@ describe('GET /api/v2/public/player/:username', () => {
   it('rate limits enumeration at 30/min per IP', async () => {
     stubQuery([
       {
-        match: (sql) => sql.includes('FROM player_names'),
+        match: (sql) => sql.includes('FROM player_names') && !sql.includes('WITH me AS'),
         rows: [],
       },
     ]);

@@ -173,6 +173,21 @@ publicApi.get('/player/:username', publicProfileRateLimit, async (c) => {
  *  achievements table must not take the whole profile down (same
  *  degrade-gracefully pattern as the rest of the expansion). */
 async function buildPublicProfile(uuid: string, username: string): Promise<PublicProfile | null> {
+  // Happy path: ONE round trip. The multi-query shape below makes ~10
+  // sequential calls; during Hyperdrive connection flaps every extra call is
+  // another window for a dying socket to take the request down (observed
+  // 2026-08-20: heavy routes 1101'd an order of magnitude more than 1-query
+  // routes). Falls back to the resilient multi-query path on schema gaps.
+  try {
+    const mega = await query<MegaProfileRow>(MEGA_PROFILE_SQL, [username]);
+    const row = mega.rows[0];
+    if (row && row.uuid) return profileFromMegaRow(uuid, username, row);
+  } catch {
+    // Any failure (schema gap on a synced table, connection flap) falls back
+    // to the resilient multi-query path below — if the database is truly down
+    // it throws there and the caller stale-serves.
+  }
+
   const p = await getPlayerProfile(uuid); // throws propagate → caller staleOr(503)
   if (!p) return null;
 
@@ -286,4 +301,113 @@ async function buildPublicProfile(uuid: string, username: string): Promise<Publi
   }
 
   return base;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Single-round-trip aggregate (the happy path). One statement joins everything
+// the public profile needs; see buildPublicProfile for why the trip count
+// matters. Column types are coerced defensively — pg hands back strings for
+// bigint/numeric, and a schema drift on one column must not NaN the payload.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface MegaProfileRow {
+  uuid: string | null;
+  rank_level: string | number | null;
+  rank_name: string | null;
+  prestige_level: string | number | null;
+  blocks_mined: string | number | null;
+  play_time: string | number | null;
+  pvp_kills: string | number | null;
+  pvp_deaths: string | number | null;
+  pvp_trophies: string | number | null;
+  denarius_minor: string | number | null;
+  civitas_minor: string | number | null;
+  koth_wins: string | null;
+  legion_name: string | null;
+  elo: string | number | null;
+  peak_elo: string | number | null;
+  ach_count: string | null;
+  recent_ach: Array<{ achievement_id: string; completed_at: string | number }> | null;
+  online: boolean | null;
+  parkour: Array<{ course_id: string; best_time_ms: string | number; completions: string | number }> | null;
+}
+
+const MEGA_PROFILE_SQL = `
+  WITH me AS (
+    SELECT uuid, username FROM player_names WHERE LOWER(username) = LOWER($1) LIMIT 1
+  ), bal AS (
+    SELECT
+      COALESCE((SELECT SUM(balance) FROM currency_balances WHERE uuid = me.uuid AND currency IN ('denarius', 'money')), 0) AS denarius_minor,
+      COALESCE((SELECT SUM(balance) FROM currency_balances WHERE uuid = me.uuid AND currency IN ('civitas', 'beacons')), 0) AS civitas_minor
+    FROM me
+  )
+  SELECT
+    me.uuid,
+    pr.rank_level, pr.rank_name,
+    pd.prestige_level,
+    ps.blocks_mined, ps.play_time, ps.pvp_kills, ps.pvp_deaths, ps.pvp_trophies,
+    bal.denarius_minor, bal.civitas_minor,
+    (SELECT SUM(value) FROM leaderboard_stats WHERE uuid = me.uuid AND category = 'KOTH_WINS' AND period = 'ALL_TIME') AS koth_wins,
+    (SELECT l.name FROM legion_members m JOIN legions l ON l.name = m.legion_name WHERE m.player_uuid = me.uuid LIMIT 1) AS legion_name,
+    e.elo, e.peak_elo,
+    (SELECT COUNT(*) FROM player_achievements pa WHERE pa.uuid = me.uuid AND pa.completed) AS ach_count,
+    (SELECT json_agg(t) FROM (
+       SELECT pa.achievement_id, pa.completed_at FROM player_achievements pa
+        WHERE pa.uuid = me.uuid AND pa.completed
+        ORDER BY pa.completed_at DESC LIMIT 8
+     ) t) AS recent_ach,
+    EXISTS (SELECT 1 FROM online_players op WHERE op.uuid = me.uuid) AS online,
+    (SELECT json_agg(x) FROM (
+       SELECT pr2.course_id, pr2.best_time_ms, pr2.completions FROM parkour_records pr2
+        WHERE pr2.player_uuid = me.uuid
+        ORDER BY pr2.best_time_ms ASC LIMIT 3
+     ) x) AS parkour
+  FROM me
+  LEFT JOIN player_ranks pr ON pr.uuid = me.uuid
+  LEFT JOIN prestige_data pd ON pd.uuid = me.uuid
+  LEFT JOIN player_stats ps ON ps.uuid = me.uuid
+  LEFT JOIN player_elo e ON e.uuid = me.uuid
+  CROSS JOIN bal`;
+
+function num(v: string | number | null | undefined): number {
+  const n = typeof v === 'number' ? v : Number.parseInt(v ?? '', 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function profileFromMegaRow(uuid: string, username: string, r: MegaProfileRow): PublicProfile {
+  const rank = num(r.rank_level);
+  // completed_at is epoch-millis and may arrive as a string — sort numerically,
+  // then trim to the 6 the payload exposes (SQL pre-limited to 8).
+  const recent = (r.recent_ach ?? [])
+    .slice()
+    .sort((a, b) => num(b.completed_at) - num(a.completed_at))
+    .slice(0, 6)
+    .map((a) => a.achievement_id);
+
+  return {
+    uuid,
+    username,
+    bedrock: username.startsWith('.'),
+    online: Boolean(r.online),
+    rank,
+    rankName: romanizeRankName(r.rank_name, rank),
+    prestige: num(r.prestige_level),
+    legion: r.legion_name ?? null,
+    denarius: num(r.denarius_minor) / 100,
+    civitas: num(r.civitas_minor) / 100,
+    blocksMined: num(r.blocks_mined),
+    playtimeSeconds: num(r.play_time),
+    pvpKills: num(r.pvp_kills),
+    pvpDeaths: num(r.pvp_deaths),
+    trophies: num(r.pvp_trophies),
+    kothWins: num(r.koth_wins),
+    elo: r.elo == null ? null : { rating: num(r.elo), peak: num(r.peak_elo) },
+    achievementCount: num(r.ach_count),
+    recentAchievements: recent,
+    parkourBests: (r.parkour ?? []).map((p) => ({
+      course: p.course_id,
+      timeMs: num(p.best_time_ms),
+      completions: num(p.completions),
+    })),
+  };
 }
