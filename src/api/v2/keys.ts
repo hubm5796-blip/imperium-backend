@@ -19,7 +19,7 @@ type ApiEnv = { Variables: AppContextVariables };
 
 export const keysApi = new Hono<ApiEnv>();
 
-keysApi.use('*', requireLinked);
+keysApi.use('/keys*', requireLinked);
 
 function parseScopeList(raw: unknown): Scope[] {
   if (!Array.isArray(raw)) return [];

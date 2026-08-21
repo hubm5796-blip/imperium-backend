@@ -24,7 +24,7 @@ type ApiEnv = { Variables: AppContextVariables };
 
 export const storeOrdersV2 = new Hono<ApiEnv>();
 
-storeOrdersV2.use('*', readRateLimit, requireSelfOrDelegated);
+storeOrdersV2.use('/store*', readRateLimit, requireSelfOrDelegated);
 
 type UnifiedOrder =
   | {

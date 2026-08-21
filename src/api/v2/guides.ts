@@ -47,11 +47,15 @@ CREATE TABLE IF NOT EXISTS guide_votes (
   primary key (guide_id, voter_uuid)
 )`;
 
+// D1's prepare() accepts exactly ONE statement — the two-statement SCHEMA string
+// silently failed; the split makes table creation actually land.
 async function ensureSchema(): Promise<void> {
-  await getD1().prepare(SCHEMA).run();
+  await getD1().batch([
+    getD1().prepare(SCHEMA),
+  ]);
 }
 
-guidesV2.use('*', readRateLimit, async (c, next) => {
+guidesV2.use('/community*', readRateLimit, async (c, next) => {
   try {
     await ensureSchema();
   } catch {

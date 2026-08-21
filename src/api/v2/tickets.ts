@@ -21,7 +21,7 @@ type ApiEnv = { Variables: AppContextVariables };
 
 export const ticketsV2 = new Hono<ApiEnv>();
 
-ticketsV2.use('*', readRateLimit, async (c, next) => {
+ticketsV2.use('/tickets*', readRateLimit, async (c, next) => {
   if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
   await next();
 });

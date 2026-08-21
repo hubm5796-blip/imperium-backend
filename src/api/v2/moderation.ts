@@ -16,7 +16,7 @@ type ApiEnv = { Variables: AppContextVariables };
 
 export const moderationV2 = new Hono<ApiEnv>();
 
-moderationV2.use('*', readRateLimit, async (c, next) => {
+moderationV2.use('/moderation*', readRateLimit, async (c, next) => {
   if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
   await next();
 });
