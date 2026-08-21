@@ -15,6 +15,7 @@ import {
   formatPlaytime,
   toRoman,
 } from './config.js';
+import { rankColor, avatarUrl, progressLabel, branded } from './embeds/kit.js';
 import type {
   LeaderboardResult,
   PlayerProfile,
@@ -63,16 +64,19 @@ function kdr(kills = 0, deaths = 0): string {
   return (kills / deaths).toFixed(2);
 }
 
-/** Build the rich player profile card. */
+/** Build the rich player profile card (V6 02-02: rank-tinted + avatar + progress bar). */
 export function profileEmbed(data: PlayerProfile): EmbedBuilder {
   const rank = toRoman(data.rank ?? 0);
   const prestige = data.prestigeLevel ?? 0;
+  const rankNum = data.rank ?? 0;
+  // Rank progress bar: rank/100 (the visible rank ladder tops at 100).
+  const bar = progressLabel(Math.min(rankNum / 100, 1));
 
   const fields: EmbedField[] = [
     {
       name: `${EMOJI.crown} Rank`,
-      value: `**${rank}**${prestige ? `  •  Prestige ${toRoman(prestige)}` : ''}`,
-      inline: true,
+      value: `**${rank}**${prestige ? `  •  Prestige ${toRoman(prestige)}` : ''}\n${bar}`,
+      inline: false,
     },
     {
       name: `${EMOJI.coin} Denarius`,
@@ -118,19 +122,22 @@ export function profileEmbed(data: PlayerProfile): EmbedBuilder {
     },
   ];
 
-  const embed = chrome(
+  // V6 02-02: rank-tinted color + player avatar thumbnail + branded chrome.
+  const color = rankColor(rankNum, prestige);
+  const avatar = avatarUrl(data.uuid || data.username);
+
+  return branded(
     new EmbedBuilder()
-      .setTitle(`${EMOJI.eagle} ${data.username}`)
+      .setAuthor({ name: data.username, iconURL: avatar })
+      .setThumbnail(avatar)
       .setDescription(
         prestige
           ? `Prestige **${toRoman(prestige)}** citizen of ${BRANDING.serverName}.`
           : `Citizen of ${BRANDING.serverName}.`,
       )
       .addFields(fields),
-    COLORS.gold,
+    color,
   );
-
-  return embed;
 }
 
 /** Compact 4-currency balance card. */
@@ -207,7 +214,7 @@ function formatLeaderboardValue(type: string, value: number): string {
   }
 }
 
-/** Top-players list embed. Empty state handled by the caller via errorEmbed. */
+/** Top-players list embed (V6 02-02: #1 avatar + visual density). */
 export function leaderboardEmbed(data: LeaderboardResult): EmbedBuilder {
   const titleMap: Record<string, string> = {
     denarius: `${EMOJI.coin} Wealthiest Citizens`,
@@ -223,12 +230,20 @@ export function leaderboardEmbed(data: LeaderboardResult): EmbedBuilder {
     return `${prefix} **${e.username}** — ${formatLeaderboardValue(data.type, e.value)}`;
   });
 
-  return chrome(
+  // V6 02-02: the #1 player's avatar as the embed thumbnail — the champion is
+  // the visual anchor of every leaderboard.
+  const first = data.entries[0];
+  const embed = branded(
     new EmbedBuilder()
       .setTitle(`${EMOJI.eagle} ${title}`)
       .setDescription(rows.join('\n') || 'No entries yet.'),
     COLORS.gold,
   );
+  if (first) {
+    embed.setThumbnail(avatarUrl(first.uuid || first.username));
+    embed.setAuthor({ name: `Champion: ${first.username}`, iconURL: avatarUrl(first.uuid || first.username) });
+  }
+  return embed;
 }
 
 /** Server status embed. */
