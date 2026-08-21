@@ -11,6 +11,7 @@ import { ticketsV2 } from './tickets.js';
 import { moderationV2 } from './moderation.js';
 import { storeOrdersV2 } from './storeOrders.js';
 import { guidesV2 } from './guides.js';
+import { adminPanelV2 } from './adminPanel.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -27,3 +28,4 @@ v2Api.route('/', ticketsV2);
 v2Api.route('/', moderationV2);
 v2Api.route('/', storeOrdersV2);
 v2Api.route('/', guidesV2);
+v2Api.route('/', adminPanelV2);
