@@ -64,11 +64,20 @@ export async function resolvePrincipal(c: Context): Promise<Principal> {
     };
   }
 
-  // 3. Bot / delegated (the shared internal token)
+  // 3. Bot / delegated — SPLIT TOKENS (V6 05-04): the bot token alone is the
+  // 'bot' principal; a DELEGATED (X-Mc-Uuid) call requires the SERVICE token
+  // specifically, so the frontend proxy secret and the bot secret are never the
+  // same credential once INTERNAL_SERVICE_TOKEN is set (fallback = compat).
   const botToken = c.req.header('x-bot-token') ?? '';
   if (botToken && env.botApiToken && safeEqual(botToken, env.botApiToken)) {
     const asserted = c.req.header('x-mc-uuid');
-    if (asserted) return { kind: 'delegated', mcUuid: asserted };
+    if (asserted && safeEqual(botToken, env.internalServiceToken)) {
+      return { kind: 'delegated', mcUuid: asserted };
+    }
+    if (asserted && botToken !== env.internalServiceToken) {
+      // Bot token attempting identity assertion — treat as plain bot (no uuid trust).
+      return { kind: 'bot' };
+    }
     return { kind: 'bot' };
   }
 

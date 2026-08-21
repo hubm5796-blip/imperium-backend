@@ -46,6 +46,13 @@ export interface EnvShape {
    * `X-Bot-Token` header. Optional in dev; if unset, bot-auth-only checks fail.
    */
   botApiToken: string;
+  /**
+   * V6 05-04: the SECOND internal token — the frontend edge proxies use this for
+   * delegated (X-Mc-Uuid) calls so a leak of either secret halves the blast
+   * radius. Falls back to BOT_API_TOKEN when unset (compat until the frontend
+   * worker gets the new var) — set INTERNAL_SERVICE_TOKEN to activate the split.
+   */
+  internalServiceToken: string;
   /** Owner DM overrides for error alerts — optional; defaults to username search. */
   ownerDiscordId?: string;
   ownerDiscordUsername?: string;
@@ -162,6 +169,7 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     // BOT_API_TOKEN is required in production — without it, all bot-auth endpoints
     // (linking, profile lookups, store checkout) silently 401. Fail loudly instead.
     botApiToken: nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN'),
+    internalServiceToken: optional('INTERNAL_SERVICE_TOKEN') || (nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN')),
     staffAlertWebhookUrl: optional('STAFF_ALERT_WEBHOOK_URL') || '',
     ownerDiscordId: optional('OWNER_DISCORD_ID') || '',
     ownerDiscordUsername: optional('OWNER_DISCORD_USERNAME') || '',
