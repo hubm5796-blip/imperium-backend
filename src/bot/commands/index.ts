@@ -9,6 +9,7 @@ import { gadgetsCommand } from './gadgets.js';
 import { helpCommand } from './help.js';
 import { leaderboardCommand } from './leaderboard.js';
 import { linkCommand } from './link.js';
+import { lookupCommand, historyCommand, warnCommand, muteCommand, kickCommand, tempbanCommand, banCommand } from './moderation.js';
 import { morphCommand } from './morph.js';
 import { myTicketsCommand } from './mytickets.js';
 import { onlineCommand } from './online.js';
@@ -41,6 +42,13 @@ export const commands: BotCommand[] = [
   gadgetsCommand,
   accessibilityCommand,
   botstatsCommand,
+  lookupCommand,
+  historyCommand,
+  warnCommand,
+  muteCommand,
+  kickCommand,
+  tempbanCommand,
+  banCommand,
   ticketCommand,
   myTicketsCommand,
   helpCommand,

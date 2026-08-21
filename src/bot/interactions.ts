@@ -63,6 +63,10 @@ discordInteractions.post('/', async (c) => {
         const customId = shim.customId ?? '';
         if (isLeaderboardComponent(customId)) {
           await handleLeaderboardComponent(shim);
+        } else if (customId.startsWith('modconfirm:')) {
+          // V6 02-04: single-use moderation confirmations (ban/tempban).
+          const { consumeModConfirm } = await import('./commands/moderation.js');
+          await consumeModConfirm(customId.slice('modconfirm:'.length), shim);
         } else {
           await shim.deferUpdate();
         }

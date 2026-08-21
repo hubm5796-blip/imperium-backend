@@ -8,6 +8,7 @@ import { leaderboardsV2 } from './leaderboards.js';
 import { openapiV2 } from './openapi.js';
 import { keysApi } from './keys.js';
 import { ticketsV2 } from './tickets.js';
+import { moderationV2 } from './moderation.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -21,3 +22,4 @@ v2Api.route('/', leaderboardsV2);
 v2Api.route('/', openapiV2);
 v2Api.route('/', keysApi);
 v2Api.route('/', ticketsV2);
+v2Api.route('/', moderationV2);
