@@ -15,7 +15,7 @@
  */
 import { Hono } from 'hono';
 import { query } from '../../db/pool.js';
-import { readRateLimit } from '../../middleware/rateLimit.js';
+import { standardReadLimit } from '../../middleware/rateLimitV2-presets.js';
 import { requireSelfOrDelegated } from '../../middleware/gates.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
@@ -24,7 +24,7 @@ type ApiEnv = { Variables: AppContextVariables };
 
 export const storeOrdersV2 = new Hono<ApiEnv>();
 
-storeOrdersV2.use('/store*', readRateLimit, requireSelfOrDelegated);
+storeOrdersV2.use('/store*', standardReadLimit, requireSelfOrDelegated);
 
 type UnifiedOrder =
   | {

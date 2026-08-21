@@ -11,7 +11,7 @@
 // approxTotal hint later.
 import { Hono } from 'hono';
 import { getLeaderboardPage } from '../../db/pool.js';
-import { readRateLimit } from '../../middleware/rateLimit.js';
+import { cheapReadLimit } from '../../middleware/rateLimitV2-presets.js';
 import { decodeCursor, encodeCursor, fail, ok, parseLimit, unknownParams } from './respond.js';
 import type { AppContextVariables } from '../../types/index.js';
 
@@ -23,7 +23,7 @@ const BOARDS = ['denarius', 'blocks', 'prestige', 'playtime'] as const;
 type Board = (typeof BOARDS)[number];
 const ALLOWED_PARAMS = new Set(['limit', 'cursor']);
 
-leaderboardsV2.get('/leaderboards/:board', readRateLimit, async (c) => {
+leaderboardsV2.get('/leaderboards/:board', cheapReadLimit, async (c) => {
   const url = new URL(c.req.url);
   const offenders = unknownParams(url, ALLOWED_PARAMS);
   if (offenders.length > 0) {
