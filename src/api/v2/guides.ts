@@ -56,23 +56,13 @@ async function ensureSchema(): Promise<void> {
   await d1.prepare(SCHEMA.slice(mid).trim().replace(/;$/, '')).run();
 }
 
-guidesV2.use('/community*', readRateLimit, async (c, next) => {
+guidesV2.use('/community/*', readRateLimit, async (c, next) => {
   try {
     await ensureSchema();
-  } catch (e) {
-    console.error('[guides] schema ensure failed:', String(e));
+  } catch {
+    // D1 unavailable — read routes degrade to empty; writes will fail loudly.
   }
   await next();
-});
-
-guidesV2.get('/community/dbprobe', async (c) => {
-  // TEMP diagnostic: runs the same DDL the middleware runs and reports the raw outcome.
-  try {
-    await ensureSchema();
-    return c.json({ ok: true });
-  } catch (e) {
-    return c.json({ ok: false, error: String(e).slice(0, 300) }, 500);
-  }
 });
 
 guidesV2.get('/community/guides', async (c) => {
@@ -89,7 +79,7 @@ guidesV2.get('/community/guides', async (c) => {
     return c.json({ guides: results ?? [] });
   } catch (err) {
     logger.error({ err: String(err) }, 'v2 guides list failed');
-    return c.json({ error: 'Guides unavailable', detail: String(err).slice(0, 200) }, 503);
+    return c.json({ error: 'Guides unavailable' }, 503);
   }
 });
 
