@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { ok } from './respond.js';
 import { leaderboardsV2 } from './leaderboards.js';
 import { openapiV2 } from './openapi.js';
+import { keysApi } from './keys.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -17,3 +18,4 @@ v2Api.get('/ping', (c) => ok(c, { pong: true, v: 2, at: new Date().toISOString()
 
 v2Api.route('/', leaderboardsV2);
 v2Api.route('/', openapiV2);
+v2Api.route('/', keysApi);
