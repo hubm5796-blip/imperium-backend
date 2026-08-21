@@ -57,6 +57,8 @@ export interface EnvShape {
   bridgeSecret: string;
   bridgeWebhookUrl: string;
   bridgeEventsWebhookUrl: string;
+  /** V6: the Discord channel for changelog posts (owner's channel 1430014299425738752). */
+  changelogChannelId: string;
   /** Owner DM overrides for error alerts — optional; defaults to username search. */
   ownerDiscordId?: string;
   ownerDiscordUsername?: string;
@@ -177,6 +179,7 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     bridgeSecret: optional('BRIDGE_SECRET') ?? '',
     bridgeWebhookUrl: optional('BRIDGE_WEBHOOK_URL') ?? '',
     bridgeEventsWebhookUrl: optional('BRIDGE_EVENTS_WEBHOOK_URL') ?? '',
+    changelogChannelId: optional('CHANGELOG_CHANNEL_ID') ?? '1430014299425738752',
     staffAlertWebhookUrl: optional('STAFF_ALERT_WEBHOOK_URL') || '',
     ownerDiscordId: optional('OWNER_DISCORD_ID') || '',
     ownerDiscordUsername: optional('OWNER_DISCORD_USERNAME') || '',

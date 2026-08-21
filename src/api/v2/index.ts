@@ -13,6 +13,7 @@ import { storeOrdersV2 } from './storeOrders.js';
 import { guidesV2 } from './guides.js';
 import { adminPanelV2 } from './adminPanel.js';
 import { guideCommentsV2 } from './guideComments.js';
+import { dmApi, changelogApi } from './dms.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -31,3 +32,5 @@ v2Api.route('/', storeOrdersV2);
 v2Api.route('/', guidesV2);
 v2Api.route('/', adminPanelV2);
 v2Api.route('/', guideCommentsV2);
+v2Api.route('/', dmApi);
+v2Api.route('/', changelogApi);

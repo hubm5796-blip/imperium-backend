@@ -28,6 +28,7 @@ export interface CronReport {
   audit: { ran: boolean; checked: number; changed: number; failed: number };
   rollup: { ran: boolean; metrics: number };
   tickets: { threaded: number; staleClosed: number; errors: number };
+  dms: { sent: number; failed: number; skipped: number };
 }
 
 /** One full cron pass. Never throws — every leg catches its own errors and
@@ -40,6 +41,7 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
     audit: { ran: false, checked: 0, changed: 0, failed: 0 },
     rollup: { ran: false, metrics: 0 },
     tickets: { threaded: 0, staleClosed: 0, errors: 0 },
+    dms: { sent: 0, failed: 0, skipped: 0 },
   };
 
   try {
@@ -89,6 +91,18 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
   // sets TICKET_ENABLED/TICKET_CATEGORY_ID.
   const ticketReport = await runTicketSweep(config, now);
   report.tickets = ticketReport;
+
+
+  // V6 DM notifications: deliver queued DMs to linked players (retry up to 3x)
+  if (config.botToken) {
+    try {
+      const { processDmQueue } = await import('../api/v2/dms.js');
+      const dms = await processDmQueue(config.botToken);
+      report.dms = dms;
+    } catch (err) {
+      logger.error({ err: String(err) }, 'cron: DM queue crashed');
+    }
+  }
 
   return report;
 }
