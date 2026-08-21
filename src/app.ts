@@ -9,6 +9,7 @@ import { api } from './api/routes.js';
 import { v2Api } from './api/v2/index.js';
 import { discordInteractions } from './bot/interactions.js';
 import { botAdmin } from './bot/adminRegisterRoute.js';
+import { bridgeApi } from './bot/bridge.js';
 import { logger } from './utils/logger.js';
 import { rateLimitV2 } from './middleware/rateLimitV2.js';
 import { alertError } from './utils/errorAlerts.js';
@@ -77,6 +78,8 @@ export function createApp() {
   // V6 02-09 companion: webpanel-HMAC-gated admin surface (the Worker registers
   // its own slash commands with the live Discord secrets only it holds).
   app.route('/api/admin', botAdmin);
+  // V6 02-08: the game→Discord bridge (Bearer BRIDGE_SECRET; chat + typed events).
+  app.route('/bridge', bridgeApi);
   // Discord's Interactions Endpoint URL — configured in the Discord
   // Developer Portal to point at https://api.imperiummc.net/discord/interactions.
   app.route('/discord/interactions', discordInteractions);

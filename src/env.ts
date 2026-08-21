@@ -53,6 +53,10 @@ export interface EnvShape {
    * worker gets the new var) — set INTERNAL_SERVICE_TOKEN to activate the split.
    */
   internalServiceToken: string;
+  /** V6 02-08 bridge: Bearer secret + the chat/events webhooks (empty = disabled). */
+  bridgeSecret: string;
+  bridgeWebhookUrl: string;
+  bridgeEventsWebhookUrl: string;
   /** Owner DM overrides for error alerts — optional; defaults to username search. */
   ownerDiscordId?: string;
   ownerDiscordUsername?: string;
@@ -170,6 +174,9 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     // (linking, profile lookups, store checkout) silently 401. Fail loudly instead.
     botApiToken: nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN'),
     internalServiceToken: optional('INTERNAL_SERVICE_TOKEN') || (nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN')),
+    bridgeSecret: optional('BRIDGE_SECRET') ?? '',
+    bridgeWebhookUrl: optional('BRIDGE_WEBHOOK_URL') ?? '',
+    bridgeEventsWebhookUrl: optional('BRIDGE_EVENTS_WEBHOOK_URL') ?? '',
     staffAlertWebhookUrl: optional('STAFF_ALERT_WEBHOOK_URL') || '',
     ownerDiscordId: optional('OWNER_DISCORD_ID') || '',
     ownerDiscordUsername: optional('OWNER_DISCORD_USERNAME') || '',
