@@ -68,3 +68,45 @@ export async function removeGuildMemberRole(
   });
   return res.ok;
 }
+
+/** POST /channels/{id}/messages — a notification-channel send (V6 02-05).
+ *  `allowedMentionRoles` limits pings to exactly the roles named in the
+ *  content — without it a stray @everyone in copy would wall-paper the guild. */
+export async function sendChannelMessage(
+  channelId: string,
+  botToken: string,
+  message: { content: string; allowedMentionRoles?: string[] },
+): Promise<boolean> {
+  const res = await discordApiFetch(`/channels/${channelId}/messages`, botToken, {
+    method: 'POST',
+    body: JSON.stringify({
+      content: message.content,
+      allowed_mentions: message.allowedMentionRoles
+        ? { roles: message.allowedMentionRoles }
+        : { parse: [] },
+    }),
+  });
+  return res.ok;
+}
+
+/** POST /users/@me/channels then POST to its messages — a DM send (V6 02-05).
+ *  Returns false when either step fails (blocked DMs 403 — the sweep logs it
+ *  per-user and continues). */
+export async function sendDirectMessage(
+  botToken: string,
+  userId: string,
+  message: { content: string },
+): Promise<boolean> {
+  const channel = await discordApiFetch('/users/@me/channels', botToken, {
+    method: 'POST',
+    body: JSON.stringify({ recipient_id: userId }),
+  });
+  if (!channel.ok) return false;
+  const channelId = ((await channel.json()) as { id?: string }).id;
+  if (!channelId) return false;
+  const res = await discordApiFetch(`/channels/${channelId}/messages`, botToken, {
+    method: 'POST',
+    body: JSON.stringify({ content: message.content, allowed_mentions: { parse: [] } }),
+  });
+  return res.ok;
+}

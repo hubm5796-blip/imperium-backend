@@ -119,6 +119,17 @@ export class InteractionShim {
       (name: string, required: true): { id: string; username: string };
       (name: string, required?: false): { id: string; username: string } | null;
     },
+    getInteger: ((name: string, required?: boolean): number | null => {
+      const opt = this.raw.data?.options?.find((o) => o.name === name);
+      const value = typeof opt?.value === 'number' ? opt.value : Number.parseInt(String(opt?.value ?? ''), 10);
+      if (required && !Number.isFinite(value)) {
+        throw new Error(`Missing required option: ${name}`);
+      }
+      return Number.isFinite(value) ? value : null;
+    }) as {
+      (name: string, required: true): number;
+      (name: string, required?: false): number | null;
+    },
   };
 
   /** Send (or queue) the given payload as the interaction's first ack. */

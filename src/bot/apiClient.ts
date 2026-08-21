@@ -189,3 +189,53 @@ export function getLeaderboard(type: string, limit = 10) {
 export function getServerStatus() {
   return request<ServerStatus>('GET', '/api/server/status');
 }
+
+// ── bot-cron surface (V6 02-05/02-07/02-09) — consumed by the scheduled
+// sweep, the role-sync engine, and /botstats. All bot-token gated server-side.
+
+/** GET /api/seasons/current — season + 7-day event calendar + live festival. */
+export interface SeasonsCurrent {
+  season?: { number?: number; name?: string; endsAt?: string | null };
+  events?: Array<{
+    id: string;
+    type: string;
+    name: string;
+    startsAt: string;
+    signupDeadline?: string | null;
+  }>;
+  festival?: { id: string; active: boolean; name: string; impact?: string } | null;
+}
+
+export function getSeasonsCurrent() {
+  return request<SeasonsCurrent>('GET', '/api/seasons/current');
+}
+
+/** GET /api/events/feed?since=ISO — plugin-pushed personal events. */
+export function getEventsFeed(sinceIso: string) {
+  return request<{ events: Array<{ id: string; type: string; uuid: string; message: string }> }>(
+    'GET',
+    `/api/events/feed${qs({ since: sinceIso })}`,
+  );
+}
+
+/** GET /api/v2/member?discord_id= — the role-sync desired-state aggregate. */
+export interface MemberSummary {
+  uuid: string;
+  discordId: string;
+  username: string | null;
+  rank: number;
+  prestigeLevel: number;
+  donor: { tier: string; type: string; active: boolean; expiresAt: string | null } | null;
+}
+
+export function getMember(discordId: string) {
+  return request<MemberSummary>('GET', `/api/v2/member${qs({ discord_id: discordId })}`);
+}
+
+/** GET /api/player/permissions?discord_id= — LuckPerms flags (staff gates). */
+export function getPermissions(discordId: string) {
+  return request<{ isAdmin: boolean; isMod: boolean; isHelper: boolean }>(
+    'GET',
+    `/api/player/permissions${qs({ discord_id: discordId })}`,
+  );
+}

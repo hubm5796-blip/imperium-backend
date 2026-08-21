@@ -12,6 +12,8 @@
 import { initEnvFromBindings } from './env.js';
 import { initPool, initD1 } from './db/pool.js';
 import { createApp } from './app.js';
+import { setCronBindings } from './bot/cronConfig.js';
+import { runBotCron } from './bot/cron.js';
 
 /**
  * The exact set of bindings this Worker needs, wired in wrangler.jsonc
@@ -70,5 +72,36 @@ export default {
     // before the editReply ever runs. That's what left every data-backed
     // slash command stuck on Discord's "thinking..." forever.
     return app.fetch(request, bindings, ctx);
+  },
+
+  // Every-minute cron (wrangler.jsonc triggers.crons): webhook queue drain +
+  // events tailer (V6 05-03), notification sweep (02-05), role audit (02-07),
+  // analytics rollup (02-09). Legs are isolated inside runBotCron — one
+  // failing never kills the others, and everything no-ops safely until the
+  // owner sets the Discord channel/role ids as vars.
+  async scheduled(
+    _controller: ScheduledController,
+    bindings: WorkerBindings,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    initEnvFromBindings(bindings as unknown as Record<string, unknown>);
+    initPool(bindings.DATABASE_URL || bindings.HYPERDRIVE.connectionString);
+    initD1(bindings.CACHE_DB);
+    setCronBindings(bindings as unknown as Record<string, unknown>);
+    ctx.waitUntil(
+      runBotCron()
+        .then((report) => {
+          console.log(
+            `[cron] webhooks: ${report.webhookDeliveries.delivered}/${report.webhookDeliveries.processed} delivered ` +
+              `(${report.webhookDeliveries.retried} retry, ${report.webhookDeliveries.dead} dead), ` +
+              `tailer: ${report.webhookTailer.queued}/${report.webhookTailer.events} queued, ` +
+              `sweep: ${report.sweep.fired} fired (${report.sweep.errors} err), ` +
+              `audit: ${report.audit.changed}/${report.audit.checked} changed, rollup: ${report.rollup.ran ? report.rollup.metrics + ' metrics' : 'skip'}`,
+          );
+        })
+        .catch((err: unknown) => {
+          console.error('[cron] pass crashed:', err);
+        }),
+    );
   },
 };

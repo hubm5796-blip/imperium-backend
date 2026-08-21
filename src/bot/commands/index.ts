@@ -1,6 +1,7 @@
 /** Central registry of all slash commands. */
 import { accessibilityCommand } from './accessibility.js';
 import { balanceCommand } from './balance.js';
+import { botstatsCommand } from './botstats.js';
 import { cratesCommand } from './crates.js';
 import { dungeonsCommand } from './dungeons.js';
 import { factionsCommand } from './factions.js';
@@ -37,6 +38,7 @@ export const commands: BotCommand[] = [
   factionsCommand,
   gadgetsCommand,
   accessibilityCommand,
+  botstatsCommand,
   helpCommand,
 ];
 

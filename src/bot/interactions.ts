@@ -18,6 +18,7 @@ import { commandMap } from './commands/index.js';
 import { isLeaderboardComponent, handleLeaderboardComponent } from './commands/leaderboard.js';
 import { errorEmbed } from './embeds.js';
 import { InteractionShim, type RawInteraction } from './interactionShim.js';
+import { recordCommand, touchUserActivity } from './analytics/log.js';
 
 const INTERACTION_TYPE = {
   PING: 1,
@@ -73,7 +74,34 @@ discordInteractions.post('/', async (c) => {
         await shim.reply({ embeds: [errorEmbed(`Unknown command: \`${shim.commandName}\``)], ephemeral: true });
         return;
       }
-      await command.execute(shim);
+      // Analytics (V6 02-09): one row per execution — discord_id + command +
+      // outcome + duration only, fire-and-forget so a Postgres blip can never
+      // affect the interaction itself.
+      const startedAt = Date.now();
+      try {
+        await command.execute(shim);
+        // Awaited (not voided): recordCommand/touchUserActivity catch their
+        // own errors, and staying inside run() keeps the insert covered by
+        // the route's waitUntil — a voided promise could be torn down with
+        // the isolate right after the reply goes out.
+        await recordCommand({
+          discordId: shim.user.id,
+          command: command.name,
+          outcome: 'ok',
+          durationMs: Date.now() - startedAt,
+          guildId: shim.guildId ?? null,
+        });
+        await touchUserActivity(shim.user.id);
+      } catch (err) {
+        await recordCommand({
+          discordId: shim.user.id,
+          command: command.name,
+          outcome: `error:${err instanceof Error ? err.message.slice(0, 60) : 'unknown'}`,
+          durationMs: Date.now() - startedAt,
+          guildId: shim.guildId ?? null,
+        });
+        throw err;
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unexpected error';
       if (shim.deferred || shim.replied) {
