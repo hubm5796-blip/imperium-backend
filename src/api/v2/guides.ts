@@ -79,7 +79,7 @@ guidesV2.get('/community/guides', async (c) => {
     return c.json({ guides: results ?? [] });
   } catch (err) {
     logger.error({ err: String(err) }, 'v2 guides list failed');
-    return c.json({ error: 'Guides unavailable' }, 503);
+    return c.json({ error: 'Guides unavailable', detail: String(err).slice(0, 200) }, 503);
   }
 });
 
