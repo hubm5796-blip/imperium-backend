@@ -34,6 +34,9 @@ export interface CronConfig {
   donorRoleMap: Record<string, string>;
   prestigeRoleMap: Record<string, string>;
   notifyRoutes: Record<string, { channel: string | null; role: string | null }>;
+  ticketEnabled: boolean;
+  ticketCategoryId: string;
+  ticketStaffRoleId: string;
 }
 
 /** Raw Workers bindings as strings — set by the scheduled handler each
@@ -122,6 +125,9 @@ export function getCronConfig(): CronConfig {
     donorRoleMap: donor,
     prestigeRoleMap: prestige,
     notifyRoutes: routes,
+    ticketEnabled: str('TICKET_ENABLED') === 'true',
+    ticketCategoryId: str('TICKET_CATEGORY_ID') ?? '',
+    ticketStaffRoleId: str('TICKET_STAFF_ROLE_ID') ?? '',
   };
 }
 

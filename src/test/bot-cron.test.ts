@@ -20,6 +20,9 @@ function baseConfig(overrides: Partial<CronConfig> = {}): CronConfig {
     donorRoleMap: {},
     prestigeRoleMap: {},
     notifyRoutes: {},
+    ticketEnabled: false,
+    ticketCategoryId: '',
+    ticketStaffRoleId: '',
     ...overrides,
   };
 }

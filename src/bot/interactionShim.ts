@@ -20,6 +20,8 @@ interface RawOption {
   name: string;
   type: number;
   value?: string | number | boolean;
+  /** Present when this option is a SUB_COMMAND wrapper. */
+  options?: RawOption[];
 }
 
 export interface RawInteraction {
@@ -33,7 +35,7 @@ export interface RawInteraction {
     resolved?: { users?: Record<string, { id: string; username: string }> };
     custom_id?: string;
   };
-  member?: { user: { id: string; username: string; bot?: boolean } };
+  member?: { user: { id: string; username: string; bot?: boolean }; roles?: string[] };
   user?: { id: string; username: string };
   guild_id?: string;
 }
@@ -95,9 +97,37 @@ export class InteractionShim {
     return this.raw.data?.custom_id;
   }
 
+  /**
+   * The invoked subcommand name, if this interaction used one (option type 1
+   * SUB_COMMAND at the top level). `/ticket open ...` → 'open'.
+   */
+  get subcommandName(): string | undefined {
+    const first = this.raw.data?.options?.[0];
+    return first?.type === 1 ? first.name : undefined;
+  }
+
+  /** The invoking member's Discord role ids (guild interactions carry them on
+   *  the member object) — the staff gate reads this, no extra REST call. */
+  get memberRoles(): string[] {
+    return this.raw.member?.roles ?? [];
+  }
+
+  /**
+   * The option list the getters should read: when a SUB_COMMAND wraps the
+   * real arguments, descend into it (one level — no subcommand-groups in our
+   * command set). Without this, /ticket open subject:... reads options at the
+   * wrong depth and every lookup misses.
+   */
+  private get effectiveOptions(): RawOption[] {
+    const opts = this.raw.data?.options ?? [];
+    const first = opts[0];
+    if (first?.type === 1 && Array.isArray(first.options)) return first.options;
+    return opts;
+  }
+
   options = {
     getString: ((name: string, required?: boolean): string | null => {
-      const opt = this.raw.data?.options?.find((o) => o.name === name);
+      const opt = this.effectiveOptions.find((o) => o.name === name);
       const value = typeof opt?.value === 'string' ? opt.value : undefined;
       if (required && value === undefined) {
         throw new Error(`Missing required option: ${name}`);
@@ -108,7 +138,7 @@ export class InteractionShim {
       (name: string, required?: false): string | null;
     },
     getUser: ((name: string, required?: boolean): { id: string; username: string } | null => {
-      const opt = this.raw.data?.options?.find((o) => o.name === name);
+      const opt = this.effectiveOptions.find((o) => o.name === name);
       const id = typeof opt?.value === 'string' ? opt.value : undefined;
       if (required && id === undefined) {
         throw new Error(`Missing required option: ${name}`);
@@ -120,7 +150,7 @@ export class InteractionShim {
       (name: string, required?: false): { id: string; username: string } | null;
     },
     getInteger: ((name: string, required?: boolean): number | null => {
-      const opt = this.raw.data?.options?.find((o) => o.name === name);
+      const opt = this.effectiveOptions.find((o) => o.name === name);
       const value = typeof opt?.value === 'number' ? opt.value : Number.parseInt(String(opt?.value ?? ''), 10);
       if (required && !Number.isFinite(value)) {
         throw new Error(`Missing required option: ${name}`);

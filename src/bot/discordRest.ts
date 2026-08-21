@@ -110,3 +110,53 @@ export async function sendDirectMessage(
   });
   return res.ok;
 }
+
+// ── V6 02-06: ticket thread management ─────────────────────────────────────
+
+export interface DiscordThread {
+  id: string;
+  name: string;
+}
+
+/** POST /channels/{parent}/threads — a private ticket thread under the configured category. */
+export async function createPrivateThread(
+  parentChannelId: string,
+  name: string,
+  botToken: string,
+): Promise<DiscordThread | null> {
+  const res = await discordApiFetch(`/channels/${parentChannelId}/threads`, botToken, {
+    method: 'POST',
+    body: JSON.stringify({ name: name.slice(0, 100), type: 12, auto_archive_duration: 1440 }), // 12 = private thread
+  });
+  if (!res.ok) return null;
+  const t = (await res.json()) as DiscordThread;
+  return t?.id ? t : null;
+}
+
+/** PUT /channels/{thread}/thread-members/{user} — add the opener so they can see it. */
+export async function addThreadMember(threadId: string, userId: string, botToken: string): Promise<boolean> {
+  const res = await discordApiFetch(`/channels/${threadId}/thread-members/${userId}`, botToken, { method: 'PUT' });
+  return res.ok || res.status === 204;
+}
+
+/** POST /channels/{thread}/messages inside the thread (reuse of the channel send shape). */
+export async function sendThreadMessage(
+  threadId: string,
+  botToken: string,
+  message: { content: string },
+): Promise<boolean> {
+  const res = await discordApiFetch(`/channels/${threadId}/messages`, botToken, {
+    method: 'POST',
+    body: JSON.stringify({ content: message.content, allowed_mentions: { parse: [] } }),
+  });
+  return res.ok;
+}
+
+/** PATCH /channels/{thread} — archive (or unarchive) a thread. */
+export async function setThreadArchived(threadId: string, archived: boolean, botToken: string): Promise<boolean> {
+  const res = await discordApiFetch(`/channels/${threadId}`, botToken, {
+    method: 'PATCH',
+    body: JSON.stringify({ archived, locked: archived }),
+  });
+  return res.ok;
+}

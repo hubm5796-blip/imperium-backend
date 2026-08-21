@@ -239,3 +239,36 @@ export function getPermissions(discordId: string) {
     `/api/player/permissions${qs({ discord_id: discordId })}`,
   );
 }
+
+// ── V6 02-06: v2 ticket surface (the Discord-thread-as-view model) ─────────
+
+export interface TicketRowV2 {
+  id: string;
+  uuid: string;
+  username: string | null;
+  category: string;
+  subject: string;
+  status: string;
+  priority: string;
+  discord_thread_id: string | null;
+  created_at: string;
+}
+
+export function createTicketV2(body: { uuid: string; category: string; subject: string; body: string; discordThreadId?: string; discordOpenerId?: string }) {
+  return request<{ id: string; status: string }>('POST', '/api/v2/tickets', body);
+}
+
+export function listTicketsV2(status?: string, createdSince?: string) {
+  return request<{ tickets: TicketRowV2[] }>(
+    'GET',
+    `/api/v2/tickets${qs({ status, created_since: createdSince })}`,
+  );
+}
+
+export function patchTicketV2(id: string, body: { status?: string; priority?: string; discordThreadId?: string | null; satisfaction?: string }) {
+  return request<{ updated: Record<string, unknown> }>('PATCH', `/api/v2/tickets/${encodeURIComponent(id)}`, body);
+}
+
+export function appendTicketNoteV2(id: string, author: 'player' | 'discord' | 'staff', body: string) {
+  return request<{ appended: boolean }>('POST', `/api/v2/tickets/${encodeURIComponent(id)}/notes`, { author, body });
+}

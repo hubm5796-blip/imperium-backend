@@ -27,6 +27,7 @@ export interface CronReport {
   sweep: { fired: number; errors: number };
   audit: { ran: boolean; checked: number; changed: number; failed: number };
   rollup: { ran: boolean; metrics: number };
+  tickets: { threaded: number; staleClosed: number; errors: number };
 }
 
 /** One full cron pass. Never throws — every leg catches its own errors and
@@ -38,6 +39,7 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
     sweep: { fired: 0, errors: 0 },
     audit: { ran: false, checked: 0, changed: 0, failed: 0 },
     rollup: { ran: false, metrics: 0 },
+    tickets: { threaded: 0, staleClosed: 0, errors: 0 },
   };
 
   try {
@@ -82,5 +84,67 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
     logger.error({ err: String(err) }, 'cron: analytics rollup crashed');
   }
 
+  // V6 02-06 Flow B: in-game/web tickets without a Discord thread get one; stale
+  // tickets (open >48h with no staff response) auto-close. No-ops until the owner
+  // sets TICKET_ENABLED/TICKET_CATEGORY_ID.
+  const ticketReport = await runTicketSweep(config, now);
+  report.tickets = ticketReport;
+
   return report;
+}
+
+async function runTicketSweep(config: ReturnType<typeof getCronConfig>, now: Date): Promise<{ threaded: number; staleClosed: number; errors: number }> {
+  const out = { threaded: 0, staleClosed: 0, errors: 0 };
+  if (!config.ticketEnabled || !config.ticketCategoryId) return out;
+  const { listTicketsV2, patchTicketV2 } = await import('./apiClient.js');
+  const { createPrivateThread, addThreadMember, sendThreadMessage, setThreadArchived } = await import('./discordRest.js');
+  const since = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const res = await listTicketsV2('open', since);
+  if (!res.ok) {
+    out.errors = 1;
+    logger.warn({ status: res.status }, 'cron: ticket sweep list failed');
+    return out;
+  }
+  for (const row of res.data.tickets.slice(0, 5)) {
+    if (row.discord_thread_id) continue;
+    try {
+      const thread = await createPrivateThread(
+        config.ticketCategoryId,
+        ('#' + row.id + '-' + (row.username ?? 'player')).slice(0, 100),
+        config.botToken,
+      );
+      if (!thread) { out.errors++; continue; }
+      await sendThreadMessage(thread.id, config.botToken, {
+        content:
+          '**Ticket #' + row.id + '** (' + row.category + ') — ' + (row.username ?? row.uuid) + '\n' +
+          '**' + row.subject + '**\n(Opened in-game — reply with /ticket reply id:' + row.id + ')',
+      });
+      const patched = await patchTicketV2(row.id, { discordThreadId: thread.id });
+      if (!patched.ok) out.errors++;
+      else out.threaded++;
+    } catch {
+      out.errors++;
+    }
+  }
+  // Stale auto-close: open tickets older than 48h.
+  const older = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+  const staleRes = await listTicketsV2('open', undefined);
+  if (staleRes.ok) {
+    for (const row of staleRes.data.tickets) {
+      if (Date.parse(row.created_at) >= Date.parse(older)) continue;
+      try {
+        await patchTicketV2(row.id, { status: 'stale' });
+        if (row.discord_thread_id) {
+          await sendThreadMessage(row.discord_thread_id, config.botToken, {
+            content: 'Closed automatically after 48h of inactivity.',
+          }).catch(() => undefined);
+          await setThreadArchived(row.discord_thread_id, true, config.botToken).catch(() => undefined);
+        }
+        out.staleClosed++;
+      } catch {
+        out.errors++;
+      }
+    }
+  }
+  return out;
 }

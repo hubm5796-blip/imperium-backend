@@ -10,12 +10,14 @@ import { helpCommand } from './help.js';
 import { leaderboardCommand } from './leaderboard.js';
 import { linkCommand } from './link.js';
 import { morphCommand } from './morph.js';
+import { myTicketsCommand } from './mytickets.js';
 import { onlineCommand } from './online.js';
 import { parkourCommand } from './parkour.js';
 import { petsCommand } from './pets.js';
 import { profileCommand } from './profile.js';
 import { skillsCommand } from './skills.js';
 import { statsCommand } from './stats.js';
+import { ticketCommand } from './ticket.js';
 import { storeCommand } from './store.js';
 import { unlinkCommand } from './unlink.js';
 import type { BotCommand } from './_shared.js';
@@ -39,6 +41,8 @@ export const commands: BotCommand[] = [
   gadgetsCommand,
   accessibilityCommand,
   botstatsCommand,
+  ticketCommand,
+  myTicketsCommand,
   helpCommand,
 ];
 
