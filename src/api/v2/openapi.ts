@@ -42,6 +42,17 @@ const SPEC = {
       'params are rejected. v1 routes keep their legacy shapes.',
   },
   servers: [{ url: 'https://api.imperiummc.net' }],
+  // V6 05-04: the four principal schemes. sessionCookie + botToken cover v1-era routes;
+  // serviceToken is the delegated (X-Mc-Uuid) split; bearerKey is the imp_ API-key family
+  // (scopes per key, enforced by requireScope).
+  components: {
+    securitySchemes: {
+      sessionCookie: { type: 'apiKey', in: 'cookie', name: 'imperium_session' },
+      botToken: { type: 'apiKey', in: 'header', name: 'X-Bot-Token', description: 'The shared internal bot token' },
+      serviceToken: { type: 'apiKey', in: 'header', name: 'X-Bot-Token', description: 'INTERNAL_SERVICE_TOKEN — required (with X-Mc-Uuid) for delegated identity once the split is active' },
+      bearerKey: { type: 'http', scheme: 'bearer', description: 'imp_ API key (hash-at-rest; read/webhook scopes only)' },
+    },
+  },
   paths: {
     '/api/v2/ping': {
       get: {
