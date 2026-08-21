@@ -59,8 +59,8 @@ async function ensureSchema(): Promise<void> {
 guidesV2.use('/community*', readRateLimit, async (c, next) => {
   try {
     await ensureSchema();
-  } catch {
-    // D1 unavailable — read routes degrade to empty; writes will fail loudly.
+  } catch (e) {
+    console.error('[guides] schema ensure failed:', String(e));
   }
   await next();
 });
