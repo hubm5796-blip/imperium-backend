@@ -65,6 +65,16 @@ guidesV2.use('/community*', readRateLimit, async (c, next) => {
   await next();
 });
 
+guidesV2.get('/community/dbprobe', async (c) => {
+  // TEMP diagnostic: runs the same DDL the middleware runs and reports the raw outcome.
+  try {
+    await ensureSchema();
+    return c.json({ ok: true });
+  } catch (e) {
+    return c.json({ ok: false, error: String(e).slice(0, 300) }, 500);
+  }
+});
+
 guidesV2.get('/community/guides', async (c) => {
   const category = c.req.query('category') ?? '';
   const sort = c.req.query('sort') === 'new' ? 'new' : 'top';
