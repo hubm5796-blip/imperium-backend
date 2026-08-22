@@ -2,7 +2,12 @@
 // Node dev/prod, src/worker.ts for Cloudflare Workers). Neither entrypoint
 // should duplicate middleware/route wiring; they only differ in how env/DB
 // get initialized and how the app is actually served.
+// Build-time deploy stamp (FIX: /health previously returned now() as deploy time).
+const DEPLOY_VERSION = process.env.DEPLOY_VERSION ?? 'dev';
+const DEPLOYED_AT = process.env.DEPLOYED_AT ?? new Date().toISOString();
+
 import { Hono } from 'hono';
+import { query } from './db/pool.js';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { api } from './api/routes.js';
@@ -34,7 +39,7 @@ export function createApp() {
         return allowed.has(origin) ? origin : null;
       },
       credentials: true,
-      allowMethods: ['GET', 'POST', 'OPTIONS'],
+      allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
       allowHeaders: ['Content-Type', 'Authorization'],
       maxAge: 600,
     }),
@@ -62,15 +67,30 @@ export function createApp() {
   app.get('/', (c) =>
     c.json({ name: 'ImperiumMC API', status: 'ok', version: '1.0.0' }),
   );
-  // V6 01-08: health reports the deployed version so the bot/frontend/backend compatibility
-  // matrix is queryable (and deploys are confirmable with a single curl).
-  app.get('/health', (c) =>
-    c.json({
-      status: 'ok',
-      version: '1.0.0',
-      deployedAt: new Date().toISOString(),
-    }),
-  );
+  // /health (FIX 2026-08-22 review): was decorative — hardcoded version, deployedAt = now(),
+  // and always-ok regardless of DB reachability. Now PROBES the database (1s budget) and
+  // reports the actual deploy stamp baked at build time. Monitors should treat 503 as down.
+  app.get('/health', async (c) => {
+    let db: 'ok' | 'down' = 'down';
+    try {
+      await Promise.race([
+        query('SELECT 1 AS ok', []),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('db probe timeout')), 1000)),
+      ]);
+      db = 'ok';
+    } catch {
+      // fall through — db stays down
+    }
+    return c.json(
+      {
+        status: db === 'ok' ? 'ok' : 'degraded',
+        db,
+        version: DEPLOY_VERSION,
+        deployedAt: DEPLOYED_AT,
+      },
+      db === 'ok' ? 200 : 503,
+    );
+  });
 
   app.route('/api', api);
   // V6 05-01: the versioned contract surface (envelope + cursors + openapi.json).
