@@ -1,40 +1,42 @@
 import type { MiddlewareHandler } from 'hono';
 import type { AppContextVariables } from '../types/index.js';
+import { getD1 } from '../db/pool.js';
+import { logger } from '../utils/logger.js';
 
 type RL = { Variables: AppContextVariables };
 
-interface SlidingWindow {
-  /** Sorted (oldest first) timestamps of requests in the window. */
-  hits: number[];
-}
-
-/** Global in-memory map of IP -> sliding window per limit-name. */
-const buckets = new Map<string, Map<string, SlidingWindow>>();
-
-/** M4: once the map grows past this, sweep idle buckets on the next request. */
-const SWEEP_THRESHOLD = 10_000;
-
 /**
- * M4: Drop every bucket whose newest hit predates `now - 60s`. Bounds memory
- * growth: a spoofed-IP storm (or just many distinct clients) can otherwise seed
- * one bucket per request and they never get freed. Returns the count removed.
+ * WORKERS-CORRECT RATE LIMITING (2026-08-22 review): the previous limiter kept
+ * a per-isolate in-memory Map — on Cloudflare Workers each isolate is ephemeral
+ * and per-PoP, so the effective limit was limit x isolates (effectively no
+ * limit). This implementation uses the D1 binding (already bound as CACHE_DB)
+ * as the shared counter store: one row per (keyPrefix, ip, windowStart), an
+ * atomic UPDATE increments, a background DELETE keeps the table small.
+ *
+ * Failure mode: D1 unavailable -> ALLOW (fail-open, same as before — an
+ * outage must not take the whole API down; the limits are abuse guards).
  */
-function sweepIdle(now: number): number {
-  let removed = 0;
-  for (const [bucketKey, perLimit] of buckets) {
-    let newest = 0;
-    for (const w of perLimit.values()) {
-      if (w.hits.length > 0) {
-        const tail = w.hits[w.hits.length - 1] as number;
-        if (tail > newest) newest = tail;
-      }
-    }
-    if (newest === 0 || newest <= now - 60_000) {
-      buckets.delete(bucketKey);
-      removed++;
-    }
+
+const D1_TABLE = 'rate_limit_windows';
+
+let schemaReady = false;
+async function ensureSchema(): Promise<boolean> {
+  if (schemaReady) return true;
+  try {
+    const d1 = getD1();
+    await d1.prepare(
+      `CREATE TABLE IF NOT EXISTS ${D1_TABLE} (
+         key TEXT PRIMARY KEY,
+         window_start INTEGER NOT NULL,
+         hits INTEGER NOT NULL DEFAULT 0
+       )`,
+    ).run();
+    schemaReady = true;
+    return true;
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'rateLimit: D1 schema ensure failed — failing open');
+    return false;
   }
-  return removed;
 }
 
 /**
@@ -80,52 +82,52 @@ export function rateLimit(
   keyPrefix: string,
   resolveIp: (c: Parameters<MiddlewareHandler<RL>>[0]) => string = defaultResolveIp,
 ): MiddlewareHandler<RL> {
-  const now = () => Date.now();
-
   return async (c, next) => {
     const ip = resolveIp(c);
+    const t = Date.now();
+    const windowStart = Math.floor(t / windowMs) * windowMs;
+    const key = `${keyPrefix}:${ip}:${windowStart}`;
 
-    // M4: opportunistically evict idle buckets once the map gets large. This
-    // runs only past the threshold so it's free in the common case.
-    if (buckets.size > SWEEP_THRESHOLD) {
-      sweepIdle(Date.now());
+    if (!(await ensureSchema())) {
+      await next(); // fail-open
+      return;
     }
 
-    const bucketKey = `${keyPrefix}:${ip}`;
-    let bucket = buckets.get(bucketKey);
-    if (!bucket) {
-      bucket = new Map<string, SlidingWindow>();
-      buckets.set(bucketKey, bucket);
-    }
-    let window = bucket.get(keyPrefix);
-    if (!window) {
-      window = { hits: [] };
-      bucket.set(keyPrefix, window);
+    let hits: number;
+    try {
+      const d1 = getD1();
+      // Atomic upsert-increment: first hit INSERTs 1, subsequent hits UPDATE +1.
+      // ON CONFLICT makes it a single statement so concurrent isolates serialize
+      // through D1's single-writer semantics — the whole point of moving off
+      // the in-memory map.
+      const res = await d1.prepare(
+        `INSERT INTO ${D1_TABLE} (key, window_start, hits) VALUES (?, ?, 1)
+         ON CONFLICT(key) DO UPDATE SET hits = hits + 1
+         RETURNING hits`,
+      ).bind(key, windowStart).first<{ hits: number }>();
+      hits = res?.hits ?? 1;
+
+      // Opportunistic cleanup: drop expired windows ~2% of requests.
+      if (Math.random() < 0.02) {
+        void d1.prepare(`DELETE FROM ${D1_TABLE} WHERE window_start < ?`).bind(t - windowMs).run().catch(() => undefined);
+      }
+    } catch (err) {
+      logger.warn({ err: String(err) }, 'rateLimit: D1 op failed — failing open');
+      await next();
+      return;
     }
 
-    const t = now();
-    const cutoff = t - windowMs;
-
-    // Drop timestamps that have aged out of the window.
-    while (window.hits.length > 0 && (window.hits[0] as number) <= cutoff) {
-      window.hits.shift();
-    }
-
-    if (window.hits.length >= limit) {
-      const retryAfterSec = Math.ceil((windowMs - (t - (window.hits[0] as number))) / 1000);
-      c.header('Retry-After', String(Math.max(retryAfterSec, 1)));
+    if (hits > limit) {
+      const retryAfterSec = Math.max(1, Math.ceil((windowStart + windowMs - t) / 1000));
+      c.header('Retry-After', String(retryAfterSec));
       return c.json(
-        { error: 'Too Many Requests', retryAfter: Math.max(retryAfterSec, 1) },
+        { error: 'Too Many Requests', retryAfter: retryAfterSec },
         429,
       );
     }
 
-    window.hits.push(t);
     c.header('X-RateLimit-Limit', String(limit));
-    c.header(
-      'X-RateLimit-Remaining',
-      String(Math.max(limit - window.hits.length, 0)),
-    );
+    c.header('X-RateLimit-Remaining', String(Math.max(limit - hits, 0)));
     await next();
   };
 }

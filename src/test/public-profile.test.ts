@@ -12,8 +12,32 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../db/pool.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../db/pool.js')>();
+  const rows = new Map<string, number>();
+  const d1Stub = {
+    prepare(sql: string) {
+      return {
+        bind(...args: unknown[]) {
+          return {
+            async first<T>() {
+              if (sql.startsWith('INSERT INTO')) {
+                const key = String(args[0]);
+                const next = (rows.get(key) ?? 0) + 1;
+                rows.set(key, next);
+                return { hits: next } as T;
+              }
+              return null as T;
+            },
+            async run() { return { meta: {} }; },
+          };
+        },
+        async run() { return { meta: {} }; },
+        async first<T>() { return null as T; },
+      };
+    },
+  };
   return {
     ...actual,
+    getD1: () => d1Stub,
     query: vi.fn(),
     getPlayerProfile: vi.fn(),
     getPlayerBalances: vi.fn(),
