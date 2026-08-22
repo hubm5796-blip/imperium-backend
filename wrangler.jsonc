@@ -48,6 +48,17 @@
 			"database_id": "6b734eea-0c07-4a51-b844-f7de749056a9"
 		}
 	],
+	// V6 04-05 gallery image storage. Bucket created by the owner (S3 endpoint
+	// 5a13b89775c54a6e009b9ce395075863.r2.cloudflarestorage.com/imperium-community);
+	// the Worker accesses it through this BINDING (no S3 keys needed) and proxies
+	// bytes at /api/v2/community/gallery/img/:key so no public bucket URL is
+	// required. The gallery routes degrade to 503 if this binding is missing.
+	"r2_buckets": [
+		{
+			"binding": "COMMUNITY_R2",
+			"bucket_name": "imperium-community"
+		}
+	],
 	// api.imperiummc.net routes to this Worker via an existing proxied CNAME
 	// record (api -> imperium-backend-prod.playimperiummc-net.workers.dev),
 	// NOT a Wrangler-managed Custom Domain. Do NOT add a `routes` block with
