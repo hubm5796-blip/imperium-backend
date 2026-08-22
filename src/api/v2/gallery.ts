@@ -110,7 +110,7 @@ galleryV2.get('/community/gallery', async (c) => {
   try {
     await ensureSchema();
   } catch {
-    return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.');
+    return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.', String((err as Error)?.message ?? err));
   }
   const album = c.req.query('album') ?? '';
   const page = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1);
@@ -134,7 +134,7 @@ galleryV2.get('/community/gallery', async (c) => {
     });
   } catch (err) {
     logger.error({ err: String(err) }, 'gallery list failed');
-    return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.');
+    return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.', String((err as Error)?.message ?? err));
   }
 });
 
