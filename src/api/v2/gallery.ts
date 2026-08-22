@@ -109,7 +109,7 @@ async function isModerator(uuid: string): Promise<boolean> {
 galleryV2.get('/community/gallery', async (c) => {
   try {
     await ensureSchema();
-  } catch {
+  } catch (err) {
     return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.', String((err as Error)?.message ?? err));
   }
   const album = c.req.query('album') ?? '';
