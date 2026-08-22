@@ -201,8 +201,12 @@ galleryV2.post('/community/gallery', requireLinked, writeRateLimit, async (c) =>
 });
 
 // ── Public: image bytes proxied from R2 ─────────────────────────────────────
-
-galleryV2.get('/community/gallery/img/:key', async (c) => {
+//
+// NOTE the `:key{.+}` pattern: keys are `gallery/<hex>.<ext>` — TWO path
+// segments. A plain `:key` param matches one segment only, valid keys fell
+// through to unrelated middleware (401) while malformed single-segment probes
+// reached this handler (the bug looked inverted from the outside).
+galleryV2.get('/community/gallery/img/:key{.+}', async (c) => {
   const bucket = r2Bucket(c);
   if (!bucket) return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery storage is not configured.');
   // Key shape enforced: gallery/<hex>.<ext> — no path traversal into other prefixes.
