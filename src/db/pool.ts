@@ -574,6 +574,56 @@ export async function getLeaderboard(
 > {
   const cap = Math.min(Math.max(limit, 1), 100);
 
+  // GAME MYSQL FIRST (hybrid, 2026-08-22): real-time from the live game DB.
+  // Falls through to the Postgres path below when the game pool isn't
+  // initialized or returns empty.
+  try {
+    const { gameQuery } = await import('./gameMysql.js');
+    if (type === 'denarius') {
+      const rows = await gameQuery<{ uuid: string; balance: string; username: string | null }>(
+        'SELECT cb.uuid, cb.balance, pn.username FROM currency_balances cb LEFT JOIN player_names pn ON cb.uuid = pn.uuid WHERE cb.currency = ? ORDER BY CAST(cb.balance AS UNSIGNED) DESC LIMIT ?',
+        [CURRENCY_COLUMNS.denarius, cap],
+      );
+      if (rows.length > 0) {
+        return rows.map((row) => ({
+          uuid: row.uuid,
+          name: row.username ?? undefined,
+          value: minorUnitsToDisplay(row.balance),
+        }));
+      }
+    }
+    if (type === 'blocks') {
+      const rows = await gameQuery<{ uuid: string; blocks_mined: string; username: string | null }>(
+        'SELECT ps.uuid, ps.blocks_mined, pn.username FROM player_stats ps LEFT JOIN player_names pn ON ps.uuid = pn.uuid ORDER BY ps.blocks_mined DESC LIMIT ?',
+        [cap],
+      );
+      if (rows.length > 0) {
+        return rows.map((row) => ({
+          uuid: row.uuid,
+          name: row.username ?? undefined,
+          value: Number(row.blocks_mined ?? 0),
+        }));
+      }
+    }
+    if (type === 'prestige') {
+      const rows = await gameQuery<{ uuid: string; prestige_level: string; prestige_points: string; username: string | null }>(
+        'SELECT pd.uuid, pd.prestige_level, pd.prestige_points, pn.username FROM prestige_data pd LEFT JOIN player_names pn ON pd.uuid = pn.uuid ORDER BY pd.prestige_level DESC, pd.prestige_points DESC LIMIT ?',
+        [cap],
+      );
+      if (rows.length > 0) {
+        return rows.map((row) => ({
+          uuid: row.uuid,
+          name: row.username ?? undefined,
+          value: Number(row.prestige_level),
+          secondary: Number(row.prestige_points),
+        }));
+      }
+    }
+    // playtime: player_playtime doesn't exist in the game MySQL — Postgres only.
+  } catch {
+    // Game MySQL unavailable — fall through to Postgres below.
+  }
+
   if (type === 'denarius') {
     const result = await query<{ uuid: string; balance: string; name: string | null }>(
       `SELECT cb.uuid, cb.balance, pn.username AS name
