@@ -11,6 +11,7 @@
 // Endpoint instead.
 import { initEnvFromBindings } from './env.js';
 import { initPool, initD1 } from './db/pool.js';
+import { initGamePool } from './db/gameMysql.js';
 import { createApp } from './app.js';
 import { setCronBindings } from './bot/cronConfig.js';
 import { runBotCron } from './bot/cron.js';
@@ -26,6 +27,12 @@ export interface WorkerBindings {
   CACHE_DB: D1Database;
   /** Direct Postgres URL (Supabase pooler) — overrides HYPERDRIVE when set. */
   DATABASE_URL?: string;
+  /** Game MySQL (birdflop) — real-time game data reads (hybrid architecture). */
+  GAME_MYSQL_HOST?: string;
+  GAME_MYSQL_PORT?: number;
+  GAME_MYSQL_USER?: string;
+  GAME_MYSQL_PASSWORD?: string;
+  GAME_MYSQL_DATABASE?: string;
   DISCORD_CLIENT_ID: string;
   DISCORD_CLIENT_SECRET: string;
   DISCORD_REDIRECT_URI: string;
@@ -63,6 +70,18 @@ export default {
     // A plain DATABASE_URL var is accepted as a Node-dev/local override only.
     initPool(bindings.DATABASE_URL || bindings.HYPERDRIVE.connectionString);
     initD1(bindings.CACHE_DB);
+    // GAME MYSQL (hybrid, 2026-08-22): real-time reads of game data (profiles,
+    // balances, stats) from the live birdflop MySQL — the same DB the plugin
+    // writes. No more 5-minute WebSync staleness.
+    if (bindings.GAME_MYSQL_HOST && bindings.GAME_MYSQL_USER && bindings.GAME_MYSQL_PASSWORD && bindings.GAME_MYSQL_DATABASE) {
+      initGamePool({
+        host: bindings.GAME_MYSQL_HOST,
+        port: bindings.GAME_MYSQL_PORT ?? 3306,
+        user: bindings.GAME_MYSQL_USER,
+        password: bindings.GAME_MYSQL_PASSWORD,
+        database: bindings.GAME_MYSQL_DATABASE,
+      });
+    }
     // Forwarding bindings+ctx is required, not cosmetic: without a real
     // ExecutionContext, c.executionCtx.waitUntil() in interactions.ts has
     // nothing to attach to. Its catch block assumes that means "running

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
+import { getGamePlayerProfile } from '../db/gameMysql.js';
 import {
   AUTH_COOKIE_NAME,
   authCookieOptions,
@@ -414,12 +415,40 @@ api.get('/player/profile', async (c) => {
     return c.json({ ...cachedFields, discordId });
   }
 
-  // Try PostgreSQL first, fall back to SQLite
+  // GAME MYSQL FIRST (hybrid, 2026-08-22): real-time from the live game DB —
+  // no 5-minute staleness. Falls back to Postgres, then SQLite.
   let profile: any = null;
   try {
-    profile = await getPlayerProfile(uuid);
+    const game = await getGamePlayerProfile(uuid);
+    if (game) {
+      profile = {
+        uuid,
+        username: game.username,
+        rank: {
+          level: Number(game.rank_level ?? 0),
+          name: game.rank_name ?? 'Unranked',
+          progress: Number(game.rank_progress ?? 0),
+        },
+        prestige: { level: Number(game.prestige_level ?? 0) },
+        stats: {
+          blocksMined: Number(game.blocks_mined ?? 0),
+          playTimeSeconds: Number(game.play_time ?? 0),
+          kills: Number(game.pvp_kills ?? 0),
+          deaths: Number(game.pvp_deaths ?? 0),
+          trophies: Number(game.pvp_trophies ?? 0),
+        },
+      };
+    }
   } catch {
     profile = null;
+  }
+
+  if (!profile) {
+    try {
+      profile = await getPlayerProfile(uuid);
+    } catch {
+      profile = null;
+    }
   }
 
   if (!profile) {
