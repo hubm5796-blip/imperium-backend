@@ -88,6 +88,13 @@
 		"REDIS_TLS": "true",
 		"WEBPANEL_HMAC_SECRET": "gDageWRSC2tPULSuSa2XhVksDA_rhaASS5sgJsKDpGk",
 		"NODE_ENV": "production",
+		// Game MySQL (birdflop) — real-time game data reads (hybrid architecture).
+		// Same treatment as REDIS_PASSWORD above: plaintext var in a private repo.
+		"GAME_MYSQL_HOST": "narwhalnose.birdflop.com",
+		"GAME_MYSQL_PORT": "3306",
+		"GAME_MYSQL_USER": "u1907_TI8MRg8YZh",
+		"GAME_MYSQL_PASSWORD": "xnimJLk2mllZ9LmcYYFvrq.C",
+		"GAME_MYSQL_DATABASE": "s1907_imperiummc_main",
 		// Staff error-alert webhook (error-visibility pipeline). Empty = alerting off;
 		// paste a Discord webhook URL (or set it as a dashboard Secret) to arm it.
 		"STAFF_ALERT_WEBHOOK_URL": ""
