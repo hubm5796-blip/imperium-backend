@@ -118,6 +118,23 @@ function requireBotAuth(c: Context): boolean {
 }
 
 /**
+ * AUDIT ATTRIBUTION (#12): map the X-Bot-Token to a named actor identity.
+ * The shared BOT_API_TOKEN maps to "panel-service" (the generic service identity).
+ * Per-actor tokens map to individual staff names via the ACTOR_TOKEN_MAP env var:
+ * "token1:staffname1,token2:staffname2". The caller-supplied `actor` body field
+ * is NEVER trusted for audit — it can only be resolved from the token.
+ */
+function resolveActorFromToken(c: Context): string {
+  const token = c.req.header('X-Bot-Token') ?? '';
+  const map = (env as unknown as Record<string, string | undefined>).actorTokenMap ?? '';
+  for (const pair of map.split(',')) {
+    const [tok, name] = pair.split(':').map((s) => s.trim());
+    if (tok && name && tok === token) return name;
+  }
+  return 'panel-service';
+}
+
+/**
  * Rate limiter for /auth/webcode/verify. This route is bot-token-gated (only
  * imperium-frontend's own edge proxy can call it — see the route below), so
  * `X-Original-Client-IP` is trustworthy here specifically: an attacker can't
@@ -765,11 +782,23 @@ api.post('/admin/punish', async (c) => {
     return c.json({ error: 'Missing target or action' }, 400);
   }
 
+  // AUDIT ATTRIBUTION (security review #12): the `actor` field was free text from the
+  // caller — anyone holding the shared bot token could write any name into the audit
+  // log. The actor is now derived from the authenticated token, never from the body.
+  // A body actor that differs from the resolved identity is logged as a spoof attempt.
+  const resolvedActor = resolveActorFromToken(c);
+  if (body.actor && body.actor !== resolvedActor) {
+    logger.warn(
+      { claimed: body.actor, resolved: resolvedActor },
+      'AUDIT SPOOF ATTEMPT: body actor differs from token-derived identity — body value discarded',
+    );
+  }
+
   // Try to forward via the Redis command bus
   try {
     const response = await sendCommandWithResponse(
       'PUNISH_PLAYER',
-      { target, action, reason, duration: body.duration, actor: body.actor },
+      { target, action, reason, duration: body.duration, actor: resolvedActor },
       5_000,
     );
     if (response.status === 'OK') {
