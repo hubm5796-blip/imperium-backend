@@ -8,16 +8,34 @@
  * Web-only data (guides, tickets, changelog, gallery) stays in Postgres/D1.
  * This module ONLY serves game-data reads.
  *
- * Connection: uses mysql2 with a small pool. The birdflop MySQL allows remote
- * connections (verified: the admin tooling connects from this machine).
- * For Workers, the connection goes through Hyperdrive's MySQL binding if
- * configured, or a direct TCP connection via cloudflare:sockets.
+ * Connection, two paths:
+ *  - Node (dev/test): mysql2's own TCP pool. The birdflop MySQL allows remote
+ *    connections (verified: the admin tooling connects from this machine) —
+ *    this is also how the 2026-08-22 hybrid session "verified the connection",
+ *    which is exactly why production breakage went unnoticed for a day.
+ *  - Deployed Workers: mysql2 CANNOT open sockets there — its TCP layer rides
+ *    node:net, whose workerd shim can't reach arbitrary hosts (the same wall
+ *    worker.ts documents for Supabase TLS). Every gameQuery silently returned
+ *    [] and the leaderboard served the stale Postgres mirror (22.3B
+ *    pre-migration cents vs the real 241M whole units). Fix (2026-08-24):
+ *    per-query connections through the minimal wire client (mysqlWire.ts)
+ *    over a cloudflare:sockets TCP connection.
+ *    No pool (each query opens one socket + handshake) — every gameQuery
+ *    consumer sits behind SWR/D1 caches, so the query rate stays tiny.
  */
 import mysql from 'mysql2/promise';
 import { logger } from '../utils/logger.js';
 import { env } from '../env.js';
+import { wireQuery } from './mysqlWire.js';
 
 let pool: mysql.Pool | null = null;
+let poolConfig: {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+} | null = null;
 
 export function initGamePool(config: {
   host: string;
@@ -27,6 +45,7 @@ export function initGamePool(config: {
   database: string;
 }): void {
   if (pool) return;
+  poolConfig = config;
   pool = mysql.createPool({
     ...config,
     waitForConnections: true,
@@ -48,6 +67,62 @@ export async function closeGamePool(): Promise<void> {
   if (pool) { await pool.end(); pool = null; }
 }
 
+// ── Workers transport (cloudflare:sockets → the eval-free wire client) ──────
+
+type CfSocket = {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  opened?: Promise<unknown>;
+  close?: () => Promise<void>;
+};
+type CfConnect = (
+  address: { hostname: string; port: number },
+  options?: { secureTransport?: 'off' | 'starttls' | 'on' },
+) => Promise<CfSocket>;
+
+/** Resolved once per isolate: the connect() export when running under workerd,
+ *  or null under Node (dynamic import of cloudflare:sockets fails there). */
+let cfConnect: CfConnect | null | undefined;
+
+async function resolveCfConnect(): Promise<CfConnect | null> {
+  if (cfConnect !== undefined) return cfConnect;
+  try {
+    const mod = (await import('cloudflare:sockets')) as unknown as { connect: CfConnect };
+    cfConnect = mod.connect;
+  } catch {
+    cfConnect = null;
+  }
+  return cfConnect;
+}
+
+/** In-flight worker-socket cap — polite to birdflop if a cache ever expires
+ *  under load. Waiting acquires; release must run on both paths. */
+let inFlight = 0;
+const waiters: Array<() => void> = [];
+async function acquireSlot(): Promise<void> {
+  if (inFlight < 6) { inFlight++; return; }
+  await new Promise<void>((resolve) => waiters.push(resolve));
+  inFlight++;
+}
+function releaseSlot(): void {
+  inFlight--;
+  waiters.shift()?.();
+}
+
+async function workerQuery<T extends Record<string, unknown>>(
+  sql: string,
+  params: readonly unknown[],
+  connect: CfConnect,
+): Promise<T[]> {
+  if (!poolConfig) throw new Error('Game MySQL pool not initialized — call initGamePool() first');
+  await acquireSlot();
+  try {
+    return await wireQuery<T>(sql, params, poolConfig, connect);
+  } finally {
+    releaseSlot();
+  }
+}
+
 /**
  * Parameterized query on the game MySQL. Uses `?` placeholders (MySQL style).
  * Returns rows as an array (mysql2 convention), not { rows } (pg convention).
@@ -57,10 +132,23 @@ export async function gameQuery<T extends Record<string, unknown>>(
   params: readonly unknown[] = [],
 ): Promise<T[]> {
   try {
+    const connect = await resolveCfConnect();
+    if (connect) {
+      return await workerQuery<T>(sql, params, connect);
+    }
     const [rows] = await getPool().execute(sql, params as never[]);
     return rows as T[];
   } catch (err) {
-    logger.error({ err: String(err), sql: sql.slice(0, 120) }, 'gameQuery failed');
+    const cause = err instanceof Error ? err.cause : undefined;
+        logger.error(
+      {
+        err: String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        cause: cause ? String((cause as Error).stack ?? cause) : undefined,
+        sql: sql.slice(0, 120),
+      },
+      'gameQuery failed',
+    );
     return [];
   }
 }
