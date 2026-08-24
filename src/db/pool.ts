@@ -1122,7 +1122,61 @@ export async function getLeaderboardPage(
   cursor: { value: number; uuid: string } | null,
 ): Promise<LeaderboardPage> {
   const cap = Math.min(Math.max(limit, 1), 100);
-  const rows: LeaderboardPage['rows'] = [];
+  let rows: LeaderboardPage['rows'] = [];
+
+  // GAME MYSQL FIRST (2026-08-24, mirrors v1 getLeaderboard): the Postgres mirror is a
+  // stale snapshot (frozen cents-era balances) — every game-sourced board must prefer the
+  // live game DB. Keyset pagination is rebuilt in MySQL dialect with ? placeholders; the
+  // wire client inlines them. Falls through to the Postgres branches on empty/failure,
+  // which remain the only source for playtime.
+  try {
+    const { gameQuery } = await import('./gameMysql.js');
+    const keyset = cursor ? ' AND (CAST(v.value AS UNSIGNED) < ? OR (CAST(v.value AS UNSIGNED) = ? AND v.uuid > ?))' : '';
+    const cursorParams = cursor ? [cursor.value, cursor.value, cursor.uuid] : [];
+    if (type === 'denarius') {
+      const gameRows = await gameQuery<{ uuid: string; value: string; username: string | null }>(
+        `SELECT v.uuid, v.value, pn.username FROM (
+           SELECT uuid, CAST(balance AS CHAR) AS value FROM currency_balances WHERE currency = ?
+         ) v LEFT JOIN player_names pn ON v.uuid = pn.uuid WHERE 1=1${keyset}
+         ORDER BY CAST(v.value AS UNSIGNED) DESC, v.uuid ASC LIMIT ?`,
+        [CURRENCY_COLUMNS.denarius, ...cursorParams, cap],
+      );
+      if (gameRows.length > 0) rows = gameRows.map((r) => ({ uuid: r.uuid, name: r.username, value: minorUnitsToDisplay(r.value) }));
+    }
+    if (type === 'blocks' && rows.length === 0) {
+      const gameRows = await gameQuery<{ uuid: string; value: string; username: string | null }>(
+        `SELECT v.uuid, v.value, pn.username FROM (
+           SELECT uuid, CAST(blocks_mined AS CHAR) AS value FROM player_stats
+         ) v LEFT JOIN player_names pn ON v.uuid = pn.uuid WHERE 1=1${keyset}
+         ORDER BY CAST(v.value AS UNSIGNED) DESC, v.uuid ASC LIMIT ?`,
+        [...cursorParams, cap],
+      );
+      if (gameRows.length > 0) rows = gameRows.map((r) => ({ uuid: r.uuid, name: r.username, value: Number(r.value) }));
+    }
+    if (type === 'prestige' && rows.length === 0) {
+      const gameRows = await gameQuery<{ uuid: string; value: string; secondary: string; username: string | null }>(
+        `SELECT v.uuid, v.value, v.secondary, pn.username FROM (
+           SELECT uuid, CAST(prestige_level AS CHAR) AS value, CAST(prestige_points AS CHAR) AS secondary FROM prestige_data
+         ) v LEFT JOIN player_names pn ON v.uuid = pn.uuid WHERE 1=1${keyset}
+         ORDER BY CAST(v.value AS UNSIGNED) DESC, CAST(v.secondary AS UNSIGNED) DESC, v.uuid ASC LIMIT ?`,
+        [...cursorParams, cap],
+      );
+      if (gameRows.length > 0) rows = gameRows.map((r) => ({ uuid: r.uuid, name: r.username, value: Number(r.value), secondary: Number(r.secondary) }));
+    }
+  } catch {
+    // Game MySQL unavailable — fall through to the Postgres branches below.
+  }
+
+  if (rows.length > 0) {
+    return {
+      rows,
+      nextCursor: rows.length === cap
+        ? { value: rows[rows.length - 1].value, uuid: rows[rows.length - 1].uuid }
+        : null,
+      approxTotal: null,
+    };
+  }
+  rows = [];
 
   if (type === 'denarius') {
     const { where, params } = cursorPredicate('cb.balance', 'cb.uuid', cursor, `cb.currency = '${CURRENCY_COLUMNS.denarius}'`);

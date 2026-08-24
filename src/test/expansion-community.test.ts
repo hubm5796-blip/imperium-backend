@@ -586,7 +586,7 @@ describe('GET /api/admin/player-tools', () => {
         pity: Array<{ id: string; rolls: number; threshold: number }>;
       };
     };
-    expect(body.player.flowTail[0]).toMatchObject({ reason: 'service:minesell', amount: 1500 });
+    expect(body.player.flowTail[0]).toMatchObject({ reason: 'service:minesell', amount: 150000 }); // whole units (MINOR_UNITS_PER_UNIT=1 since V28)
     expect(body.player.lockouts[0]).toMatchObject({ id: 'cloaca_maxima', type: 'dungeon', active: true });
     expect(body.player.pity[0]).toEqual({ id: 'cosmic_storm', rolls: 40, threshold: 100 });
   });
