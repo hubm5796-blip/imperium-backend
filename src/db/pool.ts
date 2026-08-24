@@ -466,7 +466,8 @@ export async function getNameByUuid(uuid: string): Promise<string | null> {
   return result.rows[0]?.username ?? null;
 }
 
-/** Fetch all four currency balances for a UUID, converted from minor units. */
+/** Fetch all four currency balances for a UUID. WHOLE-UNIT STORAGE (2026-08-18 /
+ *  plugin migration V28): every currency is stored in WHOLE units — no ÷100 anywhere. */
 export async function getPlayerBalances(
   uuid: string,
 ): Promise<Record<keyof typeof CURRENCY_COLUMNS, number>> {
@@ -486,11 +487,7 @@ export async function getPlayerBalances(
   for (const row of result.rows) {
     const key = CURRENCY_ALIASES[row.currency.toLowerCase()];
     if (key) {
-      // Only Denarius is stored in minor units; the other currencies are whole numbers.
-      balances[key] =
-        key === 'denarius'
-          ? minorUnitsToDisplay(row.balance)
-          : Number(row.balance);
+      balances[key] = Number(row.balance);
     }
   }
 
@@ -513,13 +510,14 @@ export async function getPlayerStats(uuid: string): Promise<PlayerStatsRow | nul
   return result.rows[0] ?? null;
 }
 
-/** A transaction row with its display value already converted from minor units. */
+/** A transaction row with its display value as a number. WHOLE-UNIT STORAGE (2026-08-18):
+ *  amounts are stored in WHOLE units; displayAmount is the numeric form of amount. */
 export interface DisplayTransaction {
   id: number;
   type: string;
   currency: string;
-  amount: string; // raw minor-unit amount from the DB
-  displayAmount: number; // converted major-unit amount
+  amount: string; // raw whole-unit amount from the DB
+  displayAmount: number; // numeric display amount (whole units)
   description: string | null;
   createdAt: Date;
 }

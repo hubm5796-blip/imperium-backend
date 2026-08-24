@@ -574,7 +574,7 @@ api.get('/player/profile', async (c) => {
   return c.json({ ...fields, ...extras, discordId, ...(balancesDegraded ? { degraded: true } : {}) });
 });
 
-/** GET /api/player/balances — the four currencies, converted from minor units. */
+/** GET /api/player/balances — the four currencies, in stored WHOLE units (migration V28). */
 api.get('/player/balances', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
   const balances = await getPlayerBalances(uuid);

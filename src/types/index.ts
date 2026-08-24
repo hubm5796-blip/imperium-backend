@@ -179,5 +179,9 @@ export const CURRENCY_ALIASES: Record<string, CurrencyKey> = {
   gc: 'goldenCoins',
 };
 
-/** Number of minor units per display unit. */
-export const MINOR_UNITS_PER_UNIT = 100;
+/**
+ * Units per display unit. WHOLE-UNIT STORAGE (2026-08-18): the game DB now stores every
+ * currency in WHOLE units (plugin migration V28 divided the historical ×100 minor-unit rows
+ * once), so this is 1 and `minorUnitsToDisplay` is an identity/parse shim kept for API shape.
+ */
+export const MINOR_UNITS_PER_UNIT = 1;

@@ -77,7 +77,8 @@ export function getPlayerProfile(uuid: string): {
 
     let denarius = 0, auctoritas = 0, civitas = 0, aureus = 0;
     for (const b of balances) {
-      const val = Number(b.balance) / 100; // minor units
+      // WHOLE-UNIT STORAGE (2026-08-18 / plugin migration V28): balances are stored in WHOLE units.
+      const val = Number(b.balance);
       const cur = b.currency.toLowerCase();
       if (cur === 'money' || cur === 'denarius') denarius = val;
       else if (cur === 'tokens' || cur === 'auctoritas') auctoritas = val;
@@ -149,7 +150,8 @@ export function getLeaderboardFromSqlite(
       rows = sqlite.prepare(
         `SELECT uuid, balance FROM currency_balances WHERE currency IN ('money', 'denarius') ORDER BY balance DESC LIMIT ?`
       ).all(limit) as any[];
-      return rows.map(r => ({ uuid: r.uuid, value: Number(r.balance) / 100 }));
+      // WHOLE-UNIT STORAGE (2026-08-18 / plugin migration V28): value as stored, no ÷100.
+      return rows.map(r => ({ uuid: r.uuid, value: Number(r.balance) }));
     } else if (type === 'blocks') {
       rows = sqlite.prepare(
         `SELECT uuid, blocks_mined FROM player_stats ORDER BY blocks_mined DESC LIMIT ?`

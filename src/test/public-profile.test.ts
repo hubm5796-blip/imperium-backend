@@ -328,8 +328,8 @@ describe('GET /api/v2/public/player/:username', () => {
             pvp_kills: '40',
             pvp_deaths: '20',
             pvp_trophies: '12',
-            denarius_minor: '25000000', // → 250000 display
-            civitas_minor: '432100', // → 4321 display
+            denarius_raw: '250000', // whole units — displayed as stored (migration V28)
+            civitas_raw: '4321',
             koth_wins: '8',
             legion_name: 'XVII',
             elo: '1850',
@@ -355,7 +355,7 @@ describe('GET /api/v2/public/player/:username', () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.username).toBe('Maximus');
     expect(body.rankName).toBe('VII');
-    expect(body.denarius).toBe(250000); // minor units converted
+    expect(body.denarius).toBe(250000); // whole units — no conversion
     expect(body.civitas).toBe(4321);
     expect(body.kothWins).toBe(8);
     expect(body.elo).toEqual({ rating: 1850, peak: 1910 });

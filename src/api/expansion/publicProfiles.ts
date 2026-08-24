@@ -320,8 +320,8 @@ interface MegaProfileRow {
   pvp_kills: string | number | null;
   pvp_deaths: string | number | null;
   pvp_trophies: string | number | null;
-  denarius_minor: string | number | null;
-  civitas_minor: string | number | null;
+  denarius_raw: string | number | null;
+  civitas_raw: string | number | null;
   koth_wins: string | null;
   legion_name: string | null;
   elo: string | number | null;
@@ -337,8 +337,8 @@ const MEGA_PROFILE_SQL = `
     SELECT uuid, username FROM player_names WHERE LOWER(username) = LOWER($1) LIMIT 1
   ), bal AS (
     SELECT
-      COALESCE((SELECT SUM(balance) FROM currency_balances WHERE uuid = me.uuid AND currency IN ('denarius', 'money')), 0) AS denarius_minor,
-      COALESCE((SELECT SUM(balance) FROM currency_balances WHERE uuid = me.uuid AND currency IN ('civitas', 'beacons')), 0) AS civitas_minor
+      COALESCE((SELECT SUM(balance) FROM currency_balances WHERE uuid = me.uuid AND currency IN ('denarius', 'money')), 0) AS denarius_raw,
+      COALESCE((SELECT SUM(balance) FROM currency_balances WHERE uuid = me.uuid AND currency IN ('civitas', 'beacons')), 0) AS civitas_raw
     FROM me
   )
   SELECT
@@ -346,7 +346,7 @@ const MEGA_PROFILE_SQL = `
     pr.rank_level, pr.rank_name,
     pd.prestige_level,
     ps.blocks_mined, ps.play_time, ps.pvp_kills, ps.pvp_deaths, ps.pvp_trophies,
-    bal.denarius_minor, bal.civitas_minor,
+    bal.denarius_raw, bal.civitas_raw,
     (SELECT SUM(value) FROM leaderboard_stats WHERE uuid = me.uuid AND category = 'KOTH_WINS' AND period = 'ALL_TIME') AS koth_wins,
     (SELECT l.name FROM legion_members m JOIN legions l ON l.name = m.legion_name WHERE m.player_uuid = me.uuid LIMIT 1) AS legion_name,
     e.elo, e.peak_elo,
@@ -393,8 +393,10 @@ function profileFromMegaRow(uuid: string, username: string, r: MegaProfileRow): 
     rankName: romanizeRankName(r.rank_name, rank),
     prestige: num(r.prestige_level),
     legion: r.legion_name ?? null,
-    denarius: num(r.denarius_minor) / 100,
-    civitas: num(r.civitas_minor) / 100,
+    // WHOLE-UNIT STORAGE (2026-08-18 / plugin migration V28): balances are stored in WHOLE
+    // units — displayed as stored, no ÷100 minor-unit conversion.
+    denarius: num(r.denarius_raw),
+    civitas: num(r.civitas_raw),
     blocksMined: num(r.blocks_mined),
     playtimeSeconds: num(r.play_time),
     pvpKills: num(r.pvp_kills),

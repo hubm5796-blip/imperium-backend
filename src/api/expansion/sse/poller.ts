@@ -200,7 +200,8 @@ export const ECONOMY_TOPIC: TopicDefinition = {
         "SELECT SUM(balance)::text AS total FROM currency_balances WHERE currency IN ('denarius', 'money')",
         [],
       );
-      return { denariusSupply: Number(supply.rows[0]?.total ?? 0) / 100 };
+      // WHOLE-UNIT STORAGE (2026-08-18 / plugin migration V28): SUM(balance) is already whole units.
+      return { denariusSupply: Number(supply.rows[0]?.total ?? 0) };
     } catch {
       return { unavailable: true };
     }
