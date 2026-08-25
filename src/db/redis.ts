@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { nanoid } from 'nanoid';
 import { env } from '../env.js';
 import { logger } from '../utils/logger.js';
-import { redisCommand, redisSubscribeOnce, type RedisSocketConfig } from './redisSocket.js';
+import { redisCommand, redisCommandRetry, redisSubscribeOnce, type RedisSocketConfig } from './redisSocket.js';
 import type { CommandEnvelope, ResponseEnvelope } from '../types/index.js';
 
 /** Redis channel used to push commands from the web panel to the plugin. */
@@ -299,7 +299,9 @@ export async function waitForResponse(
 
 /** Online player count as published by the plugin, or null if unset. */
 export async function getOnlinePlayerCount(): Promise<number | null> {
-  const raw = await redisCommand(socketConfig(), ['GET', ONLINE_COUNT_KEY]);
+  // RETRY (2026-08-25): the status endpoint's #1 data source — one retry absorbs Layerbase's
+  // transient TLS accept failures instead of reporting a live server as offline.
+  const raw = await redisCommandRetry(socketConfig(), ['GET', ONLINE_COUNT_KEY]);
   if (raw === null || typeof raw !== 'string') return null;
   const parsed = Number.parseInt(raw, 10);
   return Number.isNaN(parsed) ? null : parsed;

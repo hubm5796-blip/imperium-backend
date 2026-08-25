@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { Hono, type Context, type MiddlewareHandler, type Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { getGamePlayerProfile } from '../db/gameMysql.js';
 import {
@@ -124,6 +124,18 @@ function requireBotAuth(c: Context): boolean {
  * "token1:staffname1,token2:staffname2". The caller-supplied `actor` body field
  * is NEVER trusted for audit — it can only be resolved from the token.
  */
+/**
+ * BOT-AUTH MIDDLEWARE (2026-08-25 fix): routes passed the boolean requireBotAuth guard
+ * as Hono middleware — a false return is not a Response, so every UNAUTHENTICATED call
+ * to those routes crashed into a generic 500 instead of a clean 401.
+ */
+const botAuthMiddleware = async (c: Context, next: Next) => {
+  if (!requireBotAuth(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  await next();
+};
+
 function resolveActorFromToken(c: Context): string {
   const token = c.req.header('X-Bot-Token') ?? '';
   const map = (env as unknown as Record<string, string | undefined>).actorTokenMap ?? '';
@@ -1839,7 +1851,7 @@ api.post(
 /**
  * POST /api/tickets — submit a support ticket. Requires a linked session.
  */
-api.post('/tickets', requireBotAuth, async (c) => {
+api.post('/tickets', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
 
@@ -1867,7 +1879,7 @@ api.post('/tickets', requireBotAuth, async (c) => {
  * caller has a staff permission (owner/admin/mod). Staff see all tickets with
  * pagination; players see only their own.
  */
-api.get('/tickets', requireBotAuth, async (c) => {
+api.get('/tickets', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
 
@@ -1893,7 +1905,7 @@ api.get('/tickets', requireBotAuth, async (c) => {
 /**
  * GET /api/tickets/mine — list only the calling player's own tickets.
  */
-api.get('/tickets/mine', requireBotAuth, async (c) => {
+api.get('/tickets/mine', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
   const result = await query(
@@ -1907,7 +1919,7 @@ api.get('/tickets/mine', requireBotAuth, async (c) => {
 /**
  * POST /api/tickets/:id/respond — staff responds to a ticket.
  */
-api.post('/tickets/:id/respond', requireBotAuth, async (c) => {
+api.post('/tickets/:id/respond', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
   const ticketId = c.req.param('id');
@@ -1929,7 +1941,7 @@ api.post('/tickets/:id/respond', requireBotAuth, async (c) => {
 /**
  * GET /api/player/crates — the calling player's crate key counts per type.
  */
-api.get('/player/crates', requireBotAuth, async (c) => {
+api.get('/player/crates', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
   const result = await query<{ crate_type: string; key_count: string }>(
@@ -1949,7 +1961,7 @@ api.get('/player/crates', requireBotAuth, async (c) => {
  * POST /api/referrals/create — referrer creates a referral for a referred player.
  * The referral is pending until the referred player reaches rank V (in-game).
  */
-api.post('/referrals/create', requireBotAuth, async (c) => {
+api.post('/referrals/create', botAuthMiddleware, async (c) => {
   const referrerUuid = c.req.header('x-mc-uuid');
   if (!referrerUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
 
@@ -1995,7 +2007,7 @@ api.post('/referrals/create', requireBotAuth, async (c) => {
 /**
  * GET /api/referrals/mine — the calling player's referrals (as referrer).
  */
-api.get('/referrals/mine', requireBotAuth, async (c) => {
+api.get('/referrals/mine', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
 
@@ -2027,7 +2039,7 @@ api.get('/referrals/mine', requireBotAuth, async (c) => {
  * GET /api/marketplace/listings — browse active marketplace listings.
  * Supports category filter, sorting, and pagination.
  */
-api.get('/marketplace/listings', requireBotAuth, async (c) => {
+api.get('/marketplace/listings', botAuthMiddleware, async (c) => {
   const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
   const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') ?? '20', 10)));
   const offset = (page - 1) * limit;
@@ -2060,7 +2072,7 @@ api.get('/marketplace/listings', requireBotAuth, async (c) => {
 /**
  * GET /api/marketplace/mine — the calling player's own listings.
  */
-api.get('/marketplace/mine', requireBotAuth, async (c) => {
+api.get('/marketplace/mine', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
   const result = await query(
@@ -2133,7 +2145,7 @@ api.post('/legion/invite', requireAuth, requireLinked, async (c) => {
 /**
  * GET /api/refcode/mine — get the caller's referral code (generates one if none exists).
  */
-api.get('/refcode/mine', requireBotAuth, async (c) => {
+api.get('/refcode/mine', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
 
@@ -2170,7 +2182,7 @@ api.get('/refcode/mine', requireBotAuth, async (c) => {
  * POST /api/refcode/custom — Patrician+ sets a custom 6-char code.
  * 30-day cooldown between changes.
  */
-api.post('/refcode/custom', requireBotAuth, async (c) => {
+api.post('/refcode/custom', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
 
@@ -2271,7 +2283,7 @@ api.post('/errors/report', async (c) => {
   return c.json({ ok: true });
 });
 
-api.post('/refcode/redeem', requireBotAuth, async (c) => {
+api.post('/refcode/redeem', botAuthMiddleware, async (c) => {
   const mcUuid = c.req.header('x-mc-uuid');
   if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
 
