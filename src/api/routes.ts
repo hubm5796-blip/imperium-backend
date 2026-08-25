@@ -70,7 +70,7 @@ import {
   PaynowApiError,
   previewTierChange,
 } from '../paynow/client.js';
-import { isDonorSubscriptionProduct, isLifetimeProduct } from '../paynow/constants.js';
+import { DONOR_TIERS, isDonorSubscriptionProduct, isLifetimeProduct } from '../paynow/constants.js';
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
 import type { AppContextVariables } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -1563,6 +1563,18 @@ api.post('/store/subscription/cancel', storeAuth, async (c) => {
   return c.json({ ok: true, subscriptionId, status: 'canceled' });
 });
 
+/**
+ * GET /api/store/products — the in-game storefront catalog (public read).
+ */
+api.get('/store/products', async (c) => {
+  return c.json({
+    tiers: DONOR_TIERS.map((t) => ({
+      id: t.id,
+      monthly: { productId: t.subscriptionProductId, subscription: true },
+      lifetime: { productId: t.lifetimeProductId, subscription: false },
+    })),
+  });
+});
 /**
  * POST /api/store/checkout — create a checkout session for one product and
  * return the URL to redirect the browser to. `subscription` must match how
