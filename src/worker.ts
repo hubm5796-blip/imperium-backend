@@ -9,6 +9,16 @@
 // per-request execution model. It's a separate route (src/bot/interactions.ts,
 // added in a later migration stage) using Discord's HTTP Interactions
 // Endpoint instead.
+
+// CRASH GUARD (2026-08-25): workerd fails a request with a raw 1101 the moment ANY
+// promise rejection goes unhandled — detached Promise.race losers, socket teardown
+// races, anything outside an await chain. preventDefault marks the rejection handled
+// and lets the invocation finish; the individual callers already degrade to their
+// own error JSON, so this only removes the crash class, never hides a real failure.
+addEventListener('unhandledrejection', (event) => {
+  event.preventDefault();
+});
+
 import { initEnvFromBindings } from './env.js';
 import { initPool, initD1 } from './db/pool.js';
 import { initGamePool } from './db/gameMysql.js';
