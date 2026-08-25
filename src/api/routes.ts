@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler, type Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import { getGamePlayerProfile } from '../db/gameMysql.js';
+import { gameQuery, getGamePlayerProfile } from '../db/gameMysql.js';
 import {
   AUTH_COOKIE_NAME,
   authCookieOptions,
@@ -1104,22 +1104,28 @@ api.get('/server/status', async (c) => {
         source = 'redis';
       } else {
         // Redis slow/down: the online_players snapshot is the plugin's other
-        // heartbeat surface. COUNT>0 = server up AND players logged in; COUNT=0
-        // is ambiguous (empty-but-live vs table purged on shutdown) — the plugin
-        // clears the table on graceful disable, so treat a MISSING-table error
-        // as unknown (null) but an empty table as up-with-0, matching Redis
-        // semantics closely enough for the status pill.
+        // heartbeat surface — mirrored in BOTH databases. Postgres first (the
+        // canonical web copy), then the game MySQL (healthy while Hyperdrive
+        // is sick). COUNT>0 = server up AND players logged in; an empty table
+        // reads as up-with-0 (the plugin clears it on graceful disable).
+        let snap: { n: number }[] | null = null;
         try {
-          const snap = await withAttemptTimeout(
+          const pg = await withAttemptTimeout(
             query<{ n: number }>('SELECT COUNT(*)::int AS n FROM online_players', []),
-            1_500,
+            1_200,
           );
-          count = snap ? (snap.rows[0]?.n ?? 0) : null;
-          source = 'db-fallback';
+          if (pg) snap = pg.rows;
         } catch {
-          count = null;
-          source = 'unknown';
+          snap = null;
         }
+        if (!snap) {
+          snap = await withAttemptTimeout(
+            gameQuery<{ n: number }>('SELECT COUNT(*) AS n FROM online_players', []),
+            1_200,
+          );
+        }
+        count = snap && snap.length > 0 ? Number(snap[0].n ?? 0) : null;
+        source = 'db-fallback';
       }
       statusCountMemo.at = Date.now();
       statusCountMemo.value = count;
@@ -1137,14 +1143,41 @@ api.get('/server/status', async (c) => {
     // degrades to just the count, never an error.
     let players: string[] = [];
     try {
-      const names = await query<{ username: string | null }>(
-        `SELECT pn.username FROM online_players op
-          LEFT JOIN player_names pn ON pn.uuid = op.uuid
-         ORDER BY op.uuid
-         LIMIT 100`,
-        [],
-      );
-      players = names.rows.map((row) => row.username).filter((name): name is string => Boolean(name));
+      // HYPERDRIVE OUTAGE (2026-08-25): web Postgres via Hyperdrive is sick
+      // (db:down ~84% on /health) while the game MySQL wire path is fully
+      // healthy. Names are public in-game data the game DB also holds — try
+      // Postgres first (bounded), fall back to the game MySQL so the players
+      // list survives a Hyperdrive outage.
+      let names: Array<{ username: string | null }> = [];
+      try {
+        const pgNames = await withAttemptTimeout(
+          query<{ username: string | null }>(
+            `SELECT pn.username FROM online_players op
+              LEFT JOIN player_names pn ON op.uuid = op.uuid
+             ORDER BY op.uuid
+             LIMIT 100`,
+            [],
+          ),
+          1_200,
+        );
+        if (pgNames) names = pgNames.rows;
+      } catch {
+        names = [];
+      }
+      if (names.length === 0) {
+        const mysqlNames = await withAttemptTimeout(
+          gameQuery<{ username: string | null }>(
+            `SELECT pn.username FROM online_players op
+              LEFT JOIN player_names pn ON op.uuid = op.uuid
+             ORDER BY op.uuid
+             LIMIT 100`,
+            [],
+          ),
+          1_200,
+        );
+        if (mysqlNames) names = mysqlNames;
+      }
+      players = names.map((row) => row.username).filter((name): name is string => Boolean(name));
     } catch (err) {
       logger.warn({ err: String(err) }, 'server/status: online_players query failed — returning count only');
     }
