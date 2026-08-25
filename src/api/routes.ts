@@ -1575,6 +1575,32 @@ api.get('/store/products', async (c) => {
     })),
   });
 });
+
+/**
+ * GET /api/assets/texture?tag=<assets-tag>&folder=<item|block>&path=<texture-name>
+ * — read-only proxy for the ImperiumMC AIDEV vision toolkit (2026-08-25). The game
+ * host's route to raw.githubusercontent.com is dead, but Cloudflare reaches the
+ * community minecraft-assets mirror fine. Inputs strictly validated ([a-z0-9_] for
+ * folder/path — no dots or slashes, so no traversal); the .png suffix is appended
+ * server-side. Responses are edge-cached for a day.
+ */
+api.get('/assets/texture', async (c) => {
+  const tag = c.req.query('tag') ?? '';
+  const folder = c.req.query('folder') ?? '';
+  const path = c.req.query('path') ?? '';
+  if (!/^[A-Za-z0-9_.-]+$/.test(tag) || !/^[a-z0-9_]+$/.test(folder) || !/^[a-z0-9_]+$/.test(path)) {
+    return c.json({ error: 'Bad tag/folder/path' }, 400);
+  }
+  const upstream = `https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/${encodeURIComponent(tag)}/assets/minecraft/textures/${folder}/${path}.png`;
+  const resp = await fetch(upstream, { cf: { cacheTtl: 86_400, cacheEverything: true } });
+  if (!resp.ok) {
+    return c.json({ error: `Upstream ${resp.status}` }, 502);
+  }
+  const bytes = await resp.arrayBuffer();
+  return new Response(bytes, {
+    headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' },
+  });
+});
 /**
  * POST /api/store/checkout — create a checkout session for one product and
  * return the URL to redirect the browser to. `subscription` must match how
