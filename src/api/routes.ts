@@ -1065,10 +1065,65 @@ api.get('/leaderboards/:type', async (c) => {
   }
 });
 
+/**
+ * LATENCY FIX (2026-08-25): Layerbase Redis degraded to multi-second round trips —
+ * the retry that fixed correctness pushed status responses to 5-6.5s, which the
+ * frontend's own 5s abort turned back into "offline". Three layers now:
+ *   1. a 10s memo (the plugin only rewrites the key every 20s anyway)
+ *   2. Redis attempts individually bounded at 700ms (fast-fail, never hang)
+ *   3. on Redis failure, the Postgres online_players snapshot as the fallback signal
+ *      — the plugin maintains that table too, so "is the server up" survives a
+ *      Redis outage entirely.
+ */
+const statusCountMemo: { at: number; value: number | null } = { at: 0, value: null };
+const STATUS_MEMO_TTL_MS = 10_000;
+const REDIS_ATTEMPT_TIMEOUT_MS = 700;
+
+function withAttemptTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    promise.then(
+      (v) => v,
+      () => null,
+    ),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 /** GET /api/server/status — online player count from Redis (live) or DB. */
 api.get('/server/status', async (c) => {
   try {
-    const count = await getOnlinePlayerCount();
+    let count: number | null;
+    let source: string;
+    if (Date.now() - statusCountMemo.at < STATUS_MEMO_TTL_MS) {
+      count = statusCountMemo.value;
+      source = 'memo';
+    } else {
+      const redisCount = await withAttemptTimeout(getOnlinePlayerCount(), REDIS_ATTEMPT_TIMEOUT_MS * 2);
+      if (redisCount !== null) {
+        count = redisCount;
+        source = 'redis';
+      } else {
+        // Redis slow/down: the online_players snapshot is the plugin's other
+        // heartbeat surface. COUNT>0 = server up AND players logged in; COUNT=0
+        // is ambiguous (empty-but-live vs table purged on shutdown) — the plugin
+        // clears the table on graceful disable, so treat a MISSING-table error
+        // as unknown (null) but an empty table as up-with-0, matching Redis
+        // semantics closely enough for the status pill.
+        try {
+          const snap = await withAttemptTimeout(
+            query<{ n: number }>('SELECT COUNT(*)::int AS n FROM online_players', []),
+            1_500,
+          );
+          count = snap ? (snap.rows[0]?.n ?? 0) : null;
+          source = 'db-fallback';
+        } catch {
+          count = null;
+          source = 'unknown';
+        }
+      }
+      statusCountMemo.at = Date.now();
+      statusCountMemo.value = count;
+    }
     // The plugin writes ImperiumMC:online_count every 20s with a 60s TTL. A present
     // key (even value 0) means the server process is alive and heartbeating — that's
     // "online", regardless of whether anyone is logged in. Only a missing key (null,
@@ -1100,7 +1155,7 @@ api.get('/server/status', async (c) => {
       maxPlayers: 200,
       players,
       timestamp: Date.now(),
-      source: count === null ? 'unknown' : 'redis',
+      source,
     });
   } catch {
     return c.json({
