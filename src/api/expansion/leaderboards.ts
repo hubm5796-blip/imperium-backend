@@ -108,19 +108,24 @@ export async function fetchExpansionBoard(
 
   if (board === 'legion') {
     // GAME MYSQL FIRST (2026-08-25): legions/legion_members are plugin-owned tables in
-    // the game DB (SchemaInitializer creates them); MySQL returns numerics as strings
-    // from the wire client — Number() at the mapping, same as the PG path.
+    // the game DB. OWNER DIRECTIVE: legion top ranks by CIVITAS — the summed civitas
+    // balances of each legion's members (currency_balances, cents! -> /100 display) —
+    // NOT by XP. `value` carries the civitas total; xp kept for response compatibility.
     const gameRows = await gameQuery<{
       name: string;
       display_name: string | null;
       level: string | number;
       xp: string | number;
+      civitas: string | number;
       members: string | number;
     }>(
       `SELECT l.name, l.display_name, l.level, l.xp,
-              (SELECT COUNT(*) FROM legion_members m WHERE m.legion_name = l.name) AS members
+              (SELECT COUNT(*) FROM legion_members m WHERE m.legion_name = l.name) AS members,
+              COALESCE((SELECT SUM(CAST(cb.balance AS UNSIGNED)) FROM legion_members m2
+                 JOIN currency_balances cb ON cb.uuid = m2.player_uuid AND cb.currency = 'civitas'
+                WHERE m2.legion_name = l.name), 0) AS civitas
          FROM legions l
-        ORDER BY l.xp DESC, l.level DESC
+        ORDER BY civitas DESC, l.xp DESC, l.level DESC
         LIMIT ?`,
       [cap],
     );
@@ -130,7 +135,7 @@ export async function fetchExpansionBoard(
         name: row.name,
         displayName: row.display_name,
         level: Number(row.level ?? 1),
-        xp: Number(row.xp ?? 0),
+        xp: Number(row.civitas ?? 0) / 100,
         members: Number(row.members ?? 0),
       }));
       return { entries };
