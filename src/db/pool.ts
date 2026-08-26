@@ -618,18 +618,18 @@ export async function getLeaderboard(
       }
     }
     if (type === 'playtime') {
-      // player_stats.play_time is SECONDS (PlaytimeService.getPlaytimeSeconds semantics;
-      // SeasonResetService's /60 confirms raw = seconds) — same unit as the Postgres
-      // player_playtime.total_secs path, so the value contract is unchanged.
-      const rows = await gameQuery<{ uuid: string; play_time: string | number; username: string | null }>(
-        'SELECT ps.uuid, ps.play_time, pn.username FROM player_stats ps LEFT JOIN player_names pn ON ps.uuid = pn.uuid ORDER BY ps.play_time DESC LIMIT ?',
+      // player_playtime.total_secs — the PlaytimeService table (created in the game DB
+      // via SchemaBuilder; flushed every 60s). player_stats.play_time is a legacy column
+      // nobody populates (live check: all zeros) — do NOT use it.
+      const rows = await gameQuery<{ uuid: string; total_secs: string | number; username: string | null }>(
+        'SELECT pl.uuid, pl.total_secs, pn.username FROM player_playtime pl LEFT JOIN player_names pn ON pl.uuid = pn.uuid ORDER BY pl.total_secs DESC LIMIT ?',
         [cap],
       );
       if (rows.length > 0) {
         return rows.map((row) => ({
           uuid: row.uuid,
           name: row.username ?? undefined,
-          value: Number(row.play_time ?? 0),
+          value: Number(row.total_secs ?? 0),
         }));
       }
     }
@@ -1179,10 +1179,11 @@ export async function getLeaderboardPage(
       if (gameRows.length > 0) rows = gameRows.map((r) => ({ uuid: r.uuid, name: r.username, value: Number(r.value), secondary: Number(r.secondary) }));
     }
     if (type === 'playtime' && rows.length === 0) {
-      // play_time is raw seconds — same value contract as the Postgres player_playtime path.
+      // player_playtime.total_secs — PlaytimeService's live table (NOT player_stats.play_time,
+      // a legacy all-zeros column). Raw seconds, same contract as the Postgres path.
       const gameRows = await gameQuery<{ uuid: string; value: string; username: string | null }>(
         `SELECT v.uuid, v.value, pn.username FROM (
-           SELECT uuid, CAST(play_time AS CHAR) AS value FROM player_stats
+           SELECT uuid, CAST(total_secs AS CHAR) AS value FROM player_playtime
          ) v LEFT JOIN player_names pn ON v.uuid = pn.uuid WHERE 1=1${keyset}
          ORDER BY CAST(v.value AS UNSIGNED) DESC, v.uuid ASC LIMIT ?`,
         [...cursorParams, cap],
