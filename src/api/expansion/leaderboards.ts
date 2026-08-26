@@ -4,12 +4,13 @@
 // and response shapes for the new boards.
 //
 // Data sources:
-//  - rank:   player_ranks (live table, updated by the plugin)
-//  - legion: legions + legion_members (live tables)
+//  - rank:   player_ranks (game MySQL live — the plugin creates/updates it there;
+//            Postgres mirror kept as fallback)
+//  - legion: legions + legion_members (game MySQL live, same tables the plugin owns;
+//            Postgres mirror kept as fallback)
 //  - colosseum: leaderboard_stats, the plugin's generic leaderboard
-//    table, under categories KOTH_WINS / COLOSSEUM_POINTS. The plugin must
-//    record these categories for the boards to return live data (documented
-//    in docs/api.md); until then the boards serve empty entries.
+//    table, under category COLOSSEUM_POINTS (Postgres — web-data surface).
+import { gameQuery } from '../../db/gameMysql.js';
 import { query } from '../../db/pool.js';
 
 // KOTH board removed 2026-08-20 — the plugin feature is deleted (owner directive); the board
@@ -51,6 +52,34 @@ export async function fetchExpansionBoard(
   const cap = Math.min(Math.max(limit, 1), 100);
 
   if (board === 'rank') {
+    // GAME MYSQL FIRST (2026-08-25): the plugin's live player_ranks. gameQuery returns []
+    // on failure — the Postgres mirror below is the fallback.
+    const gameRows = await gameQuery<{
+      uuid: string;
+      rank_level: string | number;
+      rank_name: string;
+      rank_progress: string | number;
+      username: string | null;
+    }>(
+      `SELECT pr.uuid, pr.rank_level, pr.rank_name, pr.rank_progress, pn.username
+         FROM player_ranks pr
+         LEFT JOIN player_names pn ON pr.uuid = pn.uuid
+        ORDER BY pr.rank_level DESC, pr.rank_progress DESC
+        LIMIT ?`,
+      [cap],
+    );
+    if (gameRows.length > 0) {
+      return {
+        entries: gameRows.map((row, i) => ({
+          rank: i + 1,
+          uuid: row.uuid,
+          username: row.username ?? row.uuid,
+          value: Number(row.rank_level ?? 0),
+          secondary: Number(row.rank_progress ?? 0),
+          rankName: row.rank_name,
+        })),
+      };
+    }
     const result = await query<{
       uuid: string;
       rank_level: string;
@@ -78,6 +107,34 @@ export async function fetchExpansionBoard(
   }
 
   if (board === 'legion') {
+    // GAME MYSQL FIRST (2026-08-25): legions/legion_members are plugin-owned tables in
+    // the game DB (SchemaInitializer creates them); MySQL returns numerics as strings
+    // from the wire client — Number() at the mapping, same as the PG path.
+    const gameRows = await gameQuery<{
+      name: string;
+      display_name: string | null;
+      level: string | number;
+      xp: string | number;
+      members: string | number;
+    }>(
+      `SELECT l.name, l.display_name, l.level, l.xp,
+              (SELECT COUNT(*) FROM legion_members m WHERE m.legion_name = l.name) AS members
+         FROM legions l
+        ORDER BY l.xp DESC, l.level DESC
+        LIMIT ?`,
+      [cap],
+    );
+    if (gameRows.length > 0) {
+      const entries: LegionBoardEntry[] = gameRows.map((row, i) => ({
+        rank: i + 1,
+        name: row.name,
+        displayName: row.display_name,
+        level: Number(row.level ?? 1),
+        xp: Number(row.xp ?? 0),
+        members: Number(row.members ?? 0),
+      }));
+      return { entries };
+    }
     const result = await query<{
       name: string;
       display_name: string | null;

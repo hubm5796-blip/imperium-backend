@@ -617,7 +617,22 @@ export async function getLeaderboard(
         }));
       }
     }
-    // playtime: player_playtime doesn't exist in the game MySQL — Postgres only.
+    if (type === 'playtime') {
+      // player_stats.play_time is SECONDS (PlaytimeService.getPlaytimeSeconds semantics;
+      // SeasonResetService's /60 confirms raw = seconds) — same unit as the Postgres
+      // player_playtime.total_secs path, so the value contract is unchanged.
+      const rows = await gameQuery<{ uuid: string; play_time: string | number; username: string | null }>(
+        'SELECT ps.uuid, ps.play_time, pn.username FROM player_stats ps LEFT JOIN player_names pn ON ps.uuid = pn.uuid ORDER BY ps.play_time DESC LIMIT ?',
+        [cap],
+      );
+      if (rows.length > 0) {
+        return rows.map((row) => ({
+          uuid: row.uuid,
+          name: row.username ?? undefined,
+          value: Number(row.play_time ?? 0),
+        }));
+      }
+    }
   } catch {
     // Game MySQL unavailable — fall through to Postgres below.
   }
@@ -1127,8 +1142,8 @@ export async function getLeaderboardPage(
   // GAME MYSQL FIRST (2026-08-24, mirrors v1 getLeaderboard): the Postgres mirror is a
   // stale snapshot (frozen cents-era balances) — every game-sourced board must prefer the
   // live game DB. Keyset pagination is rebuilt in MySQL dialect with ? placeholders; the
-  // wire client inlines them. Falls through to the Postgres branches on empty/failure,
-  // which remain the only source for playtime.
+  // wire client inlines them. Falls through to the Postgres branches on empty/failure
+  // (playtime included since 2026-08-25: player_stats.play_time, raw seconds).
   try {
     const { gameQuery } = await import('./gameMysql.js');
     const keyset = cursor ? ' AND (CAST(v.value AS UNSIGNED) < ? OR (CAST(v.value AS UNSIGNED) = ? AND v.uuid > ?))' : '';
@@ -1162,6 +1177,17 @@ export async function getLeaderboardPage(
         [...cursorParams, cap],
       );
       if (gameRows.length > 0) rows = gameRows.map((r) => ({ uuid: r.uuid, name: r.username, value: Number(r.value), secondary: Number(r.secondary) }));
+    }
+    if (type === 'playtime' && rows.length === 0) {
+      // play_time is raw seconds — same value contract as the Postgres player_playtime path.
+      const gameRows = await gameQuery<{ uuid: string; value: string; username: string | null }>(
+        `SELECT v.uuid, v.value, pn.username FROM (
+           SELECT uuid, CAST(play_time AS CHAR) AS value FROM player_stats
+         ) v LEFT JOIN player_names pn ON v.uuid = pn.uuid WHERE 1=1${keyset}
+         ORDER BY CAST(v.value AS UNSIGNED) DESC, v.uuid ASC LIMIT ?`,
+        [...cursorParams, cap],
+      );
+      if (gameRows.length > 0) rows = gameRows.map((r) => ({ uuid: r.uuid, name: r.username, value: Number(r.value) }));
     }
   } catch {
     // Game MySQL unavailable — fall through to the Postgres branches below.
