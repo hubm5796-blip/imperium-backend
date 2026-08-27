@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler, type Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import { gameQuery, getGamePlayerProfile } from '../db/gameMysql.js';
+import { gameQuery, getGamePlayerBalances, getGamePlayerProfile } from '../db/gameMysql.js';
 import {
   AUTH_COOKIE_NAME,
   authCookieOptions,
@@ -450,6 +450,10 @@ api.get('/player/profile', async (c) => {
   try {
     const game = await getGamePlayerProfile(uuid);
     if (game) {
+      // Nested shape must match the PostgreSQL profile exactly (stats.playTime,
+      // stats.pvpKills, ...) — the field extraction below reads those names, and
+      // the old playTimeSeconds/kills/deaths/trophies aliases silently zeroed out
+      // playtime and every PVP stat on the dashboard.
       profile = {
         uuid,
         username: game.username,
@@ -461,10 +465,10 @@ api.get('/player/profile', async (c) => {
         prestige: { level: Number(game.prestige_level ?? 0) },
         stats: {
           blocksMined: Number(game.blocks_mined ?? 0),
-          playTimeSeconds: Number(game.play_time ?? 0),
-          kills: Number(game.pvp_kills ?? 0),
-          deaths: Number(game.pvp_deaths ?? 0),
-          trophies: Number(game.pvp_trophies ?? 0),
+          playTime: Number(game.play_time ?? 0),
+          pvpKills: Number(game.pvp_kills ?? 0),
+          pvpDeaths: Number(game.pvp_deaths ?? 0),
+          pvpTrophies: Number(game.pvp_trophies ?? 0),
         },
       };
     }
@@ -493,17 +497,39 @@ api.get('/player/profile', async (c) => {
     return c.json({ uuid, error: 'Profile data not available yet' }, 200);
   }
 
-  // Get balances from PG, fall back to SQLite profile values
+  // GAME MYSQL FIRST for balances too: currency_balances in the live game DB is
+  // the source of truth (stored in CENTS). The Postgres copy can lag or sit at
+  // zero, which players read as "my money vanished on the dashboard".
   let balances: any = { denarius: 0, tokens: 0, beacons: 0, goldenCoins: 0 };
   let balancesDegraded = false;
+  let gameBalances: Record<string, string> | null = null;
   try {
-    balances = await getPlayerBalances(uuid);
-  } catch (err) {
-    // PG not available. WITHOUT the flag every consumer of this profile
-    // (dashboard, bot /balance) reports a rich player as flat broke with
-    // HTTP 200 and no trace of the outage.
-    balancesDegraded = true;
-    logger.warn({ uuid, err: String(err) }, 'balances degraded to zero — PG read failed');
+    const rows = await getGamePlayerBalances(uuid);
+    if (rows.length > 0) {
+      gameBalances = Object.fromEntries(rows.map((r) => [r.currency, r.balance]));
+    }
+  } catch {
+    // game MySQL unavailable — fall through to Postgres below.
+  }
+  if (gameBalances) {
+    const g = gameBalances;
+    const units = (key: string) => Math.round(Number(g[key] ?? 0)) / 100;
+    balances = {
+      denarius: units('denarius'),
+      tokens: units('auctoritas'),
+      beacons: units('civitas'),
+      goldenCoins: units('aureus'),
+    };
+  } else {
+    try {
+      balances = await getPlayerBalances(uuid);
+    } catch (err) {
+      // PG not available. WITHOUT the flag every consumer of this profile
+      // (dashboard, bot /balance) reports a rich player as flat broke with
+      // HTTP 200 and no trace of the outage.
+      balancesDegraded = true;
+      logger.warn({ uuid, err: String(err) }, 'balances degraded to zero — PG read failed');
+    }
   }
 
   // Two profile shapes flow through here:
@@ -550,17 +576,28 @@ api.get('/player/profile', async (c) => {
   // table or no row simply leaves the null default rather than failing.
   const extras: { legion: string | null; kothRecord: string | null } = { legion: null, kothRecord: null };
   try {
-    const legion = await query<{ name: string }>(
-      `SELECT l.name
-         FROM legion_members m
-         JOIN legions l ON l.name = m.legion_name
-        WHERE m.player_uuid = $1
-        LIMIT 1`,
+    const rows = await gameQuery<{ legion_name: string }>(
+      'SELECT legion_name FROM legion_members WHERE player_uuid = ? LIMIT 1',
       [uuid],
     );
-    extras.legion = legion.rows[0]?.name ?? null;
+    extras.legion = rows[0]?.legion_name ?? null;
   } catch {
-    // Legion tables unavailable — omit.
+    // game MySQL unavailable — fall through to the Postgres copy below.
+  }
+  if (!extras.legion) {
+    try {
+      const legion = await query<{ name: string }>(
+        `SELECT l.name
+           FROM legion_members m
+           JOIN legions l ON l.name = m.legion_name
+          WHERE m.player_uuid = $1
+          LIMIT 1`,
+        [uuid],
+      );
+      extras.legion = legion.rows[0]?.name ?? null;
+    } catch {
+      // Legion tables unavailable — omit.
+    }
   }
   try {
     const koth = await query<{ total: string | null }>(
