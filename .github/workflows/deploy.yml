@@ -35,7 +35,13 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Deploy worker
-        run: npx wrangler deploy
+        # --var bakes the commit + timestamp into /health so a probe can tell
+        # WHICH deploy is live (the 2026-08-27 outage hunt showed version:"dev"
+        # forever because nothing stamped it).
+        run: >
+          npx wrangler deploy
+          --var DEPLOY_VERSION:$(git rev-parse --short HEAD)
+          --var DEPLOYED_AT:$(date -u +%Y-%m-%dT%H:%M:%SZ)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
