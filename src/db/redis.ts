@@ -57,6 +57,11 @@ export const RESPONSE_CACHE_PREFIX = 'ImperiumMC:cache:';
  * request died instead of falling through to Postgres as designed.
  */
 async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  // Mark the raced promise's rejection as handled: when the timeout wins the race and the
+  // loser rejects later (socket.closed), that late rejection would otherwise be unhandled —
+  // the exact 1101 isolate-crash class from the 2026-08-25 outage. Attaching a no-op catch
+  // here covers every caller at once; the race result is unaffected.
+  promise.catch(() => {});
   return Promise.race([
     promise,
     new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),

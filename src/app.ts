@@ -73,8 +73,12 @@ export function createApp() {
   app.get('/health', async (c) => {
     let db: 'ok' | 'down' = 'down';
     try {
+      // The raced query's late rejection (post-timeout) must be marked handled — same
+      // unhandled-rejection 1101 class withTimeout now guards.
+      const probe = query('SELECT 1 AS ok', []);
+      probe.catch(() => {});
       await Promise.race([
-        query('SELECT 1 AS ok', []),
+        probe,
         new Promise((_, rej) => setTimeout(() => rej(new Error('db probe timeout')), 1000)),
       ]);
       db = 'ok';
