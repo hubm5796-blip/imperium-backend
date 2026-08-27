@@ -64,6 +64,15 @@ export interface EnvShape {
   ownerDiscordUsername?: string;
   /** Discord webhook for staff error alerts — optional; unset = alerting off. */
   staffAlertWebhookUrl?: string;
+  /**
+   * Pterodactyl panel access for the aidev artifact gallery (renders the
+   * /aidev vision tools write to plugins/ImperiumMC/ai/ on the game server).
+   * Optional — unset = the gallery endpoints answer configured:false and the
+   * frontend shows a setup hint instead of failing.
+   */
+  panelUrl: string;
+  panelApiKey: string;
+  panelServerId: string;
   port: number;
   nodeEnv: string;
   isProduction: boolean;
@@ -181,6 +190,9 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     bridgeEventsWebhookUrl: optional('BRIDGE_EVENTS_WEBHOOK_URL') ?? '',
     changelogChannelId: optional('CHANGELOG_CHANNEL_ID') ?? '1430014299425738752',
     staffAlertWebhookUrl: optional('STAFF_ALERT_WEBHOOK_URL') || '',
+    panelUrl: optional('PANEL_URL', '').replace(/\/+$/, ''),
+    panelApiKey: optional('PANEL_API_KEY', ''),
+    panelServerId: optional('PANEL_SERVER_ID', ''),
     ownerDiscordId: optional('OWNER_DISCORD_ID') || '',
     ownerDiscordUsername: optional('OWNER_DISCORD_USERNAME') || '',
     port: optionalInt('PORT', 3001),
