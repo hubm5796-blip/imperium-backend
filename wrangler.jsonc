@@ -90,11 +90,12 @@
 		"STAFF_ALERT_WEBHOOK_URL": ""
 	}
 	// True secrets (JWT_SECRET, PAYNOW_API_KEY, DISCORD_CLIENT_SECRET,
-	// DISCORD_BOT_TOKEN, BOT_API_TOKEN,
-	// PAYNOW_WEBHOOK_SECRETS) are padlocked "Secret" entries
+	// DISCORD_BOT_TOKEN, BOT_API_TOKEN, PAYNOW_WEBHOOK_SECRETS,
+	// REDIS_HOST, REDIS_PASSWORD, REDIS_USERNAME, GAME_MYSQL_*,
+	// WEBPANEL_HMAC_SECRET) are padlocked "Secret" entries
 	// in the dashboard and go through `wrangler secret put <NAME>` — those DO
-	// persist across Git deploys independently of this file.
-	// NOTE: REDIS_HOST + REDIS_PASSWORD are now in vars above (pointing at
-	// layerbase). If old dashboard secrets exist for these names, delete them
-	// so the vars take effect, OR run: wrangler secret delete REDIS_HOST; wrangler secret delete REDIS_PASSWORD
+	// persist across Git deploys independently of this file. They are
+	// deliberately NOT listed in vars above: a Git deploy wipes any dashboard
+	// var not present here, and listing a name in both places makes
+	// `wrangler secret put` fail with "binding name already in use".
 }
