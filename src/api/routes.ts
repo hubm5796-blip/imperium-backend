@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler, type Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import { gameQuery, getGamePlayerBalances, getGamePlayerProfile } from '../db/gameMysql.js';
+import { gameQuery, getGamePlayerBalances, getGamePlayerProfile, getGamePlayerStats, getGamePlayerAchievements, getGamePlayerSkills, getGamePlayerRankAndPrestige, getGamePlayerFactions, getGameParkourRecords, getGamePlayerLegionId, getGameLegionInfo, getGameLegionMembers, getGamePlayerCosmetics, getGamePlayerDailyQuests } from '../db/gameMysql.js';
 import {
   AUTH_COOKIE_NAME,
   authCookieOptions,
@@ -713,51 +713,109 @@ api.get('/player/transactions', requireAuth, requireLinked, async (c) => {
   });
 });
 
-/** GET /api/player/skills — Roman skill tree (Virtus/Mercatura/Divinitas). */
+/** GET /api/player/skills — game MySQL first; Postgres fallback. */
 api.get('/player/skills', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
+  try {
+    const nodes = await getGamePlayerSkills(uuid);
+    const byBranch = new Map<string, string[]>();
+    for (const n of nodes) {
+      const list = byBranch.get(n.branch) ?? [];
+      list.push(n.node_id);
+      byBranch.set(n.branch, list);
+    }
+    const rp = await getGamePlayerRankAndPrestige(uuid);
+    const earned = rp.rank_level + rp.prestige_level * 5;
+    return c.json({
+      branches: Array.from(byBranch.entries()).map(([name, ns]) => ({ name, nodes: ns })),
+      available_points: Math.max(0, earned - nodes.length),
+      spent_points: nodes.length,
+    });
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/skills] game MySQL failed');
+  }
   const skills = await getPlayerSkills(uuid);
   return c.json(skills);
 });
 
-/** GET /api/player/factions — faction reputation across the 8 Roman factions. */
+/** GET /api/player/factions — game MySQL first; Postgres fallback. */
 api.get('/player/factions', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
+  try {
+    const rows = await getGamePlayerFactions(uuid);
+    return c.json({ factions: rows.map((r: { faction_id: string; reputation: number }) => ({ id: r.faction_id, name: r.faction_id, rep: Number(r.reputation), tier: (Number(r.reputation) >= 500 ? 'exalted' : Number(r.reputation) >= 250 ? 'honored' : Number(r.reputation) >= 100 ? 'friendly' : Number(r.reputation) >= 0 ? 'neutral' : 'hostile') })) });
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/factions] game MySQL failed');
+  }
   const factions = await getPlayerFactions(uuid);
   return c.json(factions);
 });
 
-/** GET /api/player/parkour — best times per parkour course. */
+/** GET /api/player/parkour — game MySQL first; Postgres fallback. */
 api.get('/player/parkour', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
+  try {
+    const rows = await getGameParkourRecords(uuid);
+    return c.json({ records: rows.map(r => ({ course: r.course_id, best_time_ms: Number(r.best_time_ms), completions: Number(r.completions) })) });
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/parkour] game MySQL failed');
+  }
   const parkour = await getPlayerParkour(uuid);
   return c.json(parkour);
 });
 
-/** GET /api/player/achievements — completed and in-progress achievements. */
+/** GET /api/player/achievements — game MySQL first; Postgres fallback. */
 api.get('/player/achievements', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
+  try {
+    const data = await getGamePlayerAchievements(uuid);
+    return c.json({ achievements: data });
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/achievements] game MySQL failed');
+  }
   const data = await getPlayerAchievements(uuid);
   return c.json(data);
 });
 
-/** GET /api/player/cosmetics — owned cosmetics and active trail/hat/effects. */
+/** GET /api/player/cosmetics — game MySQL first; Postgres fallback. */
 api.get('/player/cosmetics', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
+  try {
+    const data = await getGamePlayerCosmetics(uuid);
+    return c.json(data);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/cosmetics] game MySQL failed');
+  }
   const data = await getPlayerCosmetics(uuid);
   return c.json(data);
 });
 
-/** GET /api/player/quests — today's daily quests and their progress. */
+/** GET /api/player/quests — game MySQL first; Postgres fallback. */
 api.get('/player/quests', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
+  try {
+    const data = await getGamePlayerDailyQuests(uuid);
+    return c.json({ quests: data });
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/quests] game MySQL failed');
+  }
   const data = await getPlayerDailyQuests(uuid);
   return c.json(data);
 });
 
-/** GET /api/player/legion — the player's legion (guild) + members. */
+/** GET /api/player/legion — game MySQL first; Postgres fallback. */
 api.get('/player/legion', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
+  try {
+    const legionId = await getGamePlayerLegionId(uuid);
+    if (legionId) {
+      const info = await getGameLegionInfo(legionId);
+      const members = await getGameLegionMembers(legionId);
+      return c.json({ legion: info, members });
+    }
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/legion] game MySQL failed');
+  }
   const data = await getPlayerLegion(uuid);
   return c.json(data);
 });
