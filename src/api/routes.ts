@@ -73,6 +73,7 @@ import {
 import { DONOR_TIERS, isDonorSubscriptionProduct, isLifetimeProduct } from '../paynow/constants.js';
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
 import type { AppContextVariables } from '../types/index.js';
+import { CURRENCY_ALIASES } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { alertError } from '../utils/errorAlerts.js';
 import { expansionApi } from './expansion/index.js';
@@ -623,16 +624,44 @@ api.get('/player/profile', async (c) => {
   return c.json({ ...fields, ...extras, discordId, ...(balancesDegraded ? { degraded: true } : {}) });
 });
 
-/** GET /api/player/balances — the four currencies, in stored WHOLE units (migration V28). */
+/** GET /api/player/balances — real-time from game MySQL; Postgres fallback. */
 api.get('/player/balances', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
+  // GAME MYSQL FIRST (2026-08-30): the Postgres copy is stale since WebSync went no-op.
+  // Same shape as getPlayerBalances — the frontend just reads the `balances` map.
+  try {
+    const rows = await getGamePlayerBalances(uuid);
+    const balances: Record<string, number> = { denarius: 0, tokens: 0, beacons: 0, goldenCoins: 0 };
+    for (const row of rows) {
+      const key = CURRENCY_ALIASES[row.currency.toLowerCase()];
+      if (key) balances[key] = Number(row.balance);
+    }
+    return c.json({ uuid, balances });
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/balances] game MySQL failed — Postgres fallback');
+  }
   const balances = await getPlayerBalances(uuid);
   return c.json({ uuid, balances });
 });
 
-/** GET /api/player/stats — blocks mined, pvp, playtime. */
+/** GET /api/player/stats — real-time from game MySQL; Postgres fallback. */
 api.get('/player/stats', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
+  try {
+    const rows = await gameQuery<{ blocks_mined: number; play_time: number; pvp_kills: number; pvp_deaths: number; pvp_trophies: number }>(
+      `SELECT ps.blocks_mined,
+              COALESCE(pl.total_secs, 0) AS play_time,
+              ps.pvp_kills, ps.pvp_deaths, ps.pvp_trophies
+         FROM player_stats ps
+         LEFT JOIN player_playtime pl ON pl.uuid = ps.uuid
+        WHERE ps.uuid = ?
+        LIMIT 1`,
+      [uuid],
+    );
+    if (rows.length) return c.json(rows[0]);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/stats] game MySQL failed — Postgres fallback');
+  }
   const stats = await getPlayerStats(uuid);
   if (!stats) {
     return c.json({ error: 'Player stats not found' }, 404);
@@ -640,12 +669,39 @@ api.get('/player/stats', requireAuth, requireLinked, async (c) => {
   return c.json(stats);
 });
 
-/** GET /api/player/transactions?page=1 — paginated economy history. */
+/** GET /api/player/transactions?page=1 — real-time from game MySQL; Postgres fallback. */
 api.get('/player/transactions', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
   const pageSize = 25;
   const rawPage = Number.parseInt(c.req.query('page') ?? '1', 10);
   const page = Number.isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
+
+  // GAME MYSQL FIRST (2026-08-30): live economy_transactions (real-time, no WebSync delay).
+  try {
+    const offset = (page - 1) * pageSize;
+    const rows = await gameQuery<{ id: number; type: string; currency: string; amount: number; description: string | null; created_at: string }>(
+      `SELECT id, type, currency, amount, description, created_at
+         FROM economy_transactions
+        WHERE uuid = ?
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?`,
+      [uuid, pageSize, offset],
+    );
+    const [countRow] = await gameQuery<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM economy_transactions WHERE uuid = ?',
+      [uuid],
+    );
+    const total = countRow ? Number(countRow.n) : 0;
+    return c.json({
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(Math.ceil(total / pageSize), 1),
+      transactions: rows.map(r => ({ ...r, displayAmount: Number(r.amount), createdAt: r.created_at })),
+    });
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/transactions] game MySQL failed — Postgres fallback');
+  }
 
   const { rows, total } = await getPlayerTransactions(uuid, page, pageSize);
   return c.json({
