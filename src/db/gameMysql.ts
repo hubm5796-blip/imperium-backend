@@ -238,3 +238,97 @@ export async function getGamePlayerCount(): Promise<number> {
   const rows = await gameQuery<{ n: number }>('SELECT COUNT(*) AS n FROM player_names');
   return Number(rows[0]?.n ?? 0);
 }
+
+// ── Dashboard player-data functions (2026-08-30) ─────────────────────────
+// These mirror the Postgres pool.ts shapes so the API routes can use
+// game MySQL (real-time) with Postgres as fallback.
+
+export async function getGamePlayerStats(uuid: string): Promise<{ blocks_mined: number; play_time: number; pvp_kills: number; pvp_deaths: number; pvp_trophies: number } | null> {
+  const rows = await gameQuery<{ blocks_mined: number; play_time: number; pvp_kills: number; pvp_deaths: number; pvp_trophies: number }>(
+    `SELECT ps.blocks_mined,
+            COALESCE(pl.total_secs, 0) AS play_time,
+            ps.pvp_kills, ps.pvp_deaths, ps.pvp_trophies
+       FROM player_stats ps
+       LEFT JOIN player_playtime pl ON pl.uuid = ps.uuid
+      WHERE ps.uuid = ?
+      LIMIT 1`,
+    [uuid],
+  );
+  return rows[0] ?? null;
+}
+
+export async function getGamePlayerAchievements(uuid: string): Promise<Array<{ achievement_id: string; progress: number; completed: boolean; claimed: boolean }>> {
+  return gameQuery(
+    'SELECT achievement_id, progress, completed, claimed FROM player_achievements WHERE uuid = ?',
+    [uuid],
+  );
+}
+
+export async function getGamePlayerSkills(uuid: string): Promise<Array<{ branch: string; node_id: string }>> {
+  return gameQuery(
+    'SELECT branch, node_id FROM player_skills WHERE uuid = ? ORDER BY branch, node_id',
+    [uuid],
+  );
+}
+
+export async function getGamePlayerRankAndPrestige(uuid: string): Promise<{ rank_level: number; prestige_level: number }> {
+  const rows = await gameQuery<{ rank_level: number; prestige_level: number }>(
+    `SELECT pr.rank_level, COALESCE(pd.prestige_level, 0) AS prestige_level
+       FROM player_ranks pr
+       LEFT JOIN prestige_data pd ON pr.uuid = pd.uuid
+      WHERE pr.uuid = ? LIMIT 1`,
+    [uuid],
+  );
+  return rows[0] ?? { rank_level: 0, prestige_level: 0 };
+}
+
+export async function getGamePlayerFactions(uuid: string): Promise<Array<{ faction_id: string; reputation: number }>> {
+  return gameQuery(
+    'SELECT faction_id, reputation FROM player_faction_rep WHERE uuid = ? ORDER BY reputation DESC',
+    [uuid],
+  );
+}
+
+export async function getGameParkourRecords(uuid: string): Promise<Array<{ course_id: string; best_time_ms: number; completions: number }>> {
+  return gameQuery(
+    'SELECT course_id, best_time_ms, completions FROM parkour_records WHERE player_uuid = ? ORDER BY best_time_ms ASC',
+    [uuid],
+  );
+}
+
+export async function getGamePlayerLegionId(uuid: string): Promise<string | null> {
+  const rows = await gameQuery<{ legion_name: string }>(
+    'SELECT legion_name FROM legion_members WHERE uuid = ? LIMIT 1',
+    [uuid],
+  );
+  return rows[0]?.legion_name ?? null;
+}
+
+export async function getGameLegionInfo(legionName: string): Promise<Record<string, unknown> | null> {
+  const rows = await gameQuery<Record<string, unknown>>(
+    'SELECT * FROM legions WHERE name = ? LIMIT 1',
+    [legionName],
+  );
+  return rows[0] ?? null;
+}
+
+export async function getGameLegionMembers(legionName: string): Promise<Array<Record<string, unknown>>> {
+  return gameQuery(
+    'SELECT uuid, rank, contribution FROM legion_members WHERE legion_name = ? ORDER BY contribution DESC',
+    [legionName],
+  );
+}
+
+export async function getGamePlayerCosmetics(uuid: string): Promise<Array<Record<string, unknown>>> {
+  return gameQuery(
+    'SELECT * FROM player_cosmetics WHERE uuid = ?',
+    [uuid],
+  );
+}
+
+export async function getGamePlayerDailyQuests(uuid: string): Promise<Array<Record<string, unknown>>> {
+  return gameQuery(
+    'SELECT * FROM player_daily_quests WHERE uuid = ?',
+    [uuid],
+  );
+}
