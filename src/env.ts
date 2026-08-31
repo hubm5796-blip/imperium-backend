@@ -47,6 +47,19 @@ export interface EnvShape {
    */
   botApiToken: string;
   /**
+   * AUDIT ATTRIBUTION (#12): maps an X-Bot-Token to a named actor identity —
+   * "token1:staffname1,token2:staffname2". The unmapped shared token resolves to
+   * "panel-service". Never read actor names from request bodies.
+   */
+  actorTokenMap: string;
+  /**
+   * AUDIT ATTRIBUTION (2026-08-31): per-staff tokens with roles —
+   * "token:name:role,..." with role ∈ helper|mod|admin. Presented via
+   * X-Staff-Token + X-Staff-Actor headers; empty by default until staff
+   * tokens are minted.
+   */
+  staffActorTokenMap: string;
+  /**
    * V6 05-04: the SECOND internal token — the frontend edge proxies use this for
    * delegated (X-Mc-Uuid) calls so a leak of either secret halves the blast
    * radius. Falls back to BOT_API_TOKEN when unset (compat until the frontend
@@ -184,6 +197,8 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     // BOT_API_TOKEN is required in production — without it, all bot-auth endpoints
     // (linking, profile lookups, store checkout) silently 401. Fail loudly instead.
     botApiToken: nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN'),
+    actorTokenMap: optional('ACTOR_TOKEN_MAP', ''),
+    staffActorTokenMap: optional('STAFF_ACTOR_TOKEN_MAP', ''),
     internalServiceToken: optional('INTERNAL_SERVICE_TOKEN') || (nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN')),
     bridgeSecret: optional('BRIDGE_SECRET') ?? '',
     bridgeWebhookUrl: optional('BRIDGE_WEBHOOK_URL') ?? '',
