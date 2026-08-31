@@ -10,12 +10,12 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
  * The Redis command bus is mocked so allowed-path tests assert the actor travels with the
  * dispatch instead of touching a real bus.
  */
+const { sent } = vi.hoisted(() => ({ sent: [] as Array<{ type: string; payload: Record<string, unknown> }> }));
 vi.mock('../db/redis.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../db/redis.js')>();
-  const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  
   return {
     ...actual,
-    sentCommands: sent,
     sendCommandWithResponse: vi.fn(async (type: string, payload: Record<string, unknown>) => {
       sent.push({ type, payload });
       return { status: 'OK', data: null };
@@ -25,7 +25,7 @@ vi.mock('../db/redis.js', async (importOriginal) => {
 
 import { createApp } from '../app.js';
 import { initEnvFromBindings } from '../env.js';
-import { sentCommands, sendCommandWithResponse } from '../db/redis.js';
+import { sendCommandWithResponse } from '../db/redis.js';
 
 let app: ReturnType<typeof createApp>;
 
@@ -62,7 +62,7 @@ describe('audit attribution role gates', () => {
       body: JSON.stringify(punishBody),
     });
     expect(res.status).toBe(403);
-    expect(sentCommands.find((c) => c.type === 'PUNISH_PLAYER')).toBeUndefined();
+    expect(sent.find((c) => c.type === 'PUNISH_PLAYER')).toBeUndefined();
   });
 
   it('refuses reload for a below-admin identity (403)', async () => {
@@ -77,7 +77,7 @@ describe('audit attribution role gates', () => {
       body: JSON.stringify({ message: 'Hail, Rome' }),
     });
     expect(res.status).toBe(200);
-    const cmd = sentCommands.find((c) => c.type === 'BROADCAST');
+    const cmd = sent.find((c) => c.type === 'BROADCAST');
     expect(cmd?.payload.actor).toBe('legacy-service');
   });
 
@@ -93,7 +93,7 @@ describe('audit attribution role gates', () => {
       body: JSON.stringify(punishBody),
     });
     expect(res.status).toBe(200);
-    const cmd = sentCommands.find((c) => c.type === 'PUNISH_PLAYER');
+    const cmd = sent.find((c) => c.type === 'PUNISH_PLAYER');
     expect(cmd?.payload.actor).toBe('SenatorBrukus');
   });
 
