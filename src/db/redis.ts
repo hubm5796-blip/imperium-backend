@@ -152,6 +152,34 @@ async function atomicGetDel(key: string): Promise<string | null> {
 }
 
 /**
+ * B-10: claim a nonce exactly once (replay protection). SET NX + EX is
+ * atomic — concurrent replays race and exactly one wins. Returns:
+ *   true  — claimed (first sighting)
+ *   false — already seen within the TTL (replay)
+ *   null  — nonce store unavailable; the caller decides (callers that
+ *           fail open still have the timestamp window bounding replay)
+ */
+export async function claimNonceOnce(
+  namespace: string,
+  nonce: string,
+  ttlSeconds: number,
+): Promise<boolean | null> {
+  try {
+    const res = await redisCommand(socketConfig(), [
+      'SET',
+      `${namespace}${nonce}`,
+      '1',
+      'NX',
+      'EX',
+      String(Math.max(1, Math.floor(ttlSeconds))),
+    ]);
+    return res === 'OK';
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Canonical JSON for signing: recursively key-sorted, compact. Both sides
  * (Node here, Gson in the plugin) must produce byte-identical output.
  */
