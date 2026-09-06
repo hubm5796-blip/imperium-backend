@@ -12,7 +12,7 @@
  */
 import { Hono } from 'hono';
 import { query } from '../../db/pool.js';
-import { botTokenMatches } from '../../middleware/auth.js';
+import { requireStaffRole } from '../../middleware/gates.js';
 import { parseMcUuid } from '../../middleware/gates.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
 import { logger } from '../../utils/logger.js';
@@ -22,10 +22,11 @@ type ApiEnv = { Variables: AppContextVariables };
 
 export const adminPanelV2 = new Hono<ApiEnv>();
 
-adminPanelV2.use('*', readRateLimit, async (c, next) => {
-  if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
-  await next();
-});
+// B-19: the real staff gate (helper+ reads via session claim / X-Staff-Role
+// on an authenticated request / per-staff tokens). Bot-token-only callers
+// keep the transitional service exemption until the exemption-deletion
+// commit; sessions without a staff role are refused.
+adminPanelV2.use('*', readRateLimit, requireStaffRole('helper'));
 
 const PAGE_SIZE = 50;
 
@@ -155,7 +156,7 @@ adminPanelV2.get('/admin/audit', async (c) => {
 });
 
 // ── Economy: transactions ledger per player ────────────────────────────────
-adminPanelV2.get('/admin/economy/transactions', async (c) => {
+adminPanelV2.get('/admin/economy/transactions', requireStaffRole('mod'), async (c) => {
   const { limit, offset, page } = pageParams(c);
   // B-54: canonical shape (dashed/undashed/any-case accepted + normalized)
   // — the old length-range regex admitted 36 dashes as a "uuid"; the
