@@ -17,6 +17,9 @@ export const profileCommand: BotCommand = {
   },
   async execute(interaction) {
     const targetId = getTargetUserOption(interaction) ?? interaction.user.id;
+    // B-44: premium balances are self-scope — a non-self target renders
+    // without Aureus/Auctoritas (the web privacy contract).
+    const self = targetId === interaction.user.id;
 
     await interaction.deferReply();
     const result = await getProfile({ discordId: targetId });
@@ -27,6 +30,6 @@ export const profileCommand: BotCommand = {
       return;
     }
 
-    await interaction.editReply({ embeds: [profileEmbed(result.data)] });
+    await interaction.editReply({ embeds: [profileEmbed(result.data, { includePremium: self })] });
   },
 };
