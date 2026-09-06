@@ -62,14 +62,15 @@ export const discordIdSchema = z.string().regex(/^\d{17,20}$/, 'must be a Discor
 export const slugSchema = z.string().regex(/^[a-z0-9_-]{1,64}$/, 'must be a lowercase slug');
 
 /**
- * POST /api/lfg/posts body (12c): the Discord worker posts a dungeon LFG call
- * on behalf of a linked player. `username` is the linked Minecraft name
- * (resolved by the worker from its account_links row); the plugin surfaces
- * the post in-game with that name as the leader.
+ * POST /api/lfg/posts body (12c): the Discord worker posts a dungeon LFG
+ * call on behalf of a linked player. `username` is OPTIONAL and advisory
+ * only — the worker resolves the linked Minecraft name server-side from
+ * discord_links (B-45); a supplied value that disagrees with the link is
+ * rejected as a mismatch.
  */
 export const lfgPostSchema = z.object({
   dungeon: slugSchema,
   note: z.string().trim().min(1).max(140).optional(),
   discordId: discordIdSchema,
-  username: mcUsernameSchema,
+  username: mcUsernameSchema.optional(),
 });
