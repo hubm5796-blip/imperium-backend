@@ -124,8 +124,33 @@ async function workerQuery<T extends Record<string, unknown>>(
 }
 
 /**
+ * Typed failure for every game-MySQL outage (transport, auth, schema, syntax).
+ *
+ * B-11: gameQuery used to swallow EVERY failure into `[]`, which callers
+ * cannot distinguish from a valid empty result — the leaderboard served a
+ * frozen mirror, /store/subscription served `subscription: null`, and this
+ * repo's own schema drift (legion_members queried with wrong column names)
+ * errored on every call with nobody able to tell. Now gameQuery THROWS this
+ * type; every call site degrades explicitly (Postgres fallback where one
+ * exists, an `available:false`/degraded signal where it doesn't).
+ */
+export class GameMySqlUnavailableError extends Error {
+  constructor(
+    message: string,
+    /** The underlying transport/protocol error, for callers that log cause. */
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'GameMySqlUnavailableError';
+  }
+}
+
+/**
  * Parameterized query on the game MySQL. Uses `?` placeholders (MySQL style).
  * Returns rows as an array (mysql2 convention), not { rows } (pg convention).
+ *
+ * THROWS GameMySqlUnavailableError on any failure — an empty array is always
+ * a real (valid) empty result, never a swallowed outage (B-11).
  */
 export async function gameQuery<T extends Record<string, unknown>>(
   sql: string,
@@ -140,16 +165,18 @@ export async function gameQuery<T extends Record<string, unknown>>(
     return rows as T[];
   } catch (err) {
     const cause = err instanceof Error ? err.cause : undefined;
-        logger.error(
+    // Distinct tag so game-MySQL outages are greppable apart from Postgres
+    // failures — the swallow-all previously made these invisible.
+    logger.error(
       {
         err: String(err),
         stack: err instanceof Error ? err.stack : undefined,
         cause: cause ? String((cause as Error).stack ?? cause) : undefined,
         sql: sql.slice(0, 120),
       },
-      'gameQuery failed',
+      '[game-mysql] gameQuery failed — throwing GameMySqlUnavailableError to the caller',
     );
-    return [];
+    throw new GameMySqlUnavailableError(`game-mysql unavailable: ${String(err)}`, err);
   }
 }
 
@@ -296,27 +323,84 @@ export async function getGameParkourRecords(uuid: string): Promise<Array<{ cours
   );
 }
 
+// ── Legion (reconciled with the plugin schema, B-11) ────────────────────────
+// The plugin's SchemaInitializer creates legion_members as
+// (legion_name, player_uuid, role, joined_at) — role values are the
+// LegionRank enum names TIRO/LEGIONARY/CENTURION/TRIBUNUS/LEGATUS. The old
+// queries here selected `uuid, rank, contribution`, columns that exist in
+// NEITHER database — every call errored, gameQuery swallowed it to [], and
+// the Postgres fallback answered alone. Same shapes as pool.ts's
+// LegionInfo/LegionMemberInfo so /player/legion returns ONE response shape
+// whichever database answers.
+
+export interface GameLegionInfo {
+  name: string;
+  displayName: string | null;
+  level: number;
+  ownerUuid: string;
+  xp: number;
+  maxMembers: number;
+}
+
+export interface GameLegionMember {
+  uuid: string;
+  username: string | null;
+  role: string;
+}
+
 export async function getGamePlayerLegionId(uuid: string): Promise<string | null> {
   const rows = await gameQuery<{ legion_name: string }>(
-    'SELECT legion_name FROM legion_members WHERE uuid = ? LIMIT 1',
+    'SELECT legion_name FROM legion_members WHERE player_uuid = ? LIMIT 1',
     [uuid],
   );
   return rows[0]?.legion_name ?? null;
 }
 
-export async function getGameLegionInfo(legionName: string): Promise<Record<string, unknown> | null> {
-  const rows = await gameQuery<Record<string, unknown>>(
-    'SELECT * FROM legions WHERE name = ? LIMIT 1',
+export async function getGameLegionInfo(legionName: string): Promise<GameLegionInfo | null> {
+  const rows = await gameQuery<{
+    name: string;
+    display_name: string | null;
+    level: string | number;
+    owner_uuid: string;
+    xp: string | number;
+    max_members: string | number;
+  }>(
+    `SELECT name, display_name, level, owner_uuid, xp, max_members
+       FROM legions WHERE name = ? LIMIT 1`,
     [legionName],
   );
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    name: row.name,
+    displayName: row.display_name,
+    level: Number(row.level ?? 1),
+    ownerUuid: row.owner_uuid,
+    xp: Number(row.xp ?? 0),
+    maxMembers: Number(row.max_members ?? 10),
+  };
 }
 
-export async function getGameLegionMembers(legionName: string): Promise<Array<Record<string, unknown>>> {
-  return gameQuery(
-    'SELECT uuid, rank, contribution FROM legion_members WHERE legion_name = ? ORDER BY contribution DESC',
+export async function getGameLegionMembers(legionName: string): Promise<GameLegionMember[]> {
+  const rows = await gameQuery<{ player_uuid: string; role: string; username: string | null }>(
+    `SELECT m.player_uuid, m.role, pn.username
+       FROM legion_members m
+       LEFT JOIN player_names pn ON m.player_uuid = pn.uuid
+      WHERE m.legion_name = ?
+      ORDER BY CASE m.role
+                 WHEN 'LEGATUS' THEN 0
+                 WHEN 'TRIBUNUS' THEN 1
+                 WHEN 'CENTURION' THEN 2
+                 WHEN 'LEGIONARY' THEN 3
+                 ELSE 4
+               END, pn.username`,
     [legionName],
   );
+  return rows.map((row) => ({
+    uuid: row.player_uuid,
+    username: row.username,
+    role: row.role,
+  }));
 }
 
 export async function getGamePlayerCosmetics(uuid: string): Promise<Array<Record<string, unknown>>> {
