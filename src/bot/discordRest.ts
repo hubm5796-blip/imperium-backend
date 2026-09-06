@@ -3,13 +3,45 @@
 // those need `Authorization: Bot <token>`. Interaction-response endpoints
 // (deferReply/reply/editReply) are authenticated purely by the interaction's
 // own id+token and are called directly from interactionShim.ts instead.
+//
+// B-41 discipline, applied to EVERY call through here:
+//   - a deadline: 8s AbortSignal.timeout unless the caller brings its own
+//     signal. The scheduler awaits sends sequentially inside 6-/5-minute
+//     war windows — one stalled call used to eat the window.
+//   - 429 is backpressure, not attrition: one retry-after-aware retry (waits
+//     the shorter of Discord's ask and 5s). A 429 that survives the retry is
+//     returned AS a 429 so callers can count it separately from real
+//     failures (the *Op helpers below expose rateLimited for exactly that).
 const API_BASE = 'https://discord.com/api/v10';
 
-export async function discordApiFetch(
-  path: string,
-  botToken: string,
-  init: RequestInit = {},
-): Promise<Response> {
+export const DISCORD_REST_TIMEOUT_MS = 8_000;
+export const MAX_429_WAIT_MS = 5_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Discord's retry-after, in ms, unclamped; -1 = unknown. The CALLER decides
+ *  whether the ask fits its patience (an ask longer than MAX_429_WAIT_MS is
+ *  not retried — waiting it out inside a timed sweep is worse than counting
+ *  the 429 and moving on). */
+async function retryAfterMs(res: Response): Promise<number> {
+  const header = res.headers.get('retry-after');
+  if (header !== null && header !== '') {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  }
+  try {
+    const body = (await res.clone().json()) as { retry_after?: number };
+    const seconds = Number(body?.retry_after);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  } catch {
+    // non-JSON body — no machine-readable retry hint
+  }
+  return -1;
+}
+
+async function rawFetch(path: string, botToken: string, init: RequestInit): Promise<Response> {
   return fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
@@ -17,7 +49,27 @@ export async function discordApiFetch(
       Authorization: `Bot ${botToken}`,
       ...(init.headers ?? {}),
     },
+    // Caller signal wins; otherwise the standing 8s deadline.
+    signal: init.signal ?? AbortSignal.timeout(DISCORD_REST_TIMEOUT_MS),
   });
+}
+
+export async function discordApiFetch(
+  path: string,
+  botToken: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  let res = await rawFetch(path, botToken, init);
+  if (res.status === 429) {
+    const waitMs = await retryAfterMs(res);
+    if (waitMs >= 0 && waitMs <= MAX_429_WAIT_MS) {
+      await sleep(waitMs);
+      res = await rawFetch(path, botToken, init);
+    }
+    // Unknown or over-long asks: return the 429 itself — callers with the
+    // status-aware ops count it as rateLimited instead of burning the window.
+  }
+  return res;
 }
 
 export interface DiscordMember {
@@ -43,6 +95,51 @@ export async function fetchGuildMember(
   return (await res.json()) as DiscordMember;
 }
 
+// ── status-aware role ops (B-41: 429 must be countable, not "attrition") ──
+
+export interface DiscordOpResult {
+  ok: boolean;
+  /** Terminal HTTP status (0 = the call threw/timed out). */
+  status: number;
+  /** True when the terminal status is 429 — backpressure, not breakage. */
+  rateLimited: boolean;
+}
+
+function opResult(res: Response): DiscordOpResult {
+  return { ok: res.ok, status: res.status, rateLimited: res.status === 429 };
+}
+
+const opFallback: DiscordOpResult = { ok: false, status: 0, rateLimited: false };
+
+async function runOp(path: string, botToken: string, init: RequestInit): Promise<DiscordOpResult> {
+  try {
+    return opResult(await discordApiFetch(path, botToken, init));
+  } catch {
+    // Network/timeout — status 0 so it never reads as a Discord verdict.
+    return opFallback;
+  }
+}
+
+/** PUT a member role, status-aware (idempotent, no error if already held). */
+export function addGuildMemberRoleOp(
+  guildId: string,
+  userId: string,
+  roleId: string,
+  botToken: string,
+): Promise<DiscordOpResult> {
+  return runOp(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, botToken, { method: 'PUT' });
+}
+
+/** DELETE a member role, status-aware (idempotent, no error if not held). */
+export function removeGuildMemberRoleOp(
+  guildId: string,
+  userId: string,
+  roleId: string,
+  botToken: string,
+): Promise<DiscordOpResult> {
+  return runOp(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, botToken, { method: 'DELETE' });
+}
+
 /** PUT /guilds/{guild}/members/{user}/roles/{role} — idempotent, no error if already held. */
 export async function addGuildMemberRole(
   guildId: string,
@@ -50,10 +147,7 @@ export async function addGuildMemberRole(
   roleId: string,
   botToken: string,
 ): Promise<boolean> {
-  const res = await discordApiFetch(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, botToken, {
-    method: 'PUT',
-  });
-  return res.ok;
+  return (await addGuildMemberRoleOp(guildId, userId, roleId, botToken)).ok;
 }
 
 /** DELETE /guilds/{guild}/members/{user}/roles/{role} — idempotent, no error if not held. */
@@ -63,10 +157,7 @@ export async function removeGuildMemberRole(
   roleId: string,
   botToken: string,
 ): Promise<boolean> {
-  const res = await discordApiFetch(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, botToken, {
-    method: 'DELETE',
-  });
-  return res.ok;
+  return (await removeGuildMemberRoleOp(guildId, userId, roleId, botToken)).ok;
 }
 
 /** POST /channels/{id}/messages — a notification-channel send (V6 02-05).

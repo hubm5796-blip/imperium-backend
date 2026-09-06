@@ -16,8 +16,8 @@ import { getMember, type MemberSummary } from '../apiClient.js';
 import type { CronConfig } from '../cronConfig.js';
 import {
   fetchGuildMember,
-  addGuildMemberRole,
-  removeGuildMemberRole,
+  addGuildMemberRoleOp,
+  removeGuildMemberRoleOp,
 } from '../discordRest.js';
 
 export interface SyncPlan {
@@ -76,6 +76,9 @@ export interface RoleApplyReport {
   added: string[];
   removed: string[];
   failed: string[];
+  /** B-41: ops that ended on a 429 — backpressure, not attrition. Counted
+   *  separately so a rate-limited sweep doesn't read as "members left". */
+  rateLimited: string[];
 }
 
 /** Fetch the member's current roles, compute, and apply the plan. Never
@@ -116,14 +119,18 @@ export async function applyPlan(
   guildId: string,
   plan: SyncPlan,
 ): Promise<RoleApplyReport> {
-  const report: RoleApplyReport = { added: [], removed: [], failed: [] };
+  const report: RoleApplyReport = { added: [], removed: [], failed: [], rateLimited: [] };
   for (const roleId of plan.add) {
-    const ok = await addGuildMemberRole(guildId, plan.discordId, roleId, botToken);
-    (ok ? report.added : report.failed).push(roleId);
+    const res = await addGuildMemberRoleOp(guildId, plan.discordId, roleId, botToken);
+    if (res.ok) report.added.push(roleId);
+    else if (res.rateLimited) report.rateLimited.push(roleId);
+    else report.failed.push(roleId);
   }
   for (const roleId of plan.remove) {
-    const ok = await removeGuildMemberRole(guildId, plan.discordId, roleId, botToken);
-    (ok ? report.removed : report.failed).push(roleId);
+    const res = await removeGuildMemberRoleOp(guildId, plan.discordId, roleId, botToken);
+    if (res.ok) report.removed.push(roleId);
+    else if (res.rateLimited) report.rateLimited.push(roleId);
+    else report.failed.push(roleId);
   }
   return report;
 }
