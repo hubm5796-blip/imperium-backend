@@ -13,6 +13,7 @@ Part of a cross-repo strict audit of the three ImperiumMC codebases.
 | [`ROUND-4.md`](ROUND-4.md) | B-18 … B-25 (v2/expansion, bot, paynow, scopes, SSE, limiter) + C8…C13 dedupe |
 | [`ROUND-5.md`](ROUND-5.md) | B-26 … B-34 (routes remainder, deploy surface, trust boundaries) + C14…C15 dedupe |
 | [`ROUND-6.md`](ROUND-6.md) | B-35 … B-42 (scripts, expansion, cron, Discord, wiring, sweep) |
+| [`ROUND-7.md`](ROUND-7.md) | B-43 … B-50 (expansion leftovers, Discord, test gaps, census, SSE) |
 | [`CROSS-REPO.md`](CROSS-REPO.md) | X-01 … X-04, the seams with the plugin and frontend |
 
 The full audit — executive summary, plugin and frontend findings, methodology,
@@ -71,6 +72,15 @@ C14…C15 (bC14 extends B-16's enum prescription to v1-respond; bC15 companions
 B-10 on a different protocol). Headliners: B-26 (webcode rate bucket keyed on
 spoofable header), B-29 (v1 admin reads skip staff gates), B-30 (referral
 eligibility check doesn't exist — designated standing-rule violation).
+
+## Round 7
+
+A seventh pass ([`ROUND-7.md`](ROUND-7.md)) covered the expansion leftovers,
+Discord internals, security test gaps, a credential census, and SSE/wiring
+remainders: **B-43 … B-50** (census: no new live secret — C1/B-35 stand).
+Headliners: B-49 (v2 sub-app never runs `attachUser` — linked-gated v2 routes
+always 401), B-43 (staff data cached as `public`), B-47 (zero route tests on
+webhook ingest, checkout allowlist, ticket caps, webcode bound).
 
 ## State at time of audit
 
