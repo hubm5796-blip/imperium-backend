@@ -21,12 +21,20 @@ export const legionsApi = new Hono<ApiEnv>();
 const LEGION_NAME_PATTERN = /^[A-Za-z0-9_\- ]{3,64}$/;
 
 legionsApi.get('/:id', readRateLimit, async (c) => {
-  const name = c.req.param('id') ?? '';
+  // B-46: normalize ONCE, up front — trimmed input, case-insensitive lookups.
+  // The cache key was lowercased but the queries used the raw name with a
+  // case-sensitive `=`, so `LegioI` and `legioi` shared one cache entry while
+  // querying different rows (wrong card under a case-sensitive collation).
+  // Every lookup below compares LOWER(column) = LOWER($1) so key and query
+  // agree; leading/trailing spaces are trimmed before validation (they used
+  // to pass the pattern and mint junk keys).
+  const name = (c.req.param('id') ?? '').trim();
   if (!LEGION_NAME_PATTERN.test(name)) {
     return c.json({ error: 'Invalid legion id' }, 400);
   }
+  const lookup = name.toLowerCase();
   try {
-    return await swrJson(c, `legion:card:${name.toLowerCase()}:v1`, async () => {
+    return await swrJson(c, `legion:card:${lookup}:v1`, async () => {
       const legion = await query<{
         name: string;
         display_name: string | null;
@@ -42,14 +50,14 @@ legionsApi.get('/:id', readRateLimit, async (c) => {
       }>(
         `SELECT l.name, l.display_name, l.level, l.max_members, l.owner_uuid, l.motd, l.created_at,
                 l.xp::text,
-                (SELECT COUNT(*) FROM legion_members m WHERE m.legion_name = l.name)::text AS member_count,
+                (SELECT COUNT(*) FROM legion_members m WHERE LOWER(m.legion_name) = LOWER(l.name))::text AS member_count,
                 b.balance::text AS bank_balance,
                 po.username AS owner_name
            FROM legions l
-           LEFT JOIN legion_bank b ON b.legion_name = l.name
+           LEFT JOIN legion_bank b ON LOWER(b.legion_name) = LOWER(l.name)
            LEFT JOIN player_names po ON po.uuid = l.owner_uuid
-          WHERE l.name = $1`,
-        [name],
+          WHERE LOWER(l.name) = LOWER($1)`,
+        [lookup],
       );
 
       const row = legion.rows[0];
@@ -63,26 +71,26 @@ legionsApi.get('/:id', readRateLimit, async (c) => {
         `SELECT m.player_uuid, m.role, pn.username
            FROM legion_members m
            LEFT JOIN player_names pn ON pn.uuid = m.player_uuid
-          WHERE m.legion_name = $1
+          WHERE LOWER(m.legion_name) = LOWER($1)
           ORDER BY CASE m.role WHEN 'LEADER' THEN 0 WHEN 'OFFICER' THEN 1 WHEN 'ELITE' THEN 2 ELSE 3 END, pn.username
           LIMIT 200`,
-        [name],
+        [lookup],
       );
 
       // Perk tiers: purchased upgrade levels (empty until the legion buys any).
       const upgrades = await query<{ upgrade_id: string; level: number }>(
         `SELECT upgrade_id, level FROM legion_upgrade_levels
-          WHERE legion_name = $1 AND level > 0
+          WHERE LOWER(legion_name) = LOWER($1) AND level > 0
           ORDER BY upgrade_id`,
-        [name],
+        [lookup],
       );
 
       // War record: specced legion_war_records — null until the plugin tracks it.
       let warRecord: { wins: number; losses: number } | null = null;
       try {
         const war = await query<{ wins: number; losses: number }>(
-          'SELECT wins, losses FROM legion_war_records WHERE legion_name = $1',
-          [name],
+          'SELECT wins, losses FROM legion_war_records WHERE LOWER(legion_name) = LOWER($1)',
+          [lookup],
         );
         if (war.rows[0]) {
           warRecord = { wins: Number(war.rows[0].wins ?? 0), losses: Number(war.rows[0].losses ?? 0) };
