@@ -189,7 +189,15 @@ export function signCommand(
     .digest('hex');
 }
 
-/** Verify an incoming signature (v2 body-bound first, v1 envelope fallback). */
+/**
+ * Verify an incoming command signature. v2 ONLY (B-53 / P-20 backend half):
+ * the v1 envelope-only fallback meant one valid DISPATCH_COMMAND signature
+ * was valid for EVERY DISPATCH_COMMAND; the backend sender has been
+ * body-bound v2-only since 2026-08-22 and the plugin deletes its v1
+ * acceptance in the same window. Callers verified before removal: none in
+ * src/ (the plugin side owns the live verification) — this stays as the
+ * canonical v2 verifier for the bus protocol.
+ */
 export function verifyCommand(
   type: string,
   timestamp: number,
@@ -199,17 +207,7 @@ export function verifyCommand(
   body?: Record<string, unknown>,
 ): boolean {
   const expected = signCommand(type, timestamp, nonce, requestId, body);
-  if (safeEqualHex(expected, signature)) return true;
-  const v1 = signCommand(type, timestamp, nonce, requestId);
-  return safeEqualHex(v1, signature);
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(expected),
-      Buffer.from(signature),
-    );
-  } catch {
-    return false;
-  }
+  return safeEqualHex(expected, signature);
 }
 
 /**
