@@ -137,6 +137,36 @@ export async function getPrincipal(c: Context): Promise<Principal> {
   return resolved;
 }
 
+/* ── Browser origins + CSRF guard (B-49 companion) ─────────────────────────
+ * Cookie-authenticated mutations on the v2 sub-app now exist (attachUser
+ * below), so they need an Origin check — the same allowlist the root CORS
+ * middleware uses, defined once here. Browsers always send Origin on
+ * cross-site (and same-site non-GET) requests; non-browser callers send no
+ * cookie, so the guard never applies to them. */
+export const ALLOWED_BROWSER_ORIGINS = new Set<string>([
+  'https://imperiummc.net',
+  'https://www.imperiummc.net',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+]);
+
+/** Session-cookie-authenticated mutations must come from a known origin. */
+export const sessionCsrfGuard: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  const method = c.req.method.toUpperCase();
+  const mutating = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+  if (!mutating || !c.get('user')) {
+    await next();
+    return;
+  }
+  const origin = c.req.header('origin');
+  if (origin && !ALLOWED_BROWSER_ORIGINS.has(origin)) {
+    return c.json({ error: 'Cross-origin session mutation blocked', code: 'CSRF_ORIGIN_REJECTED' }, 403);
+  }
+  await next();
+};
+
 /**
  * Internal machine endpoints: the shared bot token ONLY (no asserted uuid).
  * X-02: reads the token header directly — a session cookie on the same

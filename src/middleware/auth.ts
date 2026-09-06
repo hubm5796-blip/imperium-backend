@@ -19,6 +19,13 @@ type AuthEnv = { Variables: AppContextVariables };
  * to actually enforce authentication.
  */
 export const attachUser: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  // Idempotent (B-49): the v2 sub-app gets attachUser at the root level now,
+  // and expansion residents under /api/v2 also run it via the `api` mount —
+  // a second pass on the same request must not re-verify or re-query.
+  if (c.get('user') !== undefined) {
+    await next();
+    return;
+  }
   const token = getCookie(c, AUTH_COOKIE_NAME);
   const user = await verifyJwt(token);
   c.set('user', user);
