@@ -198,3 +198,55 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
   The endpoint documentation and type `UnifiedOrder` define a merged order history of `web_shop` and `paynow` records. However, lines 52-76 only query `web_queue WHERE kind = 'shop_order'`. The query to `paynow_customers` / subscription cache is completely omitted, returning an incomplete order history to the dashboard.
 * **Remediation Action:**
   - Query `paynow_customers` / subscription tables and interleave results with `web_queue` sorted by `createdAt DESC`.
+
+---
+
+### COMPLAINT 11: Unhandled RangeError Denial of Service in `bridgeApi.post('/send')` due to Naked `timingSafeEqual`
+* **Severity:** HIGH
+* **Category:** Security / Reliability / DoS
+* **Location:** `src/bot/bridge.ts:169-174`
+* **The Problem:**
+  ```typescript
+  bridgeApi.post('/send', async (c) => {
+    const secret = env.bridgeSecret;
+    const bearer = (c.req.header('authorization') ?? '').replace(/^Bearer\s+/i, '');
+    if (!secret || !bearer || !timingSafeEqual(Buffer.from(bearer), Buffer.from(secret))) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+  ```
+  The Node.js / crypto specification states that `timingSafeEqual(a, b)` throws a fatal `RangeError: Input buffers must have the same byte length` if `a.length !== b.length`. Unlike `routes.ts:114` and `auth.ts:83` which perform length checking and try/catch blocks, `bridge.ts:172` invokes `timingSafeEqual` with zero buffer length verification and zero try/catch wrapping. Any incoming request with a token that differs in length from `secret` causes an unhandled RangeError exception, crashing the request into a 500 Internal Server Error instead of returning 401.
+* **Remediation Action:**
+  - Hash both `bearer` and `secret` with SHA-256 before invoking `timingSafeEqual` (e.g. `timingSafeEqual(createHash('sha256').update(bearer).digest(), createHash('sha256').update(secret).digest())`). Because SHA-256 digests are always 32 bytes, this eliminates the length mismatch `RangeError` while preserving constant-time comparison.
+
+---
+
+### COMPLAINT 12: Silent Event Loss from Global 30/min Ceiling & Bedrock Avatar Failures in Bridge Chat v2
+* **Severity:** MEDIUM
+* **Category:** Discord Integration / Parity
+* **Location:** `src/bot/bridge.ts:116-121, 132-136`
+* **The Problem:**
+  1. Line 135 enforces a hard global ceiling:
+     ```typescript
+     if (eventTimestamps.length >= EVENT_CEILING) return false;
+     ```
+     Where `EVENT_CEILING = 30` per minute across all death, rankup, prestige, trade, boss, and lottery events server-wide. On an active server with 50+ players, during boss fights or lottery draws, events exceed 30/min and are silently dropped (`return false`) with zero retry or queue.
+  2. In line 119:
+     ```typescript
+     avatar_url: `https://mc-heads.net/avatar/${e.uuid || e.player}/64`,
+     ```
+     Bedrock players joining via Geyser/Floodgate often have prefixes (e.g. `*PlayerName` or `.PlayerName`). `mc-heads.net` does not recognize Floodgate names or Bedrock UUID representations, resulting in broken avatar links or failed requests.
+* **Remediation Action:**
+  - Buffer events and flush them with backpressure rather than silently dropping notifications.
+  - Strip Bedrock prefixes or use a dedicated Floodgate avatar resolver when constructing `avatar_url`.
+
+---
+
+### COMPLAINT 13: D1 SQLite Write Queue Lock Contention in Rate Limiter on Every HTTP Request
+* **Severity:** HIGH
+* **Category:** Performance & Scalability / Cloudflare Architecture
+* **Location:** `src/middleware/rateLimit.ts:97-118`
+* **The Problem:**
+  `rateLimit` executes an ACID SQLite write (`INSERT INTO rate_limit_windows ... ON CONFLICT DO UPDATE SET hits = hits + 1 RETURNING hits`) into Cloudflare D1 on **every single incoming HTTP request**. Because Cloudflare D1 uses single-writer SQLite transaction serialization, incoming burst traffic (e.g. 50-100 req/sec across static or cached read endpoints) exhausts D1's write queue, causing `database is locked` errors and high tail latency. When D1 operations fail, line 115 catches the error and **fails open** (`await next()`), completely defeating the purpose of rate limiting during the exact traffic spikes it was designed to mitigate!
+* **Remediation Action:**
+  - Migrate edge rate limiting to Cloudflare's native `env.RATE_LIMITER` binding (Cloudflare's distributed in-memory rate limiting engine) or use an in-memory sliding window cache per isolate with KV/D1 fallback, eliminating ACID SQLite disk writes on hot HTTP read paths.
+
