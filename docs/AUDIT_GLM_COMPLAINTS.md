@@ -149,3 +149,52 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
 * **Remediation Action:**
   - Document the authoritative source-of-truth for each data entity in `docs/DATA_TOPOLOGY.md`.
   - Implement transactional compensation or retry queues for multi-database writes.
+
+---
+
+### COMPLAINT 8: Premature Promise Cancellation via `dbWriteBestEffort` in Cloudflare Workers
+* **Severity:** HIGH
+* **Category:** Cloudflare Workers Runtime / Data Loss
+* **Location:** `src/api/routes.ts:1661-1665, 1675, 1784`
+* **The Problem:**
+  ```typescript
+  function dbWriteBestEffort(label: string, fn: () => Promise<void>): void {
+    fn().catch((err: unknown) => {
+      logger.warn({ err, label }, 'DB cache write failed on store path — non-fatal, continuing');
+    });
+  }
+  ```
+  In the Cloudflare Workers execution model, background asynchronous operations that are neither `await`ed nor passed to `c.executionCtx.waitUntil(promise)` are immediately cancelled and killed by the V8 isolate once the HTTP response stream finishes!
+  Lines 1675 (`setPaynowCustomerId`) and 1784 (`upsertCachedSubscription(canceled)`) rely on `dbWriteBestEffort`. In production, these database writes are killed mid-execution, meaning `paynow_customer_id` is never cached, forcing repeated slow external API calls to PayNow, and subscription cancellations fail to persist.
+* **Remediation Action:**
+  - Pass the Hono context `c` to `dbWriteBestEffort` and wrap background work with `c.executionCtx.waitUntil(fn())` so Cloudflare Workers keeps the worker alive until the database write finishes.
+
+---
+
+### COMPLAINT 9: Dangling `setTimeout` Timers & Stream Reader Leaks in Redis Sockets
+* **Severity:** MEDIUM
+* **Category:** Memory & Resource Leaks
+* **Location:** `src/db/redis.ts:59-69`, `src/db/redisSocket.ts:258-275`
+* **The Problem:**
+  1. In `redis.ts:withTimeout`:
+     ```typescript
+     new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))
+     ```
+     When the primary `promise` resolves before the timeout, the `setTimeout` timer is NEVER cancelled.
+  2. In `redisSocket.ts:redisSubscribeOnce`:
+     A wait loop races `readReply(reader)` with `setTimeout`. If other messages arrive on the channel that fail the predicate, the loop repeats, spawning new `setTimeout` instances while leaving prior ones active in the isolate.
+  3. When `reply === 'timeout'`, `redisSubscribeOnce` immediately calls `socket.close()`, leaving the `reader.read()` lock open in `readReply(reader)`, triggering unhandled reader exceptions.
+* **Remediation Action:**
+  - Track `timerId = setTimeout(...)` and invoke `clearTimeout(timerId)` whenever promises resolve.
+  - Cancel/release the reader before closing the underlying socket.
+
+---
+
+### COMPLAINT 10: Incomplete Unified Order History Omitting PayNow Subscriptions
+* **Severity:** MEDIUM
+* **Category:** API Parity / Incomplete Implementation
+* **Location:** `src/api/v2/storeOrders.ts:9-13, 29-45, 52-76`
+* **The Problem:**
+  The endpoint documentation and type `UnifiedOrder` define a merged order history of `web_shop` and `paynow` records. However, lines 52-76 only query `web_queue WHERE kind = 'shop_order'`. The query to `paynow_customers` / subscription cache is completely omitted, returning an incomplete order history to the dashboard.
+* **Remediation Action:**
+  - Query `paynow_customers` / subscription tables and interleave results with `web_queue` sorted by `createdAt DESC`.
