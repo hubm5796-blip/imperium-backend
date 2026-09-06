@@ -7,6 +7,12 @@ import type { JwtPayload } from '../types/index.js';
 export const AUTH_COOKIE_NAME = 'imperium_session';
 /** JWT lifetime in seconds (7 days). */
 export const JWT_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * X-01: issuers in this JWT trust family (one shared JWT_SECRET, two signer
+ * implementations). Enforced when the claim is present — see verifyJwt.
+ */
+const EXPECTED_JWT_ISSUERS = new Set(['imperium-backend', 'imperium-frontend']);
+const EXPECTED_JWT_AUDIENCE = 'imperium-api';
 
 type SignPayload = Omit<JwtPayload, 'iat' | 'exp'>;
 
@@ -48,6 +54,30 @@ export async function verifyJwt(token: string | undefined | null): Promise<JwtPa
     // signed before this field existed (or is malformed) — treat as invalid
     // rather than guessing a default that could mis-authorize a request.
     if (decoded.authMethod !== 'discord' && decoded.authMethod !== 'mc_code') {
+      return null;
+    }
+    // X-01 (forwarded-JWT hygiene): the frontend forwards its own session
+    // token under this cookie name (same shared JWT_SECRET). Previously a
+    // 400-day forwarded TTL silently overrode the backend's 7-day policy —
+    // verifyJwt only checked that `exp` was in the future. Now the cap is
+    // enforced here regardless of the exp claim: a token older than
+    // JWT_EXPIRY_SECONDS, or whose total lifetime exceeds it, is rejected.
+    // Fail closed on missing iat/exp — every signer in this trust family
+    // stamps both.
+    if (typeof decoded.iat !== 'number' || typeof decoded.exp !== 'number') {
+      return null;
+    }
+    if (decoded.exp - decoded.iat > JWT_EXPIRY_SECONDS) return null;
+    if (Math.floor(Date.now() / 1000) - decoded.iat > JWT_EXPIRY_SECONDS) return null;
+    // Issuer/audience: enforced when present. Legacy tokens (both signers)
+    // carry neither; new tokens carry iss ∈ {imperium-backend,
+    // imperium-frontend} and aud imperium-api, so a token from any OTHER
+    // service sharing the key family is distinguishable and rejected.
+    if (decoded.iss !== undefined && !EXPECTED_JWT_ISSUERS.has(decoded.iss)) {
+      return null;
+    }
+    const aud = Array.isArray(decoded.aud) ? decoded.aud[0] : decoded.aud;
+    if (aud !== undefined && aud !== EXPECTED_JWT_AUDIENCE) {
       return null;
     }
     return {
