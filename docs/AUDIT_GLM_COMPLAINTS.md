@@ -510,3 +510,61 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
       }
       ```
    2. Proceed with `upsertCachedSubscription(uuid, subscriptionId, productId, status)` once resolved.
+
+---
+
+### COMPLAINT 24: `/api/store/products` Bare-Bones Payload Prevents Rich In-Game `/store` GUI
+* **Severity:** HIGH
+* **Category:** Monetization Pipeline / API Design / In-Game Store Experience
+* **Location:** `src/api/routes.ts:1795-1803`
+* **The Problem:**
+   1. In `src/api/routes.ts`:
+      ```typescript
+      api.get('/store/products', async (c) => {
+        return c.json({
+          tiers: DONOR_TIERS.map((t) => ({
+            id: t.id,
+            monthly: { productId: t.subscriptionProductId, subscription: true },
+            lifetime: { productId: t.lifetimeProductId, subscription: false },
+          })),
+        });
+      });
+      ```
+   2. The plugin's `StoreGUI.kt` queries this endpoint to construct the in-game `/store` GUI menu.
+   3. The response contains ONLY `id`, `monthly.productId`, and `lifetime.productId`.
+   4. It completely omits:
+      - Display names and colors (e.g. Patrician, Consul, Imperator).
+      - Prices in USD (or local currency).
+      - Perk summaries (sell multiplier bonus, auto-sell access, cosmetic quota, monthly Aureus coins).
+      - Aureus packs (`AUREUS_PACKS`).
+      - Crate key packages.
+   5. Because of this bare-bones payload, `StoreGUI` in Minecraft cannot show prices or perks, cannot display distinct items or icons, and cannot sell Aureus coins or crate keys.
+* **Remediation Action:**
+   1. Expand `GET /api/store/products` to return comprehensive store catalog metadata:
+      ```typescript
+      api.get('/store/products', async (c) => {
+        return c.json({
+          tiers: DONOR_TIERS.map((t) => ({
+            id: t.id,
+            name: t.name,
+            color: t.color,
+            icon: t.icon,
+            monthlyPriceUsd: t.monthlyUsd,
+            lifetimePriceUsd: t.permanentUsd,
+            sellBonusPct: t.sellBonusPct,
+            monthlyAureus: t.monthlyAureus,
+            cosmeticQuota: t.cosmeticQuota,
+            monthly: { productId: t.subscriptionProductId, subscription: true },
+            lifetime: { productId: t.lifetimeProductId, subscription: false },
+          })),
+          aureusPacks: AUREUS_PACKS.map((p) => ({
+            productId: p.paynowProductId,
+            priceUsd: p.priceUsd,
+            baseAureus: p.baseAureus,
+            bonusAureus: p.bonusAureus,
+            totalAureus: p.totalAureus,
+          })),
+        });
+      });
+      ```
+
