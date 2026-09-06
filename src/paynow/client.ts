@@ -2,7 +2,12 @@ import { env } from '../env.js';
 import { logger } from '../utils/logger.js';
 import { DONOR_TIER_GROUP_ID } from './constants.js';
 
-/** Thrown when a PayNow API call fails; carries the HTTP status for callers to branch on. */
+/**
+ * Thrown when a PayNow API call fails; carries the HTTP status for callers to
+ * branch on. `status` is the UPSTREAM status, except 504 which this client
+ * assigns to its own timeout deadline (B-21) so callers can map it to a
+ * gateway-timeout response instead of a generic 500.
+ */
 export class PaynowApiError extends Error {
   status: number;
   body: unknown;
@@ -17,29 +22,105 @@ export class PaynowApiError extends Error {
   }
 }
 
+/** B-21: every PayNow fetch carries a deadline — a stalled upstream fails fast
+ *  instead of hanging the user-facing checkout/cancel path. 8s per the finding. */
+const REQUEST_TIMEOUT_MS = 8_000;
+
+/** B-21: response bodies are capped — a misbehaving proxy or upstream must not
+ *  be able to stream an unbounded payload into the Worker's memory. */
+const MAX_RESPONSE_BYTES = 1_000_000;
+
+/** Combine a caller-supplied signal with the default deadline. */
+function deadlineSignal(existing?: AbortSignal | null): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  if (!existing) return timeout;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([existing, timeout]);
+  return existing; // older runtimes: honor the caller's own bound, if any
+}
+
+/** True for the abort/fetch failure shapes a deadline produces. */
+function isTimeoutAbort(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === 'TimeoutError' || err.name === 'AbortError')
+  );
+}
+
+/** Read the body with a hard byte cap (content-length when present, streamed otherwise). */
+async function readCapped(res: Response): Promise<string> {
+  const declared = Number(res.headers.get('content-length') ?? 0);
+  if (declared > MAX_RESPONSE_BYTES) {
+    throw new PaynowApiError(502, { error: 'response_too_large', contentLength: declared });
+  }
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength > MAX_RESPONSE_BYTES) {
+    throw new PaynowApiError(502, { error: 'response_too_large', contentLength: buf.byteLength });
+  }
+  return new TextDecoder().decode(buf);
+}
+
 async function request<T>(
   path: string,
   init: RequestInit & { authorization: string },
 ): Promise<T> {
-  const { authorization, ...rest } = init;
-  const res = await fetch(`${env.paynow.baseUrl}${path}`, {
-    ...rest,
-    headers: {
-      Accept: 'application/json',
-      Authorization: authorization,
-      'x-paynow-store-id': env.paynow.storeId,
-      ...(rest.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(rest.headers ?? {}),
-    },
-  });
+  const { authorization, signal, ...rest } = init;
+  let res: Response;
+  try {
+    res = await fetch(`${env.paynow.baseUrl}${path}`, {
+      ...rest,
+      signal: deadlineSignal(signal),
+      headers: {
+        Accept: 'application/json',
+        Authorization: authorization,
+        'x-paynow-store-id': env.paynow.storeId,
+        ...(rest.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(rest.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    // B-21: no deadline existed — a stalled PayNow hung the inline await in
+    // checkout/cancel until the Worker died. Timeouts become a typed 504 so
+    // routes can answer "gateway timeout, retry" instead of a generic 500.
+    if (isTimeoutAbort(err)) {
+      throw new PaynowApiError(504, { reason: 'timeout', deadlineMs: REQUEST_TIMEOUT_MS });
+    }
+    throw err;
+  }
 
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const text = await readCapped(res);
+  const contentType = res.headers.get('content-type') ?? '';
+
+  const parseJson = (): unknown => {
+    try {
+      return text ? (JSON.parse(text) as unknown) : null;
+    } catch {
+      // Non-JSON upstream body (HTML error page, empty gateway response) —
+      // surface it as a typed error with a bounded raw excerpt, never a raw
+      // SyntaxError that routes would render as an opaque 500.
+      throw new PaynowApiError(res.ok ? 502 : res.status, { raw: text.slice(0, 500) });
+    }
+  };
 
   if (!res.ok) {
-    throw new PaynowApiError(res.status, data);
+    // Error bodies are parsed best-effort regardless of content-type — PayNow
+    // sends JSON, but a proxy in front of it may not; both land in the same
+    // typed error either way.
+    try {
+      throw new PaynowApiError(res.status, text ? (JSON.parse(text) as unknown) : null);
+    } catch (err) {
+      if (err instanceof PaynowApiError) throw err;
+      throw new PaynowApiError(res.status, { raw: text.slice(0, 500) });
+    }
   }
-  return data as T;
+
+  // Success path: honor the content-type. An empty body is a valid null;
+  // anything non-JSON on a 2xx is a contract break (HTML login page, proxy
+  // interstitial) and must not be handed to callers as parsed data.
+  if (!text) return null as T;
+  if (!contentType.includes('json')) {
+    throw new PaynowApiError(502, { reason: 'unexpected_content_type', contentType: contentType || '(none)', raw: text.slice(0, 500) });
+  }
+  return parseJson() as T;
 }
 
 /** Call the Management API (server-to-server, authenticated with our store API key). */
