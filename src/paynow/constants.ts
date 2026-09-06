@@ -83,3 +83,79 @@ export function isLifetimeProduct(productId: string): boolean {
 export function findTierBySubscriptionProductId(productId: string): DonorTierProductIds | null {
   return DONOR_TIERS.find((t) => t.subscriptionProductId === productId) ?? null;
 }
+
+/** Look up a tier's metadata by its lifetime product id. */
+export function findTierByLifetimeProductId(productId: string): DonorTierProductIds | null {
+  return DONOR_TIERS.find((t) => t.lifetimeProductId === productId) ?? null;
+}
+
+/* ------------------------------------------------ One-time store products */
+/* B-C17/B-C19: the store also sells Aureus currency packs and one-time rank
+ * upgrades as real-money one-time products. These ids/amounts MUST stay in
+ * sync with the frontend's `gamedata.ts` (AUREUS_PACKS / RANK_UPGRADES) and
+ * the PayNow dashboard — same discipline as DONOR_TIERS above. */
+
+/** A real-money AUREUS currency pack (one-time). */
+export interface AureusPackProduct {
+  paynowProductId: string;
+  priceUsd: number;
+  /** Total AUREUS credited in-game (base + bulk bonus). */
+  totalAureus: number;
+}
+
+export const AUREUS_PACKS: readonly AureusPackProduct[] = Object.freeze([
+  { paynowProductId: '588822537060753408', priceUsd: 5, totalAureus: 500 },
+  { paynowProductId: '588822549299724288', priceUsd: 10, totalAureus: 1000 },
+  { paynowProductId: '588822560213311488', priceUsd: 15, totalAureus: 1500 },
+  { paynowProductId: '588822572762660864', priceUsd: 25, totalAureus: 2750 },
+  { paynowProductId: '588822585022619648', priceUsd: 50, totalAureus: 5600 },
+  { paynowProductId: '588822595898445824', priceUsd: 100, totalAureus: 11500 },
+  { paynowProductId: '588822608615571456', priceUsd: 150, totalAureus: 17700 },
+  { paynowProductId: '588822619780812800', priceUsd: 200, totalAureus: 24000 },
+  { paynowProductId: '588822632183369728', priceUsd: 250, totalAureus: 31250 },
+  { paynowProductId: '588822644602707968', priceUsd: 500, totalAureus: 75000 },
+]);
+
+/** A one-time move up the lifetime donor ladder (only for existing lifetime owners). */
+export interface RankUpgradeProduct {
+  paynowProductId: string;
+  priceUsd: number;
+  /** Donor tier id (DonorTier enum name, uppercase) the upgrade grants. */
+  toTier: string;
+}
+
+export const RANK_UPGRADES: readonly RankUpgradeProduct[] = Object.freeze([
+  { paynowProductId: '587789607240728576', priceUsd: 15, toTier: 'PLEBEIAN' },
+  { paynowProductId: '587789619249029120', priceUsd: 15, toTier: 'LIBERTUS' },
+  { paynowProductId: '587789629961273344', priceUsd: 15, toTier: 'EQUES' },
+  { paynowProductId: '587789640614805504', priceUsd: 30, toTier: 'PATRICIAN' },
+  { paynowProductId: '587789652820234240', priceUsd: 30, toTier: 'CONSUL' },
+  { paynowProductId: '587789661796048896', priceUsd: 30, toTier: 'IMPERATOR' },
+]);
+
+const AUREUS_PACK_PRODUCT_IDS = new Set(AUREUS_PACKS.map((p) => p.paynowProductId));
+const RANK_UPGRADE_PRODUCT_IDS = new Set(RANK_UPGRADES.map((u) => u.paynowProductId));
+
+/**
+ * True for ANY product that can appear as a non-subscription line in a checkout:
+ * lifetime donor ranks, rank upgrades, or Aureus packs. This is the cart's
+ * one-time validation set — `isLifetimeProduct` deliberately stays narrower
+ * because gifting is restricted to lifetime rank products only.
+ */
+export function isOneTimeStoreProduct(productId: string): boolean {
+  return (
+    LIFETIME_PRODUCT_IDS.has(productId) ||
+    AUREUS_PACK_PRODUCT_IDS.has(productId) ||
+    RANK_UPGRADE_PRODUCT_IDS.has(productId)
+  );
+}
+
+/** Look up an Aureus pack's metadata by its PayNow product id. */
+export function findAureusPack(productId: string): AureusPackProduct | null {
+  return AUREUS_PACKS.find((p) => p.paynowProductId === productId) ?? null;
+}
+
+/** Look up a rank upgrade's metadata by its PayNow product id. */
+export function findRankUpgrade(productId: string): RankUpgradeProduct | null {
+  return RANK_UPGRADES.find((u) => u.paynowProductId === productId) ?? null;
+}

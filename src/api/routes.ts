@@ -70,7 +70,7 @@ import {
   PaynowApiError,
   previewTierChange,
 } from '../paynow/client.js';
-import { DONOR_TIERS, isDonorSubscriptionProduct, isLifetimeProduct } from '../paynow/constants.js';
+import { DONOR_TIERS, isDonorSubscriptionProduct, isLifetimeProduct, isOneTimeStoreProduct } from '../paynow/constants.js';
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
 import type { AppContextVariables } from '../types/index.js';
 import { CURRENCY_ALIASES } from '../types/index.js';
@@ -2066,8 +2066,12 @@ api.post('/store/cart-checkout', storeAuth, async (c) => {
       if (isSub && !isDonorSubscriptionProduct(item.productId)) {
         return c.json({ error: `Item ${i + 1}: product is not a valid subscription` }, 400);
       }
-      if (!isSub && !isLifetimeProduct(item.productId)) {
-        return c.json({ error: `Item ${i + 1}: product is not a valid lifetime purchase` }, 400);
+      // B-C17: one-time lines cover MORE than lifetime donor ranks — the 10
+      // Aureus packs and 6 rank upgrades are one-time products too and were
+      // previously rejected here with a 400, breaking every currency-pack
+      // purchase. Gifts (above) intentionally stay lifetime-rank-only.
+      if (!isSub && !isOneTimeStoreProduct(item.productId)) {
+        return c.json({ error: `Item ${i + 1}: product is not a valid one-time purchase` }, 400);
       }
       lines.push({ productId: item.productId, quantity: qty, subscription: isSub });
     }
