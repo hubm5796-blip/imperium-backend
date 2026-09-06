@@ -72,6 +72,7 @@ import {
 } from '../paynow/client.js';
 import { DONOR_TIERS, isDonorSubscriptionProduct, isLifetimeProduct, isOneTimeStoreProduct } from '../paynow/constants.js';
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
+import { fulfillPaynowOrder, normalizePaynowEventType } from '../paynow/fulfillment.js';
 import type { AppContextVariables } from '../types/index.js';
 import { CURRENCY_ALIASES } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -2116,7 +2117,7 @@ api.post('/webhooks/paynow', async (c) => {
     return c.json({ error: 'Invalid signature' }, 401);
   }
 
-  let event: { event_type?: string; data?: Record<string, unknown> };
+  let event: { event_type?: string; data?: Record<string, unknown>; body?: Record<string, unknown> };
   try {
     event = JSON.parse(rawBody) as { event_type?: string; data?: Record<string, unknown> };
   } catch {
@@ -2124,12 +2125,28 @@ api.post('/webhooks/paynow', async (c) => {
   }
 
   const eventType = event.event_type ?? '';
-  const data = event.data ?? {};
+  // PayNow's docs spell the enums ON_ORDER_COMPLETED while earlier deliveries
+  // used CamelCase (OnSubscriptionActivated) — normalize once, switch on the
+  // canonical token, and stop betting on a single spelling.
+  const canonicalEvent = normalizePaynowEventType(eventType);
+  // Order payloads arrive under `body` (OrderDTO), subscription deliveries under
+  // `data` — accept either so both generations of PayNow webhooks parse.
+  const data = ((event.body ?? event.data) ?? {}) as Record<string, unknown>;
 
   try {
-    switch (eventType) {
-      case 'OnSubscriptionActivated':
-      case 'OnSubscriptionRenewed': {
+    switch (canonicalEvent) {
+      case 'order_completed': {
+        // B-C16/B-C19: deliver the paid order in-game (Aureus packs, ranks,
+        // upgrades). Any delivery failure returns 500 so PayNow retries —
+        // each line is idempotent, so retries are always safe.
+        const result = await fulfillPaynowOrder(data);
+        if (result.status === 'error') {
+          return c.json({ error: 'Order fulfillment failed', detail: result.error }, 500);
+        }
+        break;
+      }
+      case 'subscription_activated':
+      case 'subscription_renewed': {
         const customerId = String(data['customer_id'] ?? (data['customer'] as { id?: string })?.id ?? '');
         const subscriptionId = String(data['id'] ?? '');
         const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
@@ -2144,7 +2161,7 @@ api.post('/webhooks/paynow', async (c) => {
         }
         break;
       }
-      case 'OnSubscriptionCanceled': {
+      case 'subscription_canceled': {
         const customerId = String(data['customer_id'] ?? (data['customer'] as { id?: string })?.id ?? '');
         const subscriptionId = String(data['id'] ?? '');
         const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
@@ -2156,8 +2173,9 @@ api.post('/webhooks/paynow', async (c) => {
         }
         break;
       }
+      case 'unknown':
       default:
-        // Other event types (orders, refunds, chargebacks) don't need caching —
+        // Other event types (refunds, chargebacks) don't need caching —
         // rank grant/revoke is already handled by PayNow's product commands.
         break;
     }
