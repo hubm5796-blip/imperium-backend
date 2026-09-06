@@ -15,7 +15,11 @@ import {
   fetchDiscordUser,
 } from '../auth/discord.js';
 import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
-import { resolveStaffActor, staffActorHasRole } from '../middleware/gates.js';
+import {
+  resolveActorFromToken,
+  resolveStaffActor,
+  staffActorHasRole,
+} from '../middleware/gates.js';
 import { authRateLimit, globalRateLimit, rateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
@@ -138,16 +142,6 @@ const botAuthMiddleware = async (c: Context, next: Next) => {
   }
   await next();
 };
-
-function resolveActorFromToken(c: Context): string {
-  const token = c.req.header('X-Bot-Token') ?? '';
-  const map = env.actorTokenMap ?? '';
-  for (const pair of map.split(',')) {
-    const [tok, name] = pair.split(':').map((s) => s.trim());
-    if (tok && name && tok === token) return name;
-  }
-  return 'panel-service';
-}
 
 /**
  * AUDIT ATTRIBUTION + STAFF ROLE GATES (2026-08-31; Phase 1 rewrite B-01/X-04).

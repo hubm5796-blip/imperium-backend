@@ -52,6 +52,8 @@ import { createApp } from '../app.js';
 import { initEnvFromBindings } from '../env.js';
 import { signJwt } from '../auth/jwt.js';
 import { sendCommandWithResponse } from '../db/redis.js';
+import { resolveActorFromToken } from '../middleware/gates.js';
+import type { Context } from 'hono';
 
 let app: ReturnType<typeof createApp>;
 
@@ -59,6 +61,12 @@ const BOT = { 'X-Bot-Token': 'test-bot-token' };
 const punishBody = { target: 'griefos', action: 'ban', reason: 'test' };
 const ADMIN_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
+/** Minimal Context stub — resolveActorFromToken only reads headers. */
+function ctxWithToken(token?: string): Context {
+  return {
+    req: { header: (name: string) => (name.toLowerCase() === 'x-bot-token' ? token : undefined) },
+  } as unknown as Context;
+}
 
 async function sessionCookie(payload: Parameters<typeof signJwt>[0]): Promise<string> {
   const jwt = await signJwt(payload);
@@ -184,5 +192,15 @@ describe('staff gate — X-Staff-Role trust protocol', () => {
       body: JSON.stringify(punishBody),
     });
     expect(res.status).toBe(403);
+  });
+
+  it('B-01 (b): unknown principals resolve to anonymous, never the privileged panel-service', () => {
+    // No ACTOR_TOKEN_MAP in this env: the unmapped shared token and the
+    // no-token case both resolve deny-by-default. 'panel-service' can only
+    // be produced by resolveStaffActor's explicit verified-token transition
+    // branch (which the exemption-deletion commit removes).
+    expect(resolveActorFromToken(ctxWithToken('test-bot-token'))).toBe('anonymous');
+    expect(resolveActorFromToken(ctxWithToken(undefined))).toBe('anonymous');
+    expect(resolveActorFromToken(ctxWithToken('forged-unknown-token'))).toBe('anonymous');
   });
 });
