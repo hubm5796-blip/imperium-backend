@@ -176,12 +176,19 @@ beforeEach(() => {
 });
 
 describe('B-15 — guide vote score maintained atomically', () => {
+  /** The batch containing the vote upsert — middleware (e.g. the D1 rate
+   *  limiter) also batches, so filter rather than assume a single batch. */
+  function voteBatch(): Array<{ sql: string; params: unknown[] }> {
+    const entry = batchLog.find((stmts) => stmts.some((s) => s.sql.includes('INSERT INTO guide_votes')));
+    return entry ?? [];
+  }
+
   it('a vote submits the upsert and the score recompute in ONE batch (transaction)', async () => {
     const res = await vote(1);
     expect(res.status).toBe(200);
-    expect(batchLog.length).toBe(1);
-    const [upsert, score] = batchLog[0]!;
-    expect(batchLog[0]!.length).toBe(2);
+    const entry = voteBatch();
+    expect(entry.length).toBe(2);
+    const [upsert, score] = entry;
     expect(upsert.sql).toMatch(/INSERT INTO guide_votes/);
     expect(upsert.sql).toMatch(/ON CONFLICT \(guide_id, voter_uuid\) DO UPDATE SET value = excluded\.value/);
     expect(score.sql).toMatch(/UPDATE guides\s+SET score = \(SELECT COALESCE\(SUM\(value\), 0\) FROM guide_votes WHERE guide_id = \?\)\s+WHERE id = \?/);
@@ -189,7 +196,7 @@ describe('B-15 — guide vote score maintained atomically', () => {
 
   it('the score statement recomputes from guide_votes — no read-modify-write increment', async () => {
     await vote(1);
-    const scoreStmt = batchLog[0]![1]!;
+    const scoreStmt = voteBatch()[1]!;
     expect(scoreStmt.sql).not.toMatch(/score = score \+/);
     expect(scoreStmt.sql).toMatch(/SUM\(value\)/);
   });
@@ -201,8 +208,9 @@ describe('B-15 — guide vote score maintained atomically', () => {
     expect(res.json).toBeTruthy();
     // ... plus two modeled voters (distinct uuids) applied through the same
     // upsert/recompute pair the route emits.
-    const upsertSql = batchLog[0]![0]!.sql;
-    const recomputeSql = batchLog[0]![1]!.sql;
+    const entry = voteBatch();
+    const upsertSql = entry[0]!.sql;
+    const recomputeSql = entry[1]!.sql;
     fakeD1.batch([
       makeBound(upsertSql, [GUIDE_ID, '99999999-8888-7777-6666-555555555555', 1]),
       makeBound(recomputeSql, [GUIDE_ID, GUIDE_ID]),
@@ -230,7 +238,9 @@ describe('B-15 — guide vote score maintained atomically', () => {
     guidesTable.set(GUIDE_ID, { author_uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', score: 0 });
     const res = await vote(1);
     expect(res.status).toBe(400);
-    expect(batchLog.length).toBe(0);
+    // No VOTE batch was submitted (middleware batches may exist — the guard
+    // runs before the route's own write).
+    expect(voteBatch()).toHaveLength(0);
     expect(votesTable.size).toBe(0);
   });
 });
