@@ -2636,6 +2636,17 @@ api.get('/marketplace/mine', requireMcIdentity, async (c) => {
 /* ---------------------------------------------------------- Legion Management */
 
 /**
+ * B-27: these routes compose an in-game command string that the plugin
+ * executes. The verb is a fixed literal; the single argument is the only
+ * variable, so it gets a strict single-token charset — matching the plugin's
+ * own gates exactly (LegionManager.createLegion: [A-Za-z0-9_]{3,16};
+ * usernames: Mojang/Floodgate shape). Length-only checks used to let
+ * spaces/extra tokens through, a plugin-parse injection surface.
+ */
+const LEGION_NAME_SCHEMA = /^[A-Za-z0-9_]{3,16}$/;
+const MC_USERNAME_SCHEMA = /^\.?[A-Za-z0-9_]{3,16}$/;
+
+/**
  * POST /api/legion/create — create a new legion (in-game command dispatch).
  */
 api.post('/legion/create', requireAuth, requireLinked, async (c) => {
@@ -2643,8 +2654,8 @@ api.post('/legion/create', requireAuth, requireLinked, async (c) => {
   let body: { name?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
   const name = (body.name ?? '').trim();
-  if (!name || name.length < 3 || name.length > 20) {
-    return c.json({ error: 'Legion name must be 3-20 characters' }, 400);
+  if (!LEGION_NAME_SCHEMA.test(name)) {
+    return c.json({ error: 'Legion name must be 3-16 characters: letters, numbers, and underscores only' }, 400);
   }
   try {
     const response = await sendCommandWithResponse('DISPATCH_COMMAND', {
@@ -2680,7 +2691,9 @@ api.post('/legion/invite', requireAuth, requireLinked, async (c) => {
   let body: { username?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
   const username = (body.username ?? '').trim();
-  if (!username) return c.json({ error: 'Missing username' }, 400);
+  if (!MC_USERNAME_SCHEMA.test(username)) {
+    return c.json({ error: 'Invalid username — expected a 3-16 character Minecraft name (Bedrock names may start with a ".")' }, 400);
+  }
   try {
     const response = await sendCommandWithResponse('DISPATCH_COMMAND', {
       command: `legion invite ${username}`,
