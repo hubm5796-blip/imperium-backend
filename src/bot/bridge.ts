@@ -169,7 +169,14 @@ export const bridgeApi = new Hono<ApiEnv>();
 bridgeApi.post('/send', async (c) => {
   const secret = env.bridgeSecret;
   const bearer = (c.req.header('authorization') ?? '').replace(/^Bearer\s+/i, '');
-  if (!secret || !bearer || !timingSafeEqual(Buffer.from(bearer), Buffer.from(secret))) {
+  // B-C22: timingSafeEqual throws RangeError when the buffers differ in length,
+  // which crashed this route with a 500 on any wrong-length bearer. Compare
+  // lengths first and fail CLOSED — a length mismatch is an auth failure (401),
+  // never a success and never a crash. The length check itself leaks only the
+  // secret's byte length, which is not sensitive.
+  const secretBuf = Buffer.from(secret ?? '');
+  const bearerBuf = Buffer.from(bearer);
+  if (!secret || !bearer || secretBuf.length !== bearerBuf.length || !timingSafeEqual(bearerBuf, secretBuf)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   if (!bridgeEnabled()) return c.json({ error: 'Bridge disabled' }, 503);
