@@ -11,11 +11,12 @@ import { ALL_EVENT_TYPES, type OutboundEventType } from '../../webhooks/types.js
 import {
   createSubscriber,
   deleteSubscriber,
+  enqueueDeliveries,
   getSubscriber,
   listDeliveries,
   listSubscribers,
 } from '../../webhooks/store.js';
-import { emit } from '../../webhooks/deliver.js';
+import { envelopeOf } from '../../webhooks/types.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -76,14 +77,25 @@ webhooksApi.get('/webhooks/subscriptions', readRateLimit, async (c) => {
   });
 });
 
-/** POST /api/v2/webhooks/subscriptions/:id/test — enqueue a test.ping. */
+/** POST /api/v2/webhooks/subscriptions/:id/test — enqueue a test.ping.
+ *  B-32: scoped to :id ONLY — this used to call emit(), which fans the event
+ *  out to EVERY active subscriber, so "test this subscriber" spammed all
+ *  endpoints and a green test said nothing about :id. */
 webhooksApi.post('/webhooks/subscriptions/:id/test', writeRateLimit, async (c) => {
   if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
   const subscriber = await getSubscriber(c.req.param('id') ?? '');
   if (!subscriber) return c.json({ error: 'Subscriber not found' }, 404);
   if (subscriber.status !== 'active') return c.json({ error: `Subscriber is ${subscriber.status}` }, 409);
-  const queued = await emit({ type: 'test.ping', v: 1, at: new Date().toISOString() });
-  return c.json({ queued, note: 'Delivery happens on the next cron tick' });
+  const eventId = crypto.randomUUID();
+  const queued = await enqueueDeliveries([
+    {
+      subscriberId: subscriber.id,
+      eventId,
+      type: 'test.ping',
+      payload: JSON.stringify(envelopeOf({ type: 'test.ping', v: 1, at: new Date().toISOString() }, eventId)),
+    },
+  ]);
+  return c.json({ queued, subscriberId: subscriber.id, note: 'Delivery happens on the next cron tick' });
 });
 
 /** DELETE /api/v2/webhooks/subscriptions/:id */
