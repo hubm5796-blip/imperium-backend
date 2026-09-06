@@ -6,7 +6,9 @@
  *
  *   /ticket open subject category [body]   linked players; creates the private
  *                                         thread + the backend row (cap: 2 open)
- *   /ticket reply <text>                  staff (TICKET_STAFF_ROLE_ID, in-thread)
+ *   /ticket reply <text>                  staff (backend LuckPerms via
+ *                                         requireStaff — B-40; the Discord
+ *                                         staff role is a UX pre-check only)
  *   /ticket close [resolution]            staff; archives + satisfaction prompt
  *   /ticket info                          staff; the current row card
  *   /mytickets                            linked; own tickets table
@@ -18,6 +20,7 @@ import { SlashCommandBuilder } from '@discordjs/builders';
 import { EmbedBuilder } from '@discordjs/builders';
 import { getProfile, createTicketV2, patchTicketV2, appendTicketNoteV2 } from '../apiClient.js';
 import { createPrivateThread, addThreadMember, setThreadArchived, sendThreadMessage } from '../discordRest.js';
+import { requireStaff } from '../moderation.js';
 import { errorEmbed } from '../embeds.js';
 import { COLORS, EMOJI } from '../config.js';
 import { getCronConfig } from '../cronConfig.js';
@@ -156,19 +159,30 @@ export const ticketCommand: BotCommand = {
       return;
     }
 
-    // Staff-gated commands below.
-    const staff = config.ticketStaffRoleId;
-    if (!staff || !interaction.memberRoles.includes(staff)) {
+    // Staff-gated commands below (B-40): the authoritative gate is the
+    // backend LuckPerms lookup (requireStaff — the same one /moderation
+    // uses). There is deliberately NO TICKET_STAFF_ROLE_ID refusal here:
+    // any Discord admin can grant that role, so refusing on it would keep
+    // the cosmetic check as the boundary. requireStaff needs a linked
+    // account, exactly like the moderation commands.
+    const staff = await requireStaff(interaction, 'helper');
+    if (!staff) {
       await interaction.deferReply({ ephemeral: true });
       await interaction.editReply({ embeds: [errorEmbed('Staff only.', 'Forbidden')] });
       return;
     }
 
+    const ticketId = (interaction.options.getString('id', true) ?? '').trim();
+    if (!/^[0-9A-Za-z-]{1,64}$/.test(ticketId)) {
+      await interaction.deferReply({ ephemeral: true });
+      await interaction.editReply({ embeds: [errorEmbed('Invalid ticket id.')] });
+      return;
+    }
+
     if (sub === 'reply') {
       await interaction.deferReply({ ephemeral: true });
-      const id = interaction.options.getString('id', true);
       const text = interaction.options.getString('text', true).slice(0, 2000);
-      const noted = await appendTicketNoteV2(id, 'staff', `(discord <@${interaction.user.id}>) ${text}`);
+      const noted = await appendTicketNoteV2(ticketId, 'staff', `(discord <@${interaction.user.id}>) ${text}`);
       if (!noted.ok) {
         await interaction.editReply({ embeds: [errorEmbed(noted.status === 404 ? 'Ticket not found.' : noted.message)] });
         return;
@@ -176,42 +190,40 @@ export const ticketCommand: BotCommand = {
       // Mirror into the thread if one exists: fetch list, find the row.
       const { listTicketsV2 } = await import('../apiClient.js');
       const rows = await listTicketsV2();
-      const row = rows.ok ? rows.data.tickets.find((t) => t.id === id) : undefined;
+      const row = rows.ok ? rows.data.tickets.find((t) => t.id === ticketId) : undefined;
       if (row?.discord_thread_id) {
         await sendThreadMessage(row.discord_thread_id, token, { content: `**Staff:** ${text}` });
       }
-      await interaction.editReply({ embeds: [ticketCard(`Replied to #${id}`, [text.slice(0, 500)])] });
+      await interaction.editReply({ embeds: [ticketCard(`Replied to #${ticketId}`, [text.slice(0, 500)])] });
       return;
     }
 
     if (sub === 'close') {
       await interaction.deferReply({ ephemeral: true });
-      const id = interaction.options.getString('id', true);
       const resolution = interaction.options.getString('resolution', false) ?? 'resolved';
-      const closed = await patchTicketV2(id, { status: 'closed', satisfaction: 'pending' });
+      const closed = await patchTicketV2(ticketId, { status: 'closed', satisfaction: 'pending' });
       if (!closed.ok) {
         await interaction.editReply({ embeds: [errorEmbed(closed.status === 404 ? 'Ticket not found.' : closed.message)] });
         return;
       }
       const { listTicketsV2 } = await import('../apiClient.js');
       const rows = await listTicketsV2();
-      const row = rows.ok ? rows.data.tickets.find((t) => t.id === id) : undefined;
+      const row = rows.ok ? rows.data.tickets.find((t) => t.id === ticketId) : undefined;
       if (row?.discord_thread_id) {
         await sendThreadMessage(row.discord_thread_id, token, {
-          content: `**Ticket #${id} closed** — ${resolution}. React 👍/👎 on the web ticket page to rate the help.`,
+          content: `**Ticket #${ticketId} closed** — ${resolution}. React 👍/👎 on the web ticket page to rate the help.`,
         }).catch(() => undefined);
         await setThreadArchived(row.discord_thread_id, true, token).catch(() => undefined);
       }
-      await interaction.editReply({ embeds: [ticketCard(`Closed #${id}`, [`Resolution: ${resolution}`])] });
+      await interaction.editReply({ embeds: [ticketCard(`Closed #${ticketId}`, [`Resolution: ${resolution}`])] });
       return;
     }
 
     if (sub === 'info') {
       await interaction.deferReply({ ephemeral: true });
-      const id = interaction.options.getString('id', true);
       const { listTicketsV2 } = await import('../apiClient.js');
       const rows = await listTicketsV2();
-      const row = rows.ok ? rows.data.tickets.find((t) => t.id === id) : undefined;
+      const row = rows.ok ? rows.data.tickets.find((t) => t.id === ticketId) : undefined;
       if (!row) {
         await interaction.editReply({ embeds: [errorEmbed('Ticket not found.')] });
         return;
