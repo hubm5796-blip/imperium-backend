@@ -143,4 +143,16 @@ describe('GET /api/v2/member', () => {
       expect(res.status).toBe(400);
     }
   });
+
+  it('B-48: sub-snowflake-width digit runs are rejected before any DB/Redis work', async () => {
+    // 5-16 digit runs passed the old width range and cost a join + cache
+    // fill per probe; the canonical schema is 17-20.
+    for (const bad of ['12345', '1'.repeat(16), '1'.repeat(21), '1'.repeat(25)]) {
+      const res = await app.request(`/api/v2/member?discord_id=${bad}`, {
+        headers: { 'X-Bot-Token': BOT_TOKEN },
+      });
+      expect(res.status).toBe(400);
+      expect(queryMock).not.toHaveBeenCalled();
+    }
+  });
 });
