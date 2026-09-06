@@ -34,17 +34,26 @@ const SPEC = {
   openapi: '3.1.0',
   info: {
     title: 'ImperiumMC API v2',
-    version: '1.0.0',
+    version: '1.1.0',
     description:
-      'The versioned API surface. v2 contract: responses are enveloped ' +
-      '({data, meta?} / {error:{code,message}}); error codes are a closed enum; ' +
-      'list endpoints page via opaque base64url keyset cursors; unknown query ' +
-      'params are rejected. v1 routes keep their legacy shapes.',
+      'The versioned API surface — with an honest account of who keeps the contract (B-42).\n' +
+      'KEPT by the v2 scaffold routes (ping, leaderboards, openapi.json, keys, tickets, ' +
+      'moderation, store-orders, guides, gallery, comments): enveloped responses ' +
+      '({data, meta?} / {error:{code,message}}), closed error-code enum, opaque keyset ' +
+      'cursors, unknown query params rejected.\n' +
+      'NOT KEPT by the v2 RESIDENTS mounted from the expansion set (/api/v2/public/player/*, ' +
+      '/api/v2/member, /api/v2/events/stream, /api/v2/webhooks/*, /api/v2/notifications/*, ' +
+      '/api/v2/changelog/*): they predate the scaffold and return BARE shapes with plain ' +
+      '{error} bodies — treat them as v1-era surfaces living under the v2 prefix until ' +
+      'they are enveloped or version-excluded.\n' +
+      'Scopes (bearerKey) are documented but NOT yet enforced — requireScope has zero route ' +
+      'consumers today.\n' +
+      'v1 routes keep their legacy shapes.',
   },
   servers: [{ url: 'https://api.imperiummc.net' }],
   // V6 05-04: the four principal schemes. sessionCookie + botToken cover v1-era routes;
   // serviceToken is the delegated (X-Mc-Uuid) split; bearerKey is the imp_ API-key family
-  // (scopes per key, enforced by requireScope).
+  // (scopes per key — enforcement via requireScope is not wired to any route yet).
   components: {
     securitySchemes: {
       sessionCookie: { type: 'apiKey', in: 'cookie', name: 'imperium_session' },
@@ -65,7 +74,10 @@ const SPEC = {
         summary: 'Leaderboard page (keyset cursor)',
         description:
           'Boards: denarius | blocks | prestige | playtime. Page with meta.nextCursor; ' +
-          'cursors are stable across inserts (unlike offset pages).',
+          'cursors are stable across inserts (unlike offset pages).\n' +
+          'NOT this route: the expansion leaderboard family — GET /api/leaderboards/{board} ' +
+          '(v1 prefix) serves the rank | legion | colosseum boards with its own response ' +
+          'shape. Two families, two prefixes; neither impersonates the other.',
         parameters: [
           { name: 'board', in: 'path', required: true, schema: { type: 'string', enum: ['denarius', 'blocks', 'prestige', 'playtime'] } },
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
@@ -103,10 +115,11 @@ const SPEC = {
     },
     '/api/v2/public/player/{username}': {
       get: {
-        summary: 'Public player profile (privacy-scoped)',
+        summary: '[RESIDENT — bare shape] Public player profile (privacy-scoped)',
         description:
-          'Single aggregate for shareable profile pages. The schema EXCLUDES ' +
-          'aureus/auctoritas by construction (never selected into the payload). ' +
+          'v2 RESIDENT (expansion-mounted): returns a BARE object, not the v2 envelope — ' +
+          'see the info block. Single aggregate for shareable profile pages. The schema ' +
+          'EXCLUDES aureus/auctoritas by construction (never selected into the payload). ' +
           'Name resolution reads player_names only — no Mojang fallback. ' +
           '30 req/min/IP; Redis 60s; stale-serve (X-Stale-Profile) bridges DB outages.',
         parameters: [{ name: 'username', in: 'path', required: true, schema: { type: 'string', maxLength: 20 } }],
@@ -155,10 +168,12 @@ const SPEC = {
     },
     '/api/v2/member': {
       get: {
-        summary: 'Role-sync aggregate (bot token)',
+        summary: '[RESIDENT — bare shape] Role-sync aggregate (bot token)',
         description:
-          'Link identity + rank + prestige + donor state in one call. Donor truth is the ' +
-          'plugin-synced donor_ranks row with expiry awareness (active:false past expires_at).',
+          'v2 RESIDENT (expansion-mounted): returns a BARE object, not the v2 envelope — ' +
+          'see the info block. Link identity + rank + prestige + donor state in one call. ' +
+          'Donor truth is the plugin-synced donor_ranks row with expiry awareness ' +
+          '(active:false past expires_at).',
         parameters: [{ name: 'discord_id', in: 'query', required: true, schema: { type: 'string', pattern: '^\\d{5,25}$' } }],
         responses: {
           '200': {
@@ -187,11 +202,18 @@ const SPEC = {
     },
     '/api/v2/events/stream': {
       get: {
-        summary: 'SSE live-event stream',
+        summary: '[RESIDENT — SSE] Live-event stream',
         description:
-          'text/event-stream. topics=status,economy,season,events (15s/60s/120s/30s). ' +
-          'Change-gated frames, 25s keepalives, 10-minute cap then event:bye; ' +
-          'Last-Event-ID replays from a per-topic ring.',
+          'v2 RESIDENT (expansion-mounted): text/event-stream, not JSON. ' +
+          'topics=status,economy,season,events (15s/60s/120s/30s). Change-gated frames, ' +
+          '25s keepalives, 10-minute cap then event:bye; per-IP concurrent-stream cap ' +
+          '(429 + Retry-After past 5).\n' +
+          'RESUME (honest semantics): Last-Event-ID is honored from the HEADER ONLY (no ' +
+          'query variant exists). Replay is BEST-EFFORT and PER-ISOLATE — reconnecting ' +
+          'onto a different isolate may see a seq reset, a gap, or duplicates; treat ' +
+          'events entries as at-least-once and dedupe on the carried web_events id. ' +
+          'The events topic deliberately strips player uuids (the REST feed exposes ' +
+          'them to authenticated callers only).',
         parameters: [
           { name: 'topics', in: 'query', schema: { type: 'string', default: 'status' } },
           { name: 'Last-Event-ID', in: 'header', schema: { type: 'string' } },
@@ -204,31 +226,32 @@ const SPEC = {
     },
     '/api/v2/webhooks/subscriptions': {
       get: {
-        summary: 'List webhook subscribers (bot token; secrets redacted)',
+        summary: '[RESIDENT — bare shape] List webhook subscribers (bot token; secrets redacted)',
         responses: { '200': { description: 'Subscriber list' }, '401': { description: 'UNAUTHORIZED', content: { 'application/json': { schema: jsonError(['UNAUTHORIZED']) } } } },
       },
       post: {
-        summary: 'Create a webhook subscriber (bot token; secret shown once)',
+        summary: '[RESIDENT — bare shape] Create a webhook subscriber (bot token; secret shown once)',
         responses: { '201': { description: 'Created' }, '400': { description: 'INVALID_PARAM', content: { 'application/json': { schema: jsonError(['INVALID_PARAM']) } } }, '401': { description: 'UNAUTHORIZED', content: { 'application/json': { schema: jsonError(['UNAUTHORIZED']) } } } },
       },
     },
     '/api/v2/webhooks/subscriptions/{id}/test': {
       post: {
-        summary: 'Enqueue a test.ping delivery',
+        summary: '[RESIDENT] Enqueue a test.ping delivery scoped to {id} only',
+        description: 'B-32: the test delivery is queued for the addressed subscriber alone — no fan-out to other subscribers.',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'Queued' }, '404': { description: 'NOT_FOUND', content: { 'application/json': { schema: jsonError(['NOT_FOUND']) } } }, '409': { description: 'Subscriber not active' } },
       },
     },
     '/api/v2/webhooks/subscriptions/{id}': {
       delete: {
-        summary: 'Delete a webhook subscriber',
+        summary: '[RESIDENT — bare shape] Delete a webhook subscriber',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'Deleted' }, '404': { description: 'NOT_FOUND', content: { 'application/json': { schema: jsonError(['NOT_FOUND']) } } } },
       },
     },
     '/api/v2/webhooks/deliveries': {
       get: {
-        summary: 'Webhook delivery queue inspection (bot token)',
+        summary: '[RESIDENT — bare shape] Webhook delivery queue inspection (bot token)',
         parameters: [
           { name: 'status', in: 'query', schema: { type: 'string', enum: ['pending', 'failed', 'delivered', 'dead'] } },
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 } },

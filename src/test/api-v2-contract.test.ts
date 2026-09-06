@@ -157,3 +157,45 @@ describe('GET /api/v2/openapi.json', () => {
     }
   });
 });
+
+describe('GET /api/v2/openapi.json — B-42 honesty annotations', () => {
+  it('residents are labeled bare-shape and the info block explains the split', async () => {
+    const res = await get('/api/v2/openapi.json');
+    const spec = (await res.json()) as {
+      info: { description: string };
+      paths: Record<string, { get?: { summary?: string; description?: string }; post?: { summary?: string; description?: string } }>;
+    };
+    // The info block must say which routes keep the envelope and which don't.
+    expect(spec.info.description).toMatch(/NOT KEPT by the v2 RESIDENTS/i);
+    expect(spec.info.description).toMatch(/BARE shapes/i);
+    expect(spec.info.description).toMatch(/requireScope has zero route consumers/i);
+    // Resident paths are labeled in their summaries.
+    expect(spec.paths['/api/v2/public/player/{username}']?.get?.summary).toMatch(/\[RESIDENT/);
+    expect(spec.paths['/api/v2/member']?.get?.summary).toMatch(/\[RESIDENT/);
+    expect(spec.paths['/api/v2/events/stream']?.get?.summary).toMatch(/\[RESIDENT/);
+    expect(spec.paths['/api/v2/webhooks/subscriptions']?.get?.summary).toMatch(/\[RESIDENT/);
+  });
+
+  it('documents BOTH leaderboard families (v2 four + expansion three)', async () => {
+    const res = await get('/api/v2/openapi.json');
+    const spec = (await res.json()) as { paths: Record<string, { get?: { description?: string } }> };
+    const desc = spec.paths['/api/v2/leaderboards/{board}']?.get?.description ?? '';
+    expect(desc).toMatch(/rank \| legion \| colosseum/);
+    expect(desc).toMatch(/v1 prefix/);
+  });
+
+  it('SSE resume semantics are stated honestly; no query resume variant is advertised', async () => {
+    const res = await get('/api/v2/openapi.json');
+    const spec = (await res.json()) as {
+      paths: Record<string, { get?: { description?: string; parameters?: Array<{ name: string; in: string }> } }>;
+    };
+    const stream = spec.paths['/api/v2/events/stream']?.get ?? {};
+    expect(stream.description).toMatch(/HEADER ONLY/i);
+    expect(stream.description).toMatch(/PER-ISOLATE/i);
+    expect(stream.description).toMatch(/at-least-once/i);
+    const params = (stream.parameters ?? []).map((p) => `${p.in}:${p.name}`);
+    expect(params).toContain('header:Last-Event-ID');
+    expect(params).toContain('query:topics'); // topic selection is real
+    expect(params).not.toContain('query:last_event_id'); // the resume-by-query variant is gone
+  });
+});
