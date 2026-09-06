@@ -10,8 +10,33 @@
 //            Postgres mirror kept as fallback)
 //  - colosseum: leaderboard_stats, the plugin's generic leaderboard
 //    table, under category COLOSSEUM_POINTS (Postgres — web-data surface).
-import { gameQuery } from '../../db/gameMysql.js';
+import { gameQuery, GameMySqlUnavailableError } from '../../db/gameMysql.js';
 import { query } from '../../db/pool.js';
+import { logger } from '../../utils/logger.js';
+
+/**
+ * B-11: gameQuery THROWS on outage (it used to swallow failures into [], so a
+ * dead game DB was indistinguishable from "no rows" and the Postgres fallback
+ * below never engaged). Every game-first board wraps the read in this guard:
+ * outage → distinct-tag log → explicit fall-through to the Postgres mirror.
+ * The mirror may itself be stale, but it is now a CHOSEN degradation, and the
+ * log says which database answered.
+ */
+async function gameRowsOrFallback<T extends Record<string, unknown>>(
+  board: string,
+  sql: string,
+  params: readonly unknown[],
+): Promise<T[]> {
+  try {
+    return await gameQuery<T>(sql, params);
+  } catch (err) {
+    if (err instanceof GameMySqlUnavailableError) {
+      logger.warn({ board, err: err.message }, '[game-mysql] board read failed — falling back to the Postgres mirror');
+      return [];
+    }
+    throw err;
+  }
+}
 
 // KOTH board removed 2026-08-20 — the plugin feature is deleted (owner directive); the board
 // served a category nothing writes anymore.
@@ -52,15 +77,17 @@ export async function fetchExpansionBoard(
   const cap = Math.min(Math.max(limit, 1), 100);
 
   if (board === 'rank') {
-    // GAME MYSQL FIRST (2026-08-25): the plugin's live player_ranks. gameQuery returns []
-    // on failure — the Postgres mirror below is the fallback.
-    const gameRows = await gameQuery<{
+    // GAME MYSQL FIRST (2026-08-25): the plugin's live player_ranks. On outage
+    // (GameMySqlUnavailableError) gameRowsOrFallback returns [] — the Postgres
+    // mirror below is the fallback (B-11).
+    const gameRows = await gameRowsOrFallback<{
       uuid: string;
       rank_level: string | number;
       rank_name: string;
       rank_progress: string | number;
       username: string | null;
     }>(
+      'rank',
       `SELECT pr.uuid, pr.rank_level, pr.rank_name, pr.rank_progress, pn.username
          FROM player_ranks pr
          LEFT JOIN player_names pn ON pr.uuid = pn.uuid
@@ -111,7 +138,7 @@ export async function fetchExpansionBoard(
     // the game DB. OWNER DIRECTIVE: legion top ranks by CIVITAS — the summed civitas
     // balances of each legion's members (currency_balances, cents! -> /100 display) —
     // NOT by XP. `value` carries the civitas total; xp kept for response compatibility.
-    const gameRows = await gameQuery<{
+    const gameRows = await gameRowsOrFallback<{
       name: string;
       display_name: string | null;
       level: string | number;
@@ -119,6 +146,7 @@ export async function fetchExpansionBoard(
       civitas: string | number;
       members: string | number;
     }>(
+      'legion',
       `SELECT l.name, l.display_name, l.level, l.xp,
               (SELECT COUNT(*) FROM legion_members m WHERE m.legion_name = l.name) AS members,
               COALESCE((SELECT SUM(CAST(cb.balance AS UNSIGNED)) FROM legion_members m2

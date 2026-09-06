@@ -821,7 +821,10 @@ api.get('/player/quests', requireAuth, requireLinked, async (c) => {
   return c.json(data);
 });
 
-/** GET /api/player/legion — game MySQL first; Postgres fallback. */
+/** GET /api/player/legion — game MySQL first; Postgres fallback. Both paths
+ * return the SAME shape ({legion: LegionInfo, members: LegionMemberInfo[]}):
+ * the game helpers (B-11) map the plugin's legion_members/legions columns
+ * (player_uuid, role — LegionRank enum names) into the LegionInfo form. */
 api.get('/player/legion', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;
   try {
@@ -832,7 +835,10 @@ api.get('/player/legion', requireAuth, requireLinked, async (c) => {
       return c.json({ legion: info, members });
     }
   } catch (err) {
-    logger.warn({ err: String(err) }, '[player/legion] game MySQL failed');
+    // B-11: GameMySqlUnavailableError lands here — degrade explicitly to the
+    // Postgres copy below (previously the outage was swallowed inside
+    // gameQuery as [] and this fallback answered alone, invisibly).
+    logger.warn({ err: String(err) }, '[player/legion] game MySQL failed — Postgres fallback');
   }
   const data = await getPlayerLegion(uuid);
   return c.json(data);
@@ -1832,10 +1838,19 @@ api.post('/store/subscription/cancel', storeAuth, async (c) => {
     return c.json({ error: 'Cancellation service unavailable. Please try again.' }, 500);
   }
 
-  dbWriteBestEffort('upsertCachedSubscription(canceled)', async () => {
+  // B-11: AWAIT the cancel-path cache write. Fire-and-forget work is torn
+  // down the moment the response returns in Workers — a killed write left
+  // status:'active' cached forever (B-09's exact shape). Awaiting it here
+  // guarantees the write completes before the caller sees success; a write
+  // FAILURE is logged but still returns ok (the cancel DID happen at PayNow,
+  // which is the source of truth — and the B-09 staleness fall-through
+  // self-heals a stale row on the next read).
+  try {
     const productId = cached?.product_id ?? '';
-    await upsertCachedSubscription(uuid, subscriptionId!, productId, 'canceled');
-  });
+    await upsertCachedSubscription(uuid, subscriptionId, productId, 'canceled');
+  } catch (err) {
+    logger.error({ err: String(err), uuid, subscriptionId }, 'cancel-path subscription cache write FAILED — row may stay stale until the staleness fall-through heals it');
+  }
 
   return c.json({ ok: true, subscriptionId, status: 'canceled' });
 });

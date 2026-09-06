@@ -661,8 +661,12 @@ export async function getLeaderboard(
         }));
       }
     }
-  } catch {
-    // Game MySQL unavailable — fall through to Postgres below.
+  } catch (err) {
+    // B-11: gameQuery now throws GameMySqlUnavailableError instead of
+    // swallowing the outage into [] — this fallback actually engages. Distinct
+    // tag so a game-MySQL outage is greppable apart from the Postgres errors
+    // that follow it.
+    logger.warn({ err: String(err), type }, '[game-mysql] leaderboard read failed — Postgres mirror answering');
   }
 
   if (type === 'denarius') {
