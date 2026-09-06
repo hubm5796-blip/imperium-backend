@@ -286,4 +286,63 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
 * **Remediation Action:**
   - Enforce idempotency by storing webhook event IDs (or payload signatures) in Redis with a 10-minute expiration using `SET paynow:event:<id> 1 EX 600 NX`. Reject any request whose ID has already been recorded.
 
+---
+
+### COMPLAINT 16: Webhook Order Delivery Black Hole — PayNow `OnOrderCompleted` Discarded with Zero In-Game Delivery
+* **Severity:** CRITICAL (P0 Revenue Blocker)
+* **Category:** Monetization / Order Fulfillment / Payment Processing
+* **Location:** `src/api/routes.ts:2151-2155`
+* **The Problem:**
+  In `POST /api/webhooks/paynow` (`src/api/routes.ts:2120-2160`), the webhook switch statement explicitly handles only subscription lifecycle events (`OnSubscriptionActivated`, `OnSubscriptionRenewed`, `OnSubscriptionCanceled`). All one-time purchases (lifetime donor ranks, rank upgrades, Aureus currency packs, and crate keys) arrive under `OnOrderCompleted` / `order.completed`. The route handles this with:
+  ```typescript
+  default:
+    // Other event types (orders, refunds, chargebacks) don't need caching —
+    // rank grant/revoke is already handled by PayNow's product commands.
+    break;
+  ```
+  PayNow is an external web payment processor and has NO direct connection or native plugin to execute commands on the Minecraft server. When a player purchases any lifetime rank ($14.99 - $149.99), Aureus pack ($5 - $500), or rank upgrade on the store:
+  1. PayNow charges the customer's credit card.
+  2. PayNow sends an `OnOrderCompleted` webhook to `imperium-backend`.
+  3. `imperium-backend` executes `default: break` and immediately responds `{ ok: true }`.
+  4. The backend NEVER dispatches any command (`STORE_PURCHASE_RANK`, `STORE_PURCHASE_CRATE_KEY`, `CRAFTINGSTORE_PURCHASE`) over the Redis command bus to `WebPanelCommandHandler.kt` on the Minecraft server.
+  5. The paying player receives ZERO items, zero perks, and zero rank upgrades in-game, leading directly to payment disputes, chargeback fees, and lost players.
+* **Remediation Action:**
+  1. Implement an explicit `OnOrderCompleted` case in the PayNow webhook handler.
+  2. Extract customer ID, order items, quantities, and transaction ID.
+  3. Resolve the buyer's Minecraft UUID via `getUuidByPaynowCustomerId(customerId)` (or `player_names`).
+  4. For donor tier products, dispatch `sendCommand('STORE_PURCHASE_RANK', { player_uuid: uuid, tier: tierName, subscription_type: 'PERMANENT', order_id: orderId, transaction_id: txId })`.
+  5. For Aureus currency packs, dispatch `sendCommand('CRAFTINGSTORE_PURCHASE', { player_uuid: uuid, currency: 'AUREUS', amount: totalAureus, package_name: 'aureus_' + amount, transaction_id: txId })`.
+  6. For crate keys, dispatch `sendCommand('STORE_PURCHASE_CRATE_KEY', { player_uuid: uuid, crate_id: crateId, quantity: qty, order_id: orderId, transaction_id: txId })`.
+
+---
+
+### COMPLAINT 17: Cart-Checkout Rejects All Aureus Currency Packs and Rank Upgrades with HTTP 400
+* **Severity:** CRITICAL
+* **Category:** Store Architecture / Checkout Validation Gap
+* **Location:** `src/api/routes.ts:2065-2067`, `src/paynow/constants.ts:65, 78-80`
+* **The Problem:**
+  In `POST /api/store/cart-checkout` (`src/api/routes.ts:2065`), every non-subscription line item in the customer's cart is validated using:
+  ```typescript
+  if (!isSub && !isLifetimeProduct(item.productId)) {
+    return c.json({ error: `Item ${i + 1}: product is not a valid lifetime purchase` }, 400);
+  }
+  ```
+  However, `isLifetimeProduct` in `src/paynow/constants.ts:65, 78` is defined strictly as:
+  ```typescript
+  const LIFETIME_PRODUCT_IDS = new Set(DONOR_TIERS.map((t) => t.lifetimeProductId));
+  export function isLifetimeProduct(productId: string): boolean {
+    return LIFETIME_PRODUCT_IDS.has(productId);
+  }
+  ```
+  `LIFETIME_PRODUCT_IDS` ONLY contains the 7 lifetime product IDs for donor ranks (Peregrinus through Imperator). It does NOT include:
+  - Any of the 10 Aureus packs (`AUREUS_PACKS`: 588822537060753408, 588822549299724288, etc.)
+  - Any of the 6 Rank Upgrade products (`RANK_UPGRADES`: 587789607240728576, 587789619249029120, etc.)
+  
+  Whenever a player attempts to purchase an Aureus coin pack or a rank upgrade on the web store, `isLifetimeProduct` returns `false`, causing the backend to reject the checkout session creation with `HTTP 400: Item 1: product is not a valid lifetime purchase`. All currency pack sales on the web frontend are completely broken.
+* **Remediation Action:**
+  1. Define `AUREUS_PACK_PRODUCT_IDS` and `RANK_UPGRADE_PRODUCT_IDS` in `src/paynow/constants.ts`.
+  2. Update `isLifetimeProduct(productId: string)` (or introduce `isValidOneTimeProduct`) to check whether `productId` belongs to donor lifetime tiers, Aureus packs, or rank upgrades.
+  3. Ensure unit tests cover multi-item carts combining donor ranks, Aureus packs, and rank upgrades.
+
+
 
