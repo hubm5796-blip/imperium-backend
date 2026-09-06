@@ -9,8 +9,9 @@
  *
  * Identity rule (binding): guides attach to a LINKED Minecraft account — no
  * anonymous UGC, moderation has a real lever. Storage: D1 (web-only; the
- * plugin never reads it). Score is a denormalized vote sum maintained on the
- * same statement as the vote insert (D1 serializes writes per database).
+ * plugin never reads it). Score is a denormalized vote sum recomputed from
+ * guide_votes inside the same batch() as the vote upsert (D1 runs a batch as
+ * a transaction) — never incremented from a separately-read value (B-15).
  */
 import { Hono } from 'hono';
 import { randomBytes } from 'node:crypto';
@@ -146,19 +147,30 @@ guidesV2.post('/community/guides/:id/vote', writeRateLimit, requireLinked, async
     const guide = await getD1().prepare('SELECT author_uuid FROM guides WHERE id = ?').bind(id).first<{ author_uuid: string }>();
     if (!guide) return c.json({ error: 'Guide not found' }, 404);
     if (guide.author_uuid === uuid) return c.json({ error: 'Cannot vote on your own guide' }, 400);
-    const existing = await getD1().prepare('SELECT value FROM guide_votes WHERE guide_id = ? AND voter_uuid = ?').bind(id, uuid).first<{ value: number }>();
-    const res = await getD1()
-      .prepare(
-        existing
-          ? 'UPDATE guide_votes SET value = ? WHERE guide_id = ? AND voter_uuid = ?'
-          : 'INSERT INTO guide_votes (guide_id, voter_uuid, value) VALUES (?, ?, ?)',
-      )
-      .bind(...(existing ? [value, id, uuid] : [id, uuid, value]))
-      .run();
-    if ((res.meta.changes ?? 0) === 0) return c.json({ error: 'Vote failed' }, 500);
-    // Score delta: new vote adds value; a changed vote adds value - old.
-    const delta = existing ? value - existing.value : value;
-    await getD1().prepare('UPDATE guides SET score = score + ? WHERE id = ?').bind(delta, id).run();
+    // B-15: the vote write and the score maintenance run as ONE batch (D1
+    // executes batch() as a transaction) and the score is RECOMPUTED from
+    // guide_votes, never incremented from a value read in a prior statement.
+    // The old four-statement read-modify-write (SELECT vote → write vote →
+    // `score = score + delta`) let concurrent votes interleave and lose
+    // updates, drifting score off the true vote sum with no reconciliation.
+    // A recompute is also self-healing: any interleaving converges to the
+    // correct sum as long as each voter's batch runs after its own vote write.
+    const results = await getD1().batch([
+      getD1()
+        .prepare(
+          `INSERT INTO guide_votes (guide_id, voter_uuid, value) VALUES (?, ?, ?)
+           ON CONFLICT (guide_id, voter_uuid) DO UPDATE SET value = excluded.value`,
+        )
+        .bind(id, uuid, value),
+      getD1()
+        .prepare(
+          `UPDATE guides
+              SET score = (SELECT COALESCE(SUM(value), 0) FROM guide_votes WHERE guide_id = ?)
+            WHERE id = ?`,
+        )
+        .bind(id, id),
+    ]);
+    if ((results[0]?.meta.changes ?? 0) === 0) return c.json({ error: 'Vote failed' }, 500);
     return c.json({ voted: value });
   } catch (err) {
     logger.error({ err: String(err) }, 'v2 guide vote failed');
