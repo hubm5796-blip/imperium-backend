@@ -18,6 +18,13 @@ import { requireStaffRole } from '../../middleware/gates.js';
 import { query } from '../../db/pool.js';
 import { logger } from '../../utils/logger.js';
 import { swrJson } from './cache.js';
+
+/** B-43: staff views are private — no shared/CDN cache, no edge put. */
+const swrJsonPrivate = (
+  c: Parameters<typeof swrJson>[0],
+  key: Parameters<typeof swrJson>[1],
+  fetcher: Parameters<typeof swrJson>[2],
+) => swrJson(c, key, fetcher, { visibility: 'private' });
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -142,7 +149,7 @@ economyApi.get('/flow-summary', readRateLimit, async (c) => {
  */
 economyApi.get('/drift-alerts', readRateLimit, requireStaffRole('helper'), async (c) => {
   try {
-    return await swrJson(c, 'economy:drift-alerts:v1', async () => {
+    return await swrJsonPrivate(c, 'economy:drift-alerts:v1', async () => {
       try {
         const result = await query<{
           id: number | string;
