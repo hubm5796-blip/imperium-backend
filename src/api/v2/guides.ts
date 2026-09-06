@@ -28,6 +28,16 @@ export const guidesV2 = new Hono<ApiEnv>();
 const CATEGORIES = new Set(['enchanting', 'prestige-routes', 'pvp', 'economy', 'general']);
 const PAGE_SIZE = 20;
 
+// B-34: per-author publish limits. Guides used to publish instantly with no
+// per-author control beyond the shared 10/min IP bucket — instant-public
+// spam/defacement, while both sibling UGC surfaces are stricter (gallery:
+// 3/day + pending-until-approve; comments: 1/30 s/player/guide). Mirrored
+// here: a 60 s cooldown between publishes plus a 5/day per-author quota.
+// (First-post-moderation was considered and deliberately left out — there is
+// no guide review queue for moderation yet.)
+const GUIDE_PUBLISH_COOLDOWN_MS = 60_000;
+const GUIDES_PER_DAY = 5;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS guides (
   id text primary key,
@@ -119,6 +129,29 @@ guidesV2.post('/community/guides', writeRateLimit, requireLinked, async (c) => {
   }
   const id = 'g_' + randomBytes(6).toString('base64url');
   const now = Date.now();
+  // B-34: per-author cooldown + daily quota (see constants above). A D1
+  // failure here is a 503, not a silent skip — publishing without the quota
+  // check is exactly the state the finding flagged.
+  try {
+    const recent = await getD1()
+      .prepare('SELECT id FROM guides WHERE author_uuid = ? AND created_at > ? LIMIT 1')
+      .bind(uuid, now - GUIDE_PUBLISH_COOLDOWN_MS)
+      .first();
+    if (recent) {
+      return c.json({ error: 'Please wait a minute between publishing guides', code: 'RATE_LIMIT' }, 429);
+    }
+    const dayAgo = now - 24 * 3600 * 1000;
+    const { results } = await getD1()
+      .prepare('SELECT COUNT(*) AS n FROM guides WHERE author_uuid = ? AND created_at > ?')
+      .bind(uuid, dayAgo)
+      .all<{ n: number }>();
+    if (((results ?? [])[0]?.n ?? 0) >= GUIDES_PER_DAY) {
+      return c.json({ error: `Daily guide limit reached (${GUIDES_PER_DAY}/day). Try again tomorrow.`, code: 'RATE_LIMIT' }, 429);
+    }
+  } catch (err) {
+    logger.error({ err: String(err) }, 'v2 guide quota check failed');
+    return c.json({ error: 'Guides unavailable' }, 503);
+  }
   try {
     await getD1()
       .prepare('INSERT INTO guides (id, author_uuid, title, category, body_md, status, score, views, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)')
