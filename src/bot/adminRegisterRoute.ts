@@ -8,7 +8,10 @@
  * Auth: the WEBPANEL_HMAC secret (the same trust the Redis command bus uses —
  * possession of the secret is authority). Headers:
  *   X-Timestamp: unix seconds (±120s replay window)
- *   X-Nonce:     random string
+ *   X-Nonce:     random string — SINGLE-USE: stored via SET NX with a TTL
+ *                covering the window, so a captured request cannot be
+ *                replayed even within the ±120s window (B-10; it previously
+ *                only existed to be signed)
  *   X-Signature: hex HMAC-SHA256(secret, "<timestamp>|<nonce>")
  */
 import { Hono } from 'hono';
@@ -16,11 +19,13 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from '../env.js';
 import { commands } from './commands/index.js';
 import { writeRateLimit } from '../middleware/rateLimit.js';
+import { claimNonceOnce } from '../db/redis.js';
 import { logger } from '../utils/logger.js';
 
 export const botAdmin = new Hono();
 
 const REPLAY_WINDOW_SECONDS = 120;
+const NONCE_NAMESPACE = 'ImperiumMC:reg_nonce:';
 
 /** Timing-safe hex compare of the expected vs provided HMAC signature. */
 function signatureOk(provided: string, expected: string): boolean {
@@ -48,6 +53,21 @@ botAdmin.post('/bot/register-commands', writeRateLimit, async (c) => {
   const h = c.req.header();
   if (!authorized(new Headers(Object.entries(h)))) {
     return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // B-10: the nonce is single-use. SET NX + EX claims it atomically for the
+  // replay window's span; a repeat sighting is a replay and rejected. Redis
+  // being unavailable fails OPEN here on purpose: the ±120s timestamp window
+  // still bounds replay, and bricking command registration on a cache outage
+  // would be a worse failure — logged so the gap is visible.
+  const nonce = h['x-nonce'] ?? '';
+  const claimed = await claimNonceOnce(NONCE_NAMESPACE, nonce, REPLAY_WINDOW_SECONDS * 2);
+  if (claimed === false) {
+    logger.warn({ noncePrefix: nonce.slice(0, 8) }, 'bot command registration: replayed nonce rejected');
+    return c.json({ error: 'Replayed request' }, 401);
+  }
+  if (claimed === null) {
+    logger.warn('bot command registration: nonce store unavailable — timestamp window alone in effect');
   }
 
   const token = env.discord.botToken;
