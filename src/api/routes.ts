@@ -37,7 +37,6 @@ import {
   getPlayerStats,
   getPlayerTransactions,
   getUuidByDiscordId,
-  getUuidByPaynowCustomerId,
   getUuidByUsername,
   getNameByUuid,
   getWaveLeaderboard,
@@ -73,7 +72,7 @@ import {
 } from '../paynow/client.js';
 import { DONOR_TIERS, isDonorSubscriptionProduct, isLifetimeProduct, isOneTimeStoreProduct } from '../paynow/constants.js';
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
-import { fulfillPaynowOrder, normalizePaynowEventType } from '../paynow/fulfillment.js';
+import { fulfillPaynowOrder, normalizePaynowEventType, resolveCustomerUuid } from '../paynow/fulfillment.js';
 import type { AppContextVariables } from '../types/index.js';
 import { CURRENCY_ALIASES } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -2159,7 +2158,10 @@ api.post('/webhooks/paynow', async (c) => {
         const subscriptionId = String(data['id'] ?? '');
         const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
         const status = String(data['status'] ?? 'active');
-        const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
+        // B-C28: resolve through fulfillment's helper so a cache miss falls
+        // back to PayNow's Management API and caches the link — a raw
+        // paynow_customers lookup strands every customer our cache never had.
+        const uuid = customerId ? await resolveCustomerUuid(customerId, null) : null;
         if (uuid && subscriptionId && productId) {
           await upsertCachedSubscription(uuid, subscriptionId, productId, status);
         } else {
@@ -2174,7 +2176,10 @@ api.post('/webhooks/paynow', async (c) => {
         const customerId = String(data['customer_id'] ?? (data['customer'] as { id?: string })?.id ?? '');
         const subscriptionId = String(data['id'] ?? '');
         const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
-        const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
+        // B-C28: same fallback as activation/renewal — see that case. Without
+        // it a cancel for an uncached customer 500s on every retry forever
+        // (PayNow re-delivers, we re-miss, nothing ever converges).
+        const uuid = customerId ? await resolveCustomerUuid(customerId, null) : null;
         if (uuid && subscriptionId && productId) {
           await upsertCachedSubscription(uuid, subscriptionId, productId, 'canceled');
         } else {

@@ -495,6 +495,68 @@ describe('B-09: subscription cancel-path failures are not swallowed', () => {
   });
 });
 
+/* ── layer 4b: B-C28 — subscription events use the Management-API fallback ── */
+
+describe('B-C28: subscription webhook resolves cache-missed customers via the Management API', () => {
+  async function postSubscriptionWebhook(
+    eventType: string,
+    payload: Record<string, unknown>,
+  ): Promise<Response> {
+    const { api } = await import('../api/routes.js');
+    const rawBody = JSON.stringify({ event_type: eventType, data: payload });
+    const timestamp = Date.now();
+    const { createHmac } = await import('node:crypto');
+    const signature = createHmac('sha256', 'whsec_test').update(`${timestamp}.${rawBody}`).digest('base64');
+    return api.request('/webhooks/paynow', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'PayNow-Signature': signature,
+        'PayNow-Timestamp': String(timestamp),
+        'cf-connecting-ip': '198.51.100.23',
+      },
+      body: rawBody,
+    });
+  }
+
+  it('a CANCEL for an unknown customer resolves via the Management API, writes canceled, and caches the link', async () => {
+    // Pre-fix this path called getUuidByPaynowCustomerId directly: cache miss →
+    // 500 forever, PayNow retried into the same wall (the fallback existed but
+    // was never wired into the subscription handlers).
+    getUuidByPaynowCustomerIdMock.mockResolvedValue(null);
+    getPaynowCustomerMock.mockResolvedValue({ id: 'cus_ghost', minecraft_uuid: BUYER });
+    upsertCachedSubscriptionMock.mockResolvedValue(undefined);
+    const res = await postSubscriptionWebhook('ON_SUBSCRIPTION_CANCELED', {
+      id: 'sub_9', product_id: '586713857251082240', customer_id: 'cus_ghost',
+    });
+    expect(res.status).toBe(200);
+    expect(getPaynowCustomerMock).toHaveBeenCalledWith('cus_ghost');
+    expect(setPaynowCustomerIdMock).toHaveBeenCalledWith(BUYER, 'cus_ghost');
+    expect(upsertCachedSubscriptionMock).toHaveBeenCalledWith(BUYER, 'sub_9', '586713857251082240', 'canceled');
+  });
+
+  it('an ACTIVATION for an unknown customer self-heals the same way (cache written, status updated)', async () => {
+    getUuidByPaynowCustomerIdMock.mockResolvedValue(null);
+    getPaynowCustomerMock.mockResolvedValue({ id: 'cus_ghost', minecraft_uuid: BUYER });
+    upsertCachedSubscriptionMock.mockResolvedValue(undefined);
+    const res = await postSubscriptionWebhook('ON_SUBSCRIPTION_ACTIVATED', {
+      id: 'sub_10', product_id: '586713857251082240', customer_id: 'cus_ghost',
+    });
+    expect(res.status).toBe(200);
+    expect(setPaynowCustomerIdMock).toHaveBeenCalledWith(BUYER, 'cus_ghost');
+    expect(upsertCachedSubscriptionMock).toHaveBeenCalledWith(BUYER, 'sub_10', '586713857251082240', 'active');
+  });
+
+  it('a cancel that misses EVERYWHERE (cache + Management API) still 500s so PayNow retries (B-09 semantics kept)', async () => {
+    getUuidByPaynowCustomerIdMock.mockResolvedValue(null);
+    getPaynowCustomerMock.mockRejectedValue(new Error('404'));
+    const res = await postSubscriptionWebhook('ON_SUBSCRIPTION_CANCELED', {
+      id: 'sub_11', product_id: '586713857251082240', customer_id: 'cus_vapor',
+    });
+    expect(res.status).toBe(500);
+  });
+});
+
 /* ── layer 5: B-09 — stale subscription cache rows fall through to live ───── */
 
 describe('B-09: isSubscriptionCacheStale + GET /store/subscription staleness', () => {
