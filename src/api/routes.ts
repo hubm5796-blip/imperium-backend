@@ -167,9 +167,7 @@ const botAuthMiddleware = async (c: Context, next: Next) => {
 /** Admin-route authentication: valid bot/service token OR valid session. */
 function adminAuthOk(c: Context): boolean {
   return requireBotAuth(c) || c.var.user !== null;
-}
-
-/**
+}/**
  * Rate limiter for /auth/webcode/verify. This route is bot-token-gated (only
  * imperium-frontend's own edge proxy can call it — see the route below), so
  * `X-Original-Client-IP` is trustworthy here specifically: an attacker can't
@@ -2316,30 +2314,56 @@ api.post('/tickets', botAuthMiddleware, async (c) => {
 });
 
 /**
- * GET /api/tickets — list tickets for the calling player, or ALL tickets if the
- * caller has a staff permission (owner/admin/mod). Staff see all tickets with
- * pagination; players see only their own.
+ * GET /api/tickets — list tickets. Staff (helper+, via the staff gate —
+ * X-Staff-Role on an authenticated request, a staff session, or per-staff
+ * tokens) see ALL tickets with pagination; non-staff callers see only their
+ * own (B-12: the old code presence-checked X-Mc-Uuid and then selected
+ * unfiltered, leaking every ticket to any player).
  */
-api.get('/tickets', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.get('/tickets', async (c) => {
+  if (!adminAuthOk(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const staffActor = await resolveStaffActor(c);
+  const isStaff = staffActorHasRole(staffActor, 'helper');
+  let scopeUuid: string | null = null;
+  if (!isStaff) {
+    // Non-staff self-scope: the session's linked uuid, else the delegated
+    // proxy's asserted uuid. No identity at all → refuse (never dump all).
+    scopeUuid = c.var.mcUuid ?? (((c.req.header('x-mc-uuid') ?? '').trim() || null));
+    if (!scopeUuid) {
+      return c.json({ error: 'Staff role helper or above required to list all tickets' }, 403);
+    }
+  }
 
   const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
   const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') ?? '20', 10)));
   const offset = (page - 1) * limit;
   const statusFilter = c.req.query('status');
 
-  const where = statusFilter ? `WHERE status = $3` : ``;
-  const params = statusFilter ? [limit, offset, statusFilter] : [limit, offset];
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (statusFilter) {
+    params.push(statusFilter);
+    conds.push(`status = $${params.length}`);
+  }
+  if (scopeUuid) {
+    params.push(scopeUuid);
+    conds.push(`uuid = $${params.length}`);
+  }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : ``;
 
   const result = await query(
     `SELECT id, uuid, username, category, subject, status, priority, staff_response, responded_at, created_at
      FROM support_tickets ${where}
      ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, created_at DESC
-     LIMIT $1 OFFSET $2`,
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, limit, offset],
+  );
+  const totalRow = await query<{ count: string }>(
+    `SELECT COUNT(*) as count FROM support_tickets ${where}`,
     params,
   );
-  const totalRow = await query<{ count: string }>(`SELECT COUNT(*) as count FROM support_tickets ${statusFilter ? 'WHERE status = $1' : ''}`, statusFilter ? [statusFilter] : []);
   return c.json({ tickets: result.rows, total: parseInt(totalRow.rows[0].count, 10), page, limit });
 });
 
@@ -2359,21 +2383,40 @@ api.get('/tickets/mine', botAuthMiddleware, async (c) => {
 
 /**
  * POST /api/tickets/:id/respond — staff responds to a ticket.
+ * B-12: staff-only (mod+ via the real staff gate — the old code let ANY
+ * caller write staff_response/responded_by/status with a free-form status
+ * value). responded_by carries the attributed staff actor (X-03: the
+ * LuckPerms-verified human when the panel forwards it), and the status is
+ * allowlisted so the 48h auto-close sweep only ever sees real states.
  */
-api.post('/tickets/:id/respond', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+const TICKET_RESPOND_STATUSES = new Set(['open', 'responded', 'pending', 'closed', 'stale']);
+
+api.post('/tickets/:id/respond', async (c) => {
+  if (!adminAuthOk(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const staffActor = await resolveStaffActor(c);
+  if (!staffActorHasRole(staffActor, 'mod')) {
+    logger.warn({ actor: staffActor.name, role: staffActor.role }, 'AUDIT: ticket respond refused — role below mod');
+    return c.json({ error: 'Staff role mod or above required to respond to tickets' }, 403);
+  }
   const ticketId = c.req.param('id');
   let body: { response?: string; status?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
   const response = (body.response ?? '').trim().slice(0, 5000);
-  const newStatus = body.status ?? 'responded';
+  const newStatus = (body.status ?? 'responded').trim();
   if (!response) return c.json({ error: 'Response text is required' }, 400);
+  if (!TICKET_RESPOND_STATUSES.has(newStatus)) {
+    return c.json({ error: 'Invalid status', allowed: [...TICKET_RESPOND_STATUSES] }, 400);
+  }
 
-  await query(
-    `UPDATE support_tickets SET staff_response = $1, responded_by = $2, responded_at = CURRENT_TIMESTAMP, status = $3 WHERE id = $4`,
-    [response, mcUuid, newStatus, ticketId],
+  const updated = await query<{ id: string }>(
+    `UPDATE support_tickets SET staff_response = $1, responded_by = $2, responded_at = CURRENT_TIMESTAMP, status = $3 WHERE id = $4 RETURNING id`,
+    [response, staffActor.name, newStatus, ticketId],
   );
+  if (updated.rows.length === 0) {
+    return c.json({ error: 'Ticket not found' }, 404);
+  }
   return c.json({ ok: true });
 });
 
