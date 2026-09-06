@@ -2,8 +2,8 @@
 //
 // Model (per the blueprint): every connection runs its own loop
 // `while (open) { await sleep(interval); frame-if-changed }`, but the actual
-// data pull goes through sharedSnapshot() — an in-flight promise dedupe so N
-// connections on one isolate produce ONE upstream query per topic per tick.
+// data pull goes through sharedSnapshot() — deduped to ONE upstream query per
+// topic per interval window (B-50: concurrent AND sequential askers).
 // No setInterval (Workers-safe); the last connection out leaves the cached
 // snapshot behind, which also serves as the Last-Event-ID replay source until
 // the next subscriber arrives.
@@ -51,17 +51,30 @@ function stateFor(def: TopicDefinition): TopicState {
 }
 
 /**
- * Pull a topic's snapshot at most once per tick regardless of how many
- * connections ask (in-flight promise dedupe). On failure the previous
- * snapshot is kept — a source outage pauses frames, it never drops them.
+ * Pull a topic's snapshot at most ONCE PER INTERVAL regardless of how many
+ * connections ask — concurrent (B-50: the in-flight promise dedupe only ever
+ * covered this case) OR SEQUENTIAL. N connections each awaiting sleep(500)
+ * and then pulling used to fire N upstream queries per interval — the exact
+ * load the shared-snapshot model was built to prevent. A request inside the
+ * topic's interval window is served the cached snapshot; the in-flight
+ * promise still folds the thundering herd; a fetch failure keeps the last
+ * snapshot (an outage pauses frames, it never drops them) and the next
+ * request past the interval retries.
  */
-export async function sharedSnapshot(def: TopicDefinition): Promise<unknown> {
+export async function sharedSnapshot(def: TopicDefinition, now: number = Date.now()): Promise<unknown> {
   const state = stateFor(def);
   if (state.inFlight) return state.inFlight;
+  if (state.last && now - state.last.at < def.intervalMs) {
+    return state.last.snapshot; // fresh enough — no upstream pull this window
+  }
+  // The window is anchored at REQUEST time (the injected clock), not fetch
+  // completion — otherwise tests with injected clocks and real fetches
+  // disagree about when the interval started.
+  const requestedAt = now;
   const pull = (async () => {
     try {
       const snapshot = await def.fetch();
-      state.last = { snapshot, at: Date.now() };
+      state.last = { snapshot, at: requestedAt };
       return snapshot;
     } finally {
       state.inFlight = null;
