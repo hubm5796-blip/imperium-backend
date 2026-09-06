@@ -198,6 +198,23 @@ function parseActorTokenMap(raw: string): Array<{ token: string; name: string }>
   return out;
 }
 
+/**
+ * Map the presented X-Bot-Token to a named actor for AUDIT attribution.
+ * B-01 (b): an UNKNOWN principal — no token, or a token absent from
+ * ACTOR_TOKEN_MAP — resolves to the deny-by-default 'anonymous', never to
+ * the privileged 'panel-service'. The transitional panel-service actor can
+ * only be produced by [resolveStaffActor]'s explicit verified-token branch,
+ * which the exemption-deletion commit removes.
+ */
+export function resolveActorFromToken(c: Context): string {
+  const token = c.req.header('X-Bot-Token') ?? '';
+  if (!token) return 'anonymous';
+  for (const { token: mapped, name } of parseActorTokenMap(env.actorTokenMap ?? '')) {
+    if (safeEqual(token, mapped)) return name;
+  }
+  return 'anonymous';
+}
+
 /** True when the presented X-Bot-Token is the shared bot OR service token. */
 export function botOrServiceTokenValid(c: Context): boolean {
   const token = c.req.header('x-bot-token') ?? '';
@@ -281,7 +298,7 @@ export async function resolveStaffActor(c: Context): Promise<StaffActor> {
       (user?.mcUuid ?? c.get('mcUuid') ?? '') ||
       (user?.discordId ? `discord:${user.discordId}` : '') ||
       (claimedName.length > 0 && claimedName.length <= 64 ? claimedName : '') ||
-      'panel-service';
+      'staff-claim';
     return { name, role: headerRoleRaw, rank: STAFF_ROLE_RANK[headerRoleRaw], source: 'header-claim' };
   }
 
@@ -303,13 +320,9 @@ export async function resolveStaffActor(c: Context): Promise<StaffActor> {
   //     identity ("token:name"). Named identities carry the lowest staff
   //     role (helper) — presenting MORE identity than the bare shared token
   //     must never grant LESS access (B-01's inverted model, fixed).
-  const botToken = c.req.header('x-bot-token') ?? '';
-  if (botToken) {
-    for (const { token, name } of parseActorTokenMap(env.actorTokenMap ?? '')) {
-      if (safeEqual(botToken, token)) {
-        return { name, role: 'helper', rank: STAFF_ROLE_RANK.helper, source: 'staff-token' };
-      }
-    }
+  const mappedName = resolveActorFromToken(c);
+  if (mappedName !== 'anonymous') {
+    return { name: mappedName, role: 'helper', rank: STAFF_ROLE_RANK.helper, source: 'staff-token' };
   }
 
   // 4. Verified shared token, no identity — TRANSITIONAL panel-service
