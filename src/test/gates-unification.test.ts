@@ -21,7 +21,8 @@ vi.mock('../auth/apiKeys.js', async (importOriginal) => {
 });
 
 import { initEnvFromBindings } from '../env.js';
-import { getPrincipal } from '../middleware/gates.js';
+import { getPrincipal, requireBot } from '../middleware/gates.js';
+import { Hono } from 'hono';
 import type { Context } from 'hono';
 
 /** Context stub with a working variable store (header + get/set). */
@@ -65,5 +66,30 @@ describe('B-05 principal resolves once per request', () => {
     const c = ctx({ 'X-Bot-Token': 'test-bot-token' });
     expect((await getPrincipal(c)).kind).toBe('bot');
     expect((await getPrincipal(c)).kind).toBe('bot');
+  });
+});
+
+describe('X-02 explicit precedence — requireBot is not shadowed by a session', () => {
+  it('a request with BOTH a session cookie and a valid bot token passes requireBot', async () => {
+    // The old kind-based resolution returned 'session' for this shape and
+    // 401'd — the exact trap CROSS-REPO X-02 documents (the frontend sends
+    // both credentials on one request).
+    const app = new Hono();
+    app.use('/machine', requireBot);
+    app.get('/machine', (c) => c.json({ ok: true }));
+    const res = await app.request('/machine', {
+      headers: { Cookie: 'imperium_session=anything', 'X-Bot-Token': 'test-bot-token' },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('a session alone does not pass requireBot (401)', async () => {
+    const app = new Hono();
+    app.use('/machine', requireBot);
+    app.get('/machine', (c) => c.json({ ok: true }));
+    const res = await app.request('/machine', {
+      headers: { Cookie: 'imperium_session=anything' },
+    });
+    expect(res.status).toBe(401);
   });
 });

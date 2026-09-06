@@ -8,6 +8,16 @@
  *   - delegated : bot/service token + X-Mc-Uuid (the frontend proxy's asserted identity)
  *   - api_key   : Authorization: Bearer imp_... (hash-verified against D1, scopes enforced)
  *
+ * IDENTITY PRECEDENCE (X-02, explicit — not an accident of check order):
+ *   session cookie > X-Staff-Role claim > bot token.
+ * A request may carry several credentials at once (the frontend's proxies
+ * send a session cookie AND X-Bot-Token); each gate asks about the
+ * credential it names, so nothing shadows anything else:
+ *   - requireBot reads the token header DIRECTLY — a session on the same
+ *     request never hides a valid bot token;
+ *   - the staff gate never derives a staff role from the bot token alone
+ *     (service scope only) once the transitional exemption is deleted.
+ *
  * Routes stop hand-rolling requireBotAuth copies; the gates below are the only
  * sanctioned entry points. The inline call sites in routes.ts keep working
  * (same underlying check) and migrate to these incrementally.
@@ -127,10 +137,18 @@ export async function getPrincipal(c: Context): Promise<Principal> {
   return resolved;
 }
 
-/** Internal machine endpoints: the shared bot token ONLY (no asserted uuid). */
+/**
+ * Internal machine endpoints: the shared bot token ONLY (no asserted uuid).
+ * X-02: reads the token header directly — a session cookie on the same
+ * request (the frontend sends both credentials) must never shadow a valid
+ * bot token, which the kind-based resolution would have done.
+ */
 export const requireBot: MiddlewareHandler<AuthEnv> = async (c, next) => {
-  const p = await getPrincipal(c);
-  if (p.kind !== 'bot') return c.json({ error: 'Unauthorized' }, 401);
+  const presented = c.req.header('x-bot-token') ?? '';
+  const isBot = botTokenMatches(c);
+  const isService =
+    Boolean(env.internalServiceToken) && safeEqual(presented, env.internalServiceToken);
+  if (!isBot && !isService) return c.json({ error: 'Unauthorized' }, 401);
   await next();
 };
 
