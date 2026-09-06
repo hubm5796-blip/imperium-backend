@@ -838,4 +838,44 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
       }
       ```
 
+---
+
+### COMPLAINT 33: Empty `CRATE_KEY_PRODUCTS` Catalog & Missing Booster Product Mappings Block Microtransaction Store Fulfillment
+* **Severity:** HIGH
+* **Category:** Monetization / Store Merchandising / Microtransaction Delivery
+* **Location:** `src/paynow/fulfillment.ts:116-140`, `src/paynow/constants.ts:145-151`
+* **The Problem:**
+   1. In `src/paynow/fulfillment.ts:117`:
+      ```typescript
+      /** Crate-key bundles sold via PayNow. None exist yet — one entry adds one product. */
+      export const CRATE_KEY_PRODUCTS: ReadonlyMap<string, { crateId: string; keyAmount: number }> = new Map([]);
+      ```
+   2. The map is completely empty. When PayNow webhooks fire for crate key orders, `resolveStoreDispatch` returns `null` because the product ID is not recognized.
+   3. The webhook logs `"unknown product"` and the purchase is dropped without being fulfilled to Redis or the game server.
+   4. Furthermore, booster products (Money Boosters, XP Boosters, Token Boosters, Mine Speed Boosters) have NO representation in `resolveStoreDispatch` or `buildStoreDispatchCommand`, meaning any booster bought on the web store cannot be dispatched to the plugin.
+* **Remediation Action:**
+   1. In `src/paynow/fulfillment.ts`, populate `CRATE_KEY_PRODUCTS` with the standard crate tiers:
+      - `basic` (Tessera Plebeia)
+      - `rare` (Tessera Centurionis)
+      - `epic` (Tessera Praetoria)
+      - `legendary` (Tessera Consularis)
+      - `mythic` (Tessera Imperatoria)
+   2. Add a `BOOSTER_PRODUCTS` map to map booster SKUs (e.g. `booster_money_2x_1h`, `booster_xp_2x_1h`) to `{ type: 'SELL_MULTIPLIER', multiplier: 2.0, durationSeconds: 3600 }`.
+   3. In `resolveStoreDispatch`, add branches for `CRATE_KEY_PRODUCTS` and `BOOSTER_PRODUCTS`.
+   4. In `buildStoreDispatchCommand`, dispatch `STORE_PURCHASE_CRATE_KEY` and `STORE_PURCHASE_BOOSTER` accordingly.
+
+---
+
+### COMPLAINT 34: Offline Web Store Purchase Delivery Drops Consumables When Player is Offline
+* **Severity:** CRITICAL
+* **Category:** Real-Money Purchase Delivery / Offline Safety / Player Trust
+* **Location:** `src/paynow/fulfillment.ts:151-180`, `src/api/routes.ts`
+* **The Problem:**
+   1. While Aureus packs (`depositPremiumOffline`) and Ranks (`adminSetTier`) have offline credit support in the plugin, physical consumables like Crate Keys and Boosters require the player to be online if dispatched directly to inventory.
+   2. In `WebPanelCommandHandler.kt`, `STORE_PURCHASE_CRATE_KEY` routes through `PendingGrantService` (which is offline-safe), but any command that uses online-only lookups (like `/booster give`) returns an error and fails if the buyer is offline at the moment of checkout.
+   3. Because PayNow webhooks fire asynchronously (often seconds or minutes after checkout), if the player was browsing the web store while offline or logged out before the webhook arrived, their paid items fail to deliver.
+* **Remediation Action:**
+   1. Ensure all non-currency purchases dispatched via `buildStoreDispatchCommand` are handled idempotently and routed through offline-safe queues (`pending_grants`) on the game server.
+   2. When `STORE_PURCHASE_BOOSTER` is received, if the player is offline, queue the physical booster item into `pending_grants` (`GrantType.BOOSTER`) to be awarded upon their next join.
+
 
