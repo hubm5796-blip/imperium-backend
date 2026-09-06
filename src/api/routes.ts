@@ -253,7 +253,11 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
   if (!state || !cookieState || state !== cookieState) {
     // L2: clear the single-use state cookie even on the error path.
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
-    return c.json({ error: 'Invalid state' }, 400);
+    // B-C21: this is a browser flow — the user came from the frontend, so send
+    // them back there with a machine-readable error instead of raw JSON they'd
+    // stare at on a bare api.imperiummc.net page (same shape as the sibling
+    // oauth_denied / missing_code branches below).
+    return c.redirect(`${frontendUrl()}/login?error=state_mismatch`, 302);
   }
 
   if (error) {
