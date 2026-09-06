@@ -1894,13 +1894,25 @@ api.post('/store/checkout', storeAuth, async (c) => {
   if (!body.productId) {
     return c.json({ error: 'Missing productId' }, 400);
   }
+  // B-14 remainder: the cart route validates every line against the product
+  // allowlist; this single-item path used to check presence only, so any
+  // hidden/test/foreign product_id reached PayNow verbatim (paid-but-
+  // undelivered orders). Same rule as the cart: the subscription flag must
+  // match the product's kind.
+  const isSub = body.subscription === true;
+  if (isSub && !isDonorSubscriptionProduct(body.productId)) {
+    return c.json({ error: 'Product is not a valid subscription' }, 400);
+  }
+  if (!isSub && !isOneTimeStoreProduct(body.productId)) {
+    return c.json({ error: 'Product is not a valid one-time purchase' }, 400);
+  }
 
   try {
     const customerId = await resolvePaynowCustomerId(uuid);
     const session = await createCheckoutSession({
       customerId,
       productId: body.productId,
-      subscription: Boolean(body.subscription),
+      subscription: isSub,
       returnUrl: `${frontendUrl()}/dashboard/subscription?checkout=success`,
       cancelUrl: `${frontendUrl()}/store?checkout=canceled`,
     });
