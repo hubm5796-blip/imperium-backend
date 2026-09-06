@@ -14,6 +14,7 @@ Part of a cross-repo strict audit of the three ImperiumMC codebases.
 | [`ROUND-5.md`](ROUND-5.md) | B-26 … B-34 (routes remainder, deploy surface, trust boundaries) + C14…C15 dedupe |
 | [`ROUND-6.md`](ROUND-6.md) | B-35 … B-42 (scripts, expansion, cron, Discord, wiring, sweep) |
 | [`ROUND-7.md`](ROUND-7.md) | B-43 … B-50 (expansion leftovers, Discord, test gaps, census, SSE) |
+| [`ROUND-8.md`](ROUND-8.md) | B-51 … B-54 + red-team verdicts (B-01 narrowed, webcode quantified, B-49/B-20 confirmed) + 7 fix hazards |
 | [`CROSS-REPO.md`](CROSS-REPO.md) | X-01 … X-04, the seams with the plugin and frontend |
 
 The full audit — executive summary, plugin and frontend findings, methodology,
@@ -81,6 +82,20 @@ remainders: **B-43 … B-50** (census: no new live secret — C1/B-35 stand).
 Headliners: B-49 (v2 sub-app never runs `attachUser` — linked-gated v2 routes
 always 401), B-43 (staff data cached as `public`), B-47 (zero route tests on
 webhook ingest, checkout allowlist, ticket caps, webcode bound).
+
+## Round 8
+
+An eighth pass ([`ROUND-8.md`](ROUND-8.md)) red-teamed four criticals, mapped
+seven fix-interaction hazards, and filed **B-51…B-54**. Calibrations: **B-01
+confirmed as privilege-escalation-after-leak** (token not outsider-obtainable —
+exfil paths are dashboard, bot host, frontend server, re-sharing); **X-07/B-26
+practical for token holders** (500k avg guesses, ~556 rps fits one lifetime,
+D1 contention fails open and accelerates); B-49 confirmed scoped (9 endpoints),
+B-20 confirmed zero consumers. Hazards constrain the fix order: v1 deletion
+safe on the bus but not `web_queue`; exemption removal needs X-04 first (both
+lines, atomically); status enum must union the sweep's `'stale'`; UUID
+validation must normalize not reject; scope enforcement is a flag-day; wrap
+gameQuery callers before flipping to throw.
 
 ## State at time of audit
 
