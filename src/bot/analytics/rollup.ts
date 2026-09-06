@@ -1,10 +1,11 @@
 /**
- * Daily analytics rollup (V6 02-09), run from the every-minute cron at 00:05
- * UTC. Ported from imperium-discord. One dedupe-claimed pass per day: fold
+ * Daily analytics rollup (V6 02-09), run from the every-minute cron during
+ * the 00:05–00:59 UTC catch-up window. One dedupe-claimed pass per day: fold
  * bot_command_log into bot_metrics_daily, then delete log rows older than the
- * 90-day retention. Failure releases the claim so the next tick retries the
- * whole pass — the rollup is idempotent (upsert by (day, metric, command)),
- * so a partial rerun is safe.
+ * 90-day retention. Failure releases the claim so a later tick in the window
+ * retries the whole pass — the rollup is idempotent (upsert by (day, metric,
+ * command)), so a partial rerun is safe. B-39: days missed entirely (deploy
+ * outage at 00:05) heal via the per-day claim loop (last 7 days).
  */
 import { query } from '../../db/pool.js';
 import { claim, release } from '../botdb.js';
@@ -65,15 +66,34 @@ export function aggregateDay(rows: LogRow[]): Array<{ metric: string; command: s
   return out;
 }
 
-/** One rollup attempt. Returns ran:false outside the window / already done. */
+/** One rollup attempt. B-39 catch-up: the window is the whole first hour
+ *  (00:05–00:59) instead of the single minute 00:05 — a deploy/crash at
+ *  exactly 00:05 used to silently skip the day. Each candidate day (yesterday
+ *  back CATCHUP_DAYS) is claimed individually via rollup:<day>, so an
+ *  unrolled day heals on any later tick within the window, and an already
+ *  rolled day is never redone. Returns ran:false outside the window / when
+ *  every candidate is already done. */
+export const ROLLUP_CATCHUP_DAYS = 7;
+
 export async function runDailyRollup(now: Date): Promise<RollupReport> {
   const idle: RollupReport = { ran: false, day: null, metrics: 0 };
-  if (now.getUTCHours() !== ROLLUP_UTC_HOUR || now.getUTCMinutes() !== ROLLUP_UTC_MINUTE) return idle;
+  if (now.getUTCHours() !== ROLLUP_UTC_HOUR || now.getUTCMinutes() < ROLLUP_UTC_MINUTE) return idle;
 
-  // Roll up YESTERDAY (the day that just completed).
-  const yesterday = new Date(now);
-  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  const day = yesterday.toISOString().slice(0, 10);
+  let last: RollupReport = idle;
+  for (let back = 1; back <= ROLLUP_CATCHUP_DAYS; back += 1) {
+    const dayDate = new Date(now);
+    dayDate.setUTCDate(dayDate.getUTCDate() - back);
+    const day = dayDate.toISOString().slice(0, 10);
+    const attempt = await rollupOneDay(day, now);
+    if (attempt.ran) last = attempt; // keep the LAST rolled day in the report
+  }
+  return last;
+}
+
+/** Roll (and claim) one day. Idempotent: the claim key rollup:<day> is the
+ *  done-marker, and the upserts are ON CONFLICT DO UPDATE, so a partial
+ *  rerun is safe. Failure releases the claim for the next tick. */
+async function rollupOneDay(day: string, now: Date): Promise<RollupReport> {
   const dayAfter = new Date(`${day}T00:00:00Z`);
   dayAfter.setUTCDate(dayAfter.getUTCDate() + 1);
 
@@ -81,7 +101,7 @@ export async function runDailyRollup(now: Date): Promise<RollupReport> {
   let claimed = false;
   try {
     claimed = await claim(key);
-    if (!claimed) return idle;
+    if (!claimed) return { ran: false, day: null, metrics: 0 }; // already done (or in progress)
 
     const logs = await query<LogRow>(
       'SELECT discord_id, command, outcome, duration_ms FROM bot_command_log WHERE created_at >= $1 AND created_at < $2 LIMIT 10000',
@@ -96,6 +116,7 @@ export async function runDailyRollup(now: Date): Promise<RollupReport> {
       );
     }
 
+    // Retention prune rides the youngest rolled day's pass only.
     const cutoff = new Date(now);
     cutoff.setUTCDate(cutoff.getUTCDate() - RETENTION_DAYS);
     await query('DELETE FROM bot_command_log WHERE created_at < $1', [cutoff.toISOString()]);
@@ -104,7 +125,8 @@ export async function runDailyRollup(now: Date): Promise<RollupReport> {
   } catch (err) {
     if (claimed) {
       await release(key).catch(() => {
-        // Key stays claimed → tonight's rollup is skipped; tomorrow's is fine.
+        // Key stays claimed → this day's rollup is skipped; the catch-up
+        // window may retry it on a later tick if released, else tomorrow.
       });
     }
     return { ran: false, day, metrics: 0, error: err instanceof Error ? err.message : String(err) };

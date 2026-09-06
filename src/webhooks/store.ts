@@ -87,6 +87,14 @@ export async function ensureWebhookTables(): Promise<D1Database> {
       value TEXT NOT NULL
     )`),
   ]);
+  // B-39 lease column: SQLite has no ADD COLUMN IF NOT EXISTS — a duplicate
+  // -column error means the table already carries it (deployed before this
+  // rework) and is swallowed.
+  try {
+    await d1.prepare('ALTER TABLE webhook_deliveries ADD COLUMN lease_until INTEGER').run();
+  } catch {
+    // already present
+  }
   migrated = true;
   return d1;
 }
@@ -187,13 +195,42 @@ export async function dueDeliveries(limit: number, now: number): Promise<Deliver
     .prepare(
       `SELECT subscriber_id, event_id, type, payload, attempt, next_attempt_at, status, response_code, last_error
          FROM webhook_deliveries
-        WHERE status IN ('pending', 'failed') AND next_attempt_at <= ?
+        WHERE (status IN ('pending', 'failed') AND next_attempt_at <= ?)
+           OR (status = 'sending' AND lease_until IS NOT NULL AND lease_until <= ?)
         ORDER BY next_attempt_at ASC
         LIMIT ?`,
     )
-    .bind(now, limit)
+    .bind(now, now, limit)
     .all<DeliveryRow>();
   return results ?? [];
+}
+
+/**
+ * B-39 atomic row claim: flip a due row to 'sending' with a fresh lease,
+ * conditional on it still being claimable (pending/failed and due, or a
+ * 'sending' row whose previous isolate died and whose lease expired).
+ * Returns true only for the caller that won — two overlapping delivery
+ * ticks can never both POST the same row.
+ */
+export async function claimDelivery(
+  subscriberId: string,
+  eventId: string,
+  now: number,
+  leaseMs: number,
+): Promise<boolean> {
+  const d1 = await ensureWebhookTables();
+  const won = await d1
+    .prepare(
+      `UPDATE webhook_deliveries
+          SET status = 'sending', lease_until = ?
+        WHERE subscriber_id = ? AND event_id = ?
+          AND ((status IN ('pending', 'failed') AND next_attempt_at <= ?)
+            OR (status = 'sending' AND lease_until IS NOT NULL AND lease_until <= ?))
+        RETURNING subscriber_id`,
+    )
+    .bind(now + leaseMs, subscriberId, eventId, now, now)
+    .first<{ subscriber_id: string }>();
+  return won != null;
 }
 
 export async function markDelivery(

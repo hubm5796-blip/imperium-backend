@@ -287,21 +287,41 @@ export async function runNotificationSweep(config: CronConfig, now: Date): Promi
   }
 
   // ---- Daily vote reminder (opt-in) at the configured UTC hour.
-  if (now.getUTCHours() === config.voteReminderUtcHour && now.getUTCMinutes() === 0) {
+  // B-39: per-USER claims instead of one global key. The old shape claimed
+  // `vote:<date>` once and fanned out; a crash mid-fanout left the claim
+  // held and the remaining users never got their reminder (silently). Now
+  // each user is claimed individually (vote:<date>:<userId>) and a failed
+  // send releases THAT user's key for the next minute — crash granularity is
+  // one user, not the rest of the list. The fire window is widened from the
+  // single minute :00 to the first 15 minutes of the hour so the claims are
+  // also the catch-up (a skipped :00 tick heals at :01…:14).
+  if (now.getUTCHours() === config.voteReminderUtcHour && now.getUTCMinutes() < 15) {
     const dateKey = now.toISOString().slice(0, 10);
     try {
-      if (await claim(`vote:${dateKey}`)) {
-        const users = await listVoteReminderUsers();
-        for (const userId of users) {
+      const users = await listVoteReminderUsers();
+      for (const userId of users) {
+        const userKey = `vote:${dateKey}:${userId}`;
+        let claimed = false;
+        try {
+          claimed = await claim(userKey);
+          if (!claimed) continue; // already reminded today
           const sent = await sendDirectMessage(botToken, userId, { content: voteReminderContent() });
           if (sent) report.voteDms++;
-          else report.errors.push(`vote dm failed: ${userId}`);
+          else {
+            // Release for retry next minute within the window — the DM is
+            // not "done" just because we tried it.
+            await release(userKey).catch(() => undefined);
+            report.errors.push(`vote dm failed: ${userId}`);
+          }
+        } catch (err) {
+          if (claimed) await release(userKey).catch(() => undefined);
+          report.errors.push(`vote dm crashed for ${userId}: ${errText(err)}`);
         }
       }
     } catch (err) {
-      // A failed claim (Postgres error) must not look like "already claimed" —
-      // that distinction is invisible, but at least it lands in the report.
-      report.errors.push(`vote reminder fanout failed: ${errText(err)}`);
+      // A failed user listing must not read as "all reminded" — errors land
+      // in the report; the window retries next minute.
+      report.errors.push(`vote reminder listing failed: ${errText(err)}`);
     }
   }
 

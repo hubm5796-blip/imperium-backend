@@ -73,7 +73,13 @@ function makeFakeD1() {
         const now = params[0] as number;
         const limit = params[1] as number;
         rows = rows
-          .filter((r) => (r.status === 'pending' || r.status === 'failed') && (r.next_attempt_at as number) <= now)
+          .filter(
+            (r) =>
+              ((r.status === 'pending' || r.status === 'failed') && (r.next_attempt_at as number) <= now) ||
+              // B-39: a 'sending' row whose lease expired is due again
+              // (its previous isolate died mid-POST).
+              (r.status === 'sending' && r.lease_until != null && Number(r.lease_until) <= now),
+          )
           .sort((a, b) => (a.next_attempt_at as number) - (b.next_attempt_at as number))
           .slice(0, limit);
       }
@@ -94,6 +100,26 @@ function makeFakeD1() {
           }
         }
         return { changes, rows: [] };
+      }
+      if (name === 'webhook_deliveries' && /SET status = 'sending'/.test(sql)) {
+        // B-39 claimDelivery: conditional flip to 'sending' with a lease.
+        // Mirrors D1 semantics — the RETURNING row exists only when the
+        // WHERE matched (this caller won the claim).
+        const [leaseUntil, subscriberId, eventId, now1, now2] = params as [number, string, string, number, number];
+        let claimed: Record<string, unknown>[] = [];
+        for (const [, r] of t) {
+          if (r.subscriber_id !== subscriberId || r.event_id !== eventId) continue;
+          const dueNow =
+            (r.status === 'pending' || r.status === 'failed') && Number(r.next_attempt_at ?? 0) <= now1;
+          const expiredLease =
+            r.status === 'sending' && r.lease_until != null && Number(r.lease_until) <= now2;
+          if (dueNow || expiredLease) {
+            r.status = 'sending';
+            r.lease_until = leaseUntil;
+            claimed = [{ subscriber_id: subscriberId }];
+          }
+        }
+        return { changes: claimed.length, rows: claimed };
       }
       if (name === 'webhook_deliveries') {
         let changes = 0;
@@ -165,7 +191,7 @@ vi.mock('../db/pool.js', async (importOriginal) => {
 import { createHmac } from 'node:crypto';
 import { emit, runDeliveryTick, signPayload } from '../webhooks/deliver.js';
 import { feedRowToEvent } from '../webhooks/tailer.js';
-import { createSubscriber, dueDeliveries, getSubscriber, listSubscribers } from '../webhooks/store.js';
+import { claimDelivery, createSubscriber, dueDeliveries, getSubscriber, listSubscribers } from '../webhooks/store.js';
 
 beforeEach(() => {
   fakeD1.__tables.clear();
@@ -312,5 +338,45 @@ describe('feedRowToEvent', () => {
   it('drops unmapped types and rankups without a to= field', () => {
     expect(feedRowToEvent({ id: 1, event_type: 'contract_fulfilled', uuid: 'u', message: 'x', at: new Date() })).toBeNull();
     expect(feedRowToEvent({ id: 1, event_type: 'player_rankup', uuid: 'u', message: 'no fields', at: new Date() })).toBeNull();
+  });
+});
+
+describe('B-39 delivery claims (row leases)', () => {
+  it('a row held under a fresh lease is invisible to another tick; lease expiry reclaims it', async () => {
+    await seedSubscriber(['test.ping']);
+    await emit({ type: 'test.ping', v: 1, at: new Date().toISOString() });
+
+    const t0 = Date.now();
+    // Grab the queued row's keys from the fake table.
+    const deliveries = fakeD1.__tables.get('webhook_deliveries')!;
+    expect(deliveries.size).toBe(1);
+    const row = [...deliveries.values()][0] as { subscriber_id: string; event_id: string };
+
+    // Isolate A claims the row, then "crashes" (never POSTs).
+    expect(await claimDelivery(row.subscriber_id, row.event_id, t0, 120_000)).toBe(true);
+    // The same isolate re-claiming mid-lease loses (no double-claim).
+    expect(await claimDelivery(row.subscriber_id, row.event_id, t0 + 1_000, 120_000)).toBe(false);
+
+    // Isolate B's tick at t0+1s: the row is invisible (fresh lease) —
+    // no POST happens even though the row never delivered.
+    let posts = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      posts += 1;
+      return new Response('{}', { status: 202 });
+    }) as typeof fetch;
+    try {
+      const reportB = await runDeliveryTick(t0 + 1_000);
+      expect(reportB.processed).toBe(0);
+      expect(posts).toBe(0);
+
+      // t0+3min: the lease expired — the row is due again and delivers.
+      const reportC = await runDeliveryTick(t0 + 180_000);
+      expect(reportC.processed).toBe(1);
+      expect(reportC.delivered).toBe(1);
+      expect(posts).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

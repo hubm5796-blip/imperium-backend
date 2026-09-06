@@ -120,6 +120,10 @@ export default {
     ctx.waitUntil(
       runBotCron()
         .then((report) => {
+          if (report.skipped) {
+            console.log('[cron] pass skipped — another isolate holds this minute (B-39 claim)');
+            return;
+          }
           console.log(
             `[cron] webhooks: ${report.webhookDeliveries.delivered}/${report.webhookDeliveries.processed} delivered ` +
               `(${report.webhookDeliveries.retried} retry, ${report.webhookDeliveries.dead} dead), ` +
