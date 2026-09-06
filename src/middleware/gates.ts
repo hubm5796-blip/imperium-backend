@@ -16,6 +16,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { env } from '../env.js';
 import { authenticateApiKey, type Scope } from '../auth/apiKeys.js';
+import { botTokenMatches } from './auth.js';
 import { query } from '../db/pool.js';
 import type { AppContextVariables, JwtPayload } from '../types/index.js';
 
@@ -88,7 +89,7 @@ export async function resolvePrincipal(c: Context): Promise<Principal> {
   // activating it (the documented goal) broke every delegated call.
   const botToken = c.req.header('x-bot-token') ?? '';
   if (botToken) {
-    const isBot = Boolean(env.botApiToken) && safeEqual(botToken, env.botApiToken);
+    const isBot = botTokenMatches(c);
     const isService = Boolean(env.internalServiceToken) && safeEqual(botToken, env.internalServiceToken);
     if (isBot || isService) {
       const asserted = c.req.header('x-mc-uuid');
@@ -106,9 +107,29 @@ export async function resolvePrincipal(c: Context): Promise<Principal> {
   return { kind: 'anonymous' };
 }
 
+/* ── Resolve-once (B-05) ────────────────────────────────────────────────────
+ * resolvePrincipal re-ran on every gate in a chain — for a Bearer imp_ key
+ * each resolution hits D1, and two resolutions could even disagree if D1
+ * flapped mid-request. The principal is resolved ONCE per request (either
+ * by the attachPrincipal middleware or lazily by the first gate) and cached
+ * on the context. */
+export const attachPrincipal: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  c.set('principal', await getPrincipal(c));
+  await next();
+};
+
+/** The request's principal, resolved at most once (see attachPrincipal). */
+export async function getPrincipal(c: Context): Promise<Principal> {
+  const cached = c.get('principal');
+  if (cached) return cached;
+  const resolved = await resolvePrincipal(c);
+  c.set('principal', resolved);
+  return resolved;
+}
+
 /** Internal machine endpoints: the shared bot token ONLY (no asserted uuid). */
 export const requireBot: MiddlewareHandler<AuthEnv> = async (c, next) => {
-  const p = await resolvePrincipal(c);
+  const p = await getPrincipal(c);
   if (p.kind !== 'bot') return c.json({ error: 'Unauthorized' }, 401);
   await next();
 };
@@ -121,7 +142,7 @@ export const requireBot: MiddlewareHandler<AuthEnv> = async (c, next) => {
  * silently missing rows).
  */
 export const requireSelfOrDelegated: MiddlewareHandler<AuthEnv> = async (c, next) => {
-  const p = await resolvePrincipal(c);
+  const p = await getPrincipal(c);
   if (p.kind === 'delegated') {
     const normalized = parseMcUuid(p.mcUuid);
     if (!normalized) return c.json({ error: 'Invalid X-Mc-Uuid' }, 400);
@@ -144,7 +165,7 @@ export const requireSelfOrDelegated: MiddlewareHandler<AuthEnv> = async (c, next
  * uuid is shape-validated and normalized (B-06).
  */
 export const requireMcIdentity: MiddlewareHandler<AuthEnv> = async (c, next) => {
-  const p = await resolvePrincipal(c);
+  const p = await getPrincipal(c);
   if (p.kind === 'session') {
     if (!p.mcUuid) {
       return c.json({ error: 'Minecraft account not linked', linkRequired: true }, 403);
@@ -169,7 +190,7 @@ export const requireMcIdentity: MiddlewareHandler<AuthEnv> = async (c, next) => 
 
 /** API-key scope enforcement (see apiKeys.ts for the closed enum). */
 export const requireScope = (scope: Scope): MiddlewareHandler<AuthEnv> => async (c, next) => {
-  const p = await resolvePrincipal(c);
+  const p = await getPrincipal(c);
   if (p.kind === 'api_key') {
     if (!p.scopes.includes(scope)) {
       return c.json({ error: 'Insufficient scope', code: 'INSUFFICIENT_SCOPE' }, 403);

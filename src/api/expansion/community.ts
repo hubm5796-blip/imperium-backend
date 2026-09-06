@@ -36,10 +36,6 @@ const validationHook = (result: { success: boolean }, c: Context) => {
   }
 };
 
-/** Guard for machine-to-machine endpoints (Discord worker / edge proxies). */
-function requireBot(c: Context): boolean {
-  return botTokenMatches(c);
-}
 
 /** LFG posts live 15 minutes in-game (LfgService expiry) — mirror that TTL. */
 const LFG_TTL_MINUTES = 15;
@@ -54,7 +50,7 @@ const LFG_TTL_MINUTES = 15;
  * delivered. The backend never talks to the game directly.
  */
 communityApi.post('/lfg/posts', writeRateLimit, zValidator('json', lfgPostSchema, validationHook), async (c) => {
-  if (!requireBot(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const body = c.req.valid('json');
@@ -136,7 +132,7 @@ const FEED_EVENT_TYPES = new Set(['contract_fulfilled', 'war_result', 'season_mi
  * hour so a stuck caller can't force an unbounded scan.
  */
 communityApi.get('/events/feed', readRateLimit, async (c) => {
-  if (!requireBot(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const sinceRaw = c.req.query('since') ?? '';
@@ -207,7 +203,7 @@ communityApi.get('/vote/status', readRateLimit, async (c) => {
 
   if (uuid) {
     // Targeted read: bot only (same rule as /api/player/profile).
-    if (!requireBot(c)) {
+    if (!botTokenMatches(c)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
   } else {

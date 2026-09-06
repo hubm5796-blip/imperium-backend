@@ -29,11 +29,6 @@ type ApiEnv = { Variables: AppContextVariables };
 
 export const adminViewsApi = new Hono<ApiEnv>();
 
-/** Bot-token gate shared by every admin view (401, never 403 — no session path). */
-function requireBot(c: Context): boolean {
-  return botTokenMatches(c);
-}
-
 /** Degrading read: an unqueryable table yields {rows: [], available: false}. */
 async function softRows<T extends Record<string, unknown>>(
   label: string,
@@ -57,7 +52,7 @@ async function softRows<T extends Record<string, unknown>>(
  * the public /api/seasons/current (the frontend proxy merges both).
  */
 adminViewsApi.get('/admin/liveops', readRateLimit, async (c) => {
-  if (!requireBot(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   try {
@@ -120,7 +115,7 @@ adminViewsApi.get('/admin/liveops', readRateLimit, async (c) => {
  * Read-only; sweep verdicts and confiscations themselves happen in-game.
  */
 adminViewsApi.get('/admin/contraband/sweeps', readRateLimit, async (c) => {
-  if (!requireBot(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const limitRaw = Number.parseInt(c.req.query('limit') ?? '25', 10);
@@ -192,7 +187,7 @@ adminViewsApi.get('/admin/contraband/sweeps', readRateLimit, async (c) => {
  * the frontend merges both. No mutations — refunds/unlocks stay in-game.
  */
 adminViewsApi.get('/admin/player-tools', readRateLimit, async (c) => {
-  if (!requireBot(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const parsed = mcUuidSchema.safeParse(c.req.query('uuid') ?? '');

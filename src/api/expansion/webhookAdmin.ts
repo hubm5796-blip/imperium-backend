@@ -28,13 +28,9 @@ const createSchema = z.object({
   events: z.array(z.enum(ALL_EVENT_TYPES as [OutboundEventType, ...OutboundEventType[]])).min(1).max(10),
 });
 
-function requireBot(c: Context): boolean {
-  return botTokenMatches(c);
-}
-
 /** POST /api/v2/webhooks/subscriptions — register a subscriber (internal). */
 webhooksApi.post('/webhooks/subscriptions', writeRateLimit, async (c) => {
-  if (!requireBot(c)) return c.json({ error: 'Unauthorized' }, 401);
+  if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
   let body: unknown;
   try {
     body = await c.req.json();
@@ -66,7 +62,7 @@ webhooksApi.post('/webhooks/subscriptions', writeRateLimit, async (c) => {
 
 /** GET /api/v2/webhooks/subscriptions — list (secret redacted). */
 webhooksApi.get('/webhooks/subscriptions', readRateLimit, async (c) => {
-  if (!requireBot(c)) return c.json({ error: 'Unauthorized' }, 401);
+  if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
   const subscribers = await listSubscribers();
   return c.json({
     subscribers: subscribers.map((s) => ({
@@ -82,7 +78,7 @@ webhooksApi.get('/webhooks/subscriptions', readRateLimit, async (c) => {
 
 /** POST /api/v2/webhooks/subscriptions/:id/test — enqueue a test.ping. */
 webhooksApi.post('/webhooks/subscriptions/:id/test', writeRateLimit, async (c) => {
-  if (!requireBot(c)) return c.json({ error: 'Unauthorized' }, 401);
+  if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
   const subscriber = await getSubscriber(c.req.param('id') ?? '');
   if (!subscriber) return c.json({ error: 'Subscriber not found' }, 404);
   if (subscriber.status !== 'active') return c.json({ error: `Subscriber is ${subscriber.status}` }, 409);
@@ -92,7 +88,7 @@ webhooksApi.post('/webhooks/subscriptions/:id/test', writeRateLimit, async (c) =
 
 /** DELETE /api/v2/webhooks/subscriptions/:id */
 webhooksApi.delete('/webhooks/subscriptions/:id', writeRateLimit, async (c) => {
-  if (!requireBot(c)) return c.json({ error: 'Unauthorized' }, 401);
+  if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
   const removed = await deleteSubscriber(c.req.param('id') ?? '');
   if (!removed) return c.json({ error: 'Subscriber not found' }, 404);
   return c.json({ ok: true });
@@ -100,7 +96,7 @@ webhooksApi.delete('/webhooks/subscriptions/:id', writeRateLimit, async (c) => {
 
 /** GET /api/v2/webhooks/deliveries?status=&limit= — queue inspection. */
 webhooksApi.get('/webhooks/deliveries', readRateLimit, async (c) => {
-  if (!requireBot(c)) return c.json({ error: 'Unauthorized' }, 401);
+  if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
   const status = c.req.query('status');
   const rawLimit = Number.parseInt(c.req.query('limit') ?? '50', 10);
   const limit = Number.isNaN(rawLimit) ? 50 : Math.min(Math.max(rawLimit, 1), 200);
