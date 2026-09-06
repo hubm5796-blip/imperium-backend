@@ -137,29 +137,128 @@ async function nativeScramble(password: string, seed: Uint8Array): Promise<Uint8
 
 // ── escaping / placeholders ────────────────────────────────────────────────────
 
-function escapeValue(v: unknown): string {
+// Exported for the contract tests (src/test/mysql-wire.test.ts) — these two
+// are the security-critical surface of the text-protocol path.
+export function escapeValue(v: unknown): string {
   if (v === null || v === undefined) return 'NULL';
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
   if (typeof v === 'bigint') return v.toString();
   if (typeof v === 'boolean') return v ? '1' : '0';
   if (typeof v === 'string') {
-    return `'${v.replace(/\\/g, '\\\\').replace(/\0/g, '\\0').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')}'`;
+    // Full MySQL backslash escape set. Backslash itself first, or it would
+    // double the escapes added below. \Z is MySQL's escape for 0x1A (Ctrl-Z /
+    // EOF on Windows) — a raw \x1a in a payload truncates the statement there.
+    return `'${v
+      .replace(/\\/g, '\\\\')
+      .replace(/\x00/g, '\\0')
+      .replace(/\x08/g, '\\b')
+      .replace(/\t/g, '\\t')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\x1a/g, '\\Z')
+      .replace(/'/g, "\\'")
+      .replace(/"/g, '\\"')}'`;
   }
   // Unknown types never interpolate raw — stringify through the escaper.
   return escapeValue(String(v));
 }
 
-function applyPlaceholders(sql: string, params: readonly unknown[]): string {
+/**
+ * Inline `?` placeholders for the COM_QUERY text protocol (the wire client
+ * has no binary-protocol prepare).
+ *
+ * B-C27: substitution is STATEFUL. The previous naive scan replaced every `?`
+ * in the SQL text, so a `?` inside a string literal ('Ready?'), a quoted
+ * identifier (`col?`) or a comment consumed a parameter and shifted every
+ * later binding — silent query corruption, values landing in the wrong
+ * columns. The scanner below tracks single/double-quoted strings (with both
+ * backslash and doubled-quote escapes), backtick identifiers (with the ``
+ * doubling escape), and `-- `/`#` line comments plus `/* *​/` block comments,
+ * and only substitutes a `?` that appears in bare SQL.
+ */
+export function applyPlaceholders(sql: string, params: readonly unknown[]): string {
   if (params.length === 0) return sql;
   let out = '';
   let param = 0;
+  let inSingle = false;        // inside '...'
+  let inDouble = false;        // inside "..." (string, or identifier under ANSI_QUOTES — skip either way)
+  let inBacktick = false;      // inside `...`
+  let inLineComment = false;   // inside -- … EOL  or  # … EOL
+  let inBlockComment = false;  // inside /* … */
+
   for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i];
-    if (ch === '?' && param < params.length) {
-      out += escapeValue(params[param++]);
-    } else {
+    const ch = sql[i]!;
+    const next = i + 1 < sql.length ? sql[i + 1]! : '';
+
+    if (inLineComment) {
       out += ch;
+      if (ch === '\n') inLineComment = false;
+      continue;
     }
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') {
+        out += '*/';
+        i++;
+        inBlockComment = false;
+      } else {
+        out += ch;
+      }
+      continue;
+    }
+    if (inSingle || inDouble) {
+      out += ch;
+      if (ch === '\\') {
+        // Backslash-escaped character — emit the pair, stay in the literal.
+        if (next !== '') { out += next; i++; }
+      } else if ((inSingle && ch === "'") || (inDouble && ch === '"')) {
+        if (next === ch) {
+          // Doubled quote ('' / "") is an escaped quote, not the terminator.
+          out += next;
+          i++;
+        } else if (inSingle) {
+          inSingle = false;
+        } else {
+          inDouble = false;
+        }
+      }
+      continue;
+    }
+    if (inBacktick) {
+      out += ch;
+      if (ch === '`') {
+        if (next === '`') {
+          // Doubled backtick is an escaped backtick inside the identifier.
+          out += next;
+          i++;
+        } else {
+          inBacktick = false;
+        }
+      }
+      continue;
+    }
+
+    // Bare SQL from here on.
+    if (ch === "'") { inSingle = true; out += ch; continue; }
+    if (ch === '"') { inDouble = true; out += ch; continue; }
+    if (ch === '`') { inBacktick = true; out += ch; continue; }
+    if (ch === '/' && next === '*') { inBlockComment = true; out += ch; continue; }
+    if (ch === '#') { inLineComment = true; out += ch; continue; }
+    if (ch === '-' && next === '-') {
+      // MySQL requires whitespace (or EOL) after `--` for a comment; `--x` is
+      // a double minus. Eating arithmetic here would corrupt the query in a
+      // different way.
+      const after = i + 2 < sql.length ? sql[i + 2]! : '';
+      if (after === '' || after === ' ' || after === '\t' || after === '\n' || after === '\r') {
+        inLineComment = true;
+        out += ch;
+        continue;
+      }
+    }
+    if (ch === '?' && param < params.length) {
+      out += escapeValue(params[param++]!);
+      continue;
+    }
+    out += ch;
   }
   if (param !== params.length) {
     throw new Error(`mysql-wire: ${params.length} params, only ${param} placeholders`);
@@ -294,10 +393,11 @@ export async function wireQuery<T extends Record<string, unknown>>(
     if (packet.payload[0] !== 0x00) throw new Error('mysql-wire: unexpected post-auth packet 0x' + packet.payload[0].toString(16));
 
     // COM_QUERY
+    const queryText = applyPlaceholders(sql, params);
     const enc = new TextEncoder();
-    const query = new Uint8Array(1 + enc.encode(applyPlaceholders(sql, params)).length);
+    const query = new Uint8Array(1 + enc.encode(queryText).length);
     query[0] = 0x03;
-    query.set(enc.encode(applyPlaceholders(sql, params)), 1);
+    query.set(enc.encode(queryText), 1);
     await writePacket(writer, query, 0);
     packet = await readPacket(stream);
     if (isErr(packet.payload)) throw new Error('mysql-wire query ERR: ' + errText(packet.payload));
