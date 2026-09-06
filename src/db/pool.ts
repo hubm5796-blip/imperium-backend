@@ -240,6 +240,34 @@ export async function getCachedSubscription(uuid: string): Promise<PaynowSubscri
   return row ?? null;
 }
 
+/**
+ * Max age of a cached subscription row before dashboard reads stop trusting it
+ * (B-09). Healthy rows refresh at worst monthly (renewal webhooks); a row older
+ * than 45 days means events were missed (e.g. a dropped cancel that exhausted
+ * its retries) and the cache's answer — possibly a stranded status:'active' —
+ * must not be served as fact.
+ */
+const MAX_SUBSCRIPTION_CACHE_AGE_MS = 45 * 24 * 60 * 60 * 1000;
+
+/**
+ * True when a cached subscription row's updated_at is older than
+ * MAX_SUBSCRIPTION_CACHE_AGE (or missing/unparseable — untrustworthy is stale).
+ * D1 stores updated_at as datetime('now') TEXT ('YYYY-MM-DD HH:MM:SS' UTC);
+ * a Date is also accepted because the row type declares one.
+ */
+export function isSubscriptionCacheStale(
+  updatedAt: string | Date | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (updatedAt == null) return true;
+  const ts =
+    updatedAt instanceof Date
+      ? updatedAt.getTime()
+      : Date.parse(`${updatedAt.slice(0, 19).replace(' ', 'T')}Z`);
+  if (Number.isNaN(ts)) return true;
+  return now - ts > MAX_SUBSCRIPTION_CACHE_AGE_MS;
+}
+
 /** Upsert the cached subscription row for a player (called from the webhook handler). */
 export async function upsertCachedSubscription(
   uuid: string,
