@@ -12,6 +12,7 @@ import { Hono } from 'hono';
 import { query } from '../../db/pool.js';
 import { getCachedJson, setCachedJson } from '../../db/redis.js';
 import { botTokenMatches } from '../../middleware/auth.js';
+import { discordIdSchema } from './schemas.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
 import type { AppContextVariables } from '../../types/index.js';
 
@@ -33,10 +34,13 @@ memberApi.get('/member', readRateLimit, async (c) => {
   if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
-  const discordId = (c.req.query('discord_id') ?? '').trim();
-  if (!/^\d{5,25}$/.test(discordId)) {
+  // B-48: the canonical 17-20 digit snowflake schema (the old 5-25 range let
+  // never-real ids through to a DB join + Redis cache fill per probe).
+  const parsedId = discordIdSchema.safeParse((c.req.query('discord_id') ?? '').trim());
+  if (!parsedId.success) {
     return c.json({ error: 'Invalid discord_id' }, 400);
   }
+  const discordId = parsedId.data;
 
   const cacheKey = `member_summary:${discordId}`;
   const cached = await getCachedJson<MemberSummary>(cacheKey);
