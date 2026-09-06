@@ -2552,17 +2552,56 @@ api.post('/referrals/create', requireMcIdentity, async (c) => {
 
   const referredUsername = (body.referredUsername ?? '').trim();
   if (!referredUsername) return c.json({ error: 'Missing referredUsername' }, 400);
+  if (!MC_USERNAME_SCHEMA.test(referredUsername)) {
+    return c.json({ error: 'Invalid referredUsername — expected a 3-16 character Minecraft name' }, 400);
+  }
 
-  // Resolve the referred player's UUID
-  const referredUuid = await getUuidByUsername(referredUsername);
+  // B-28/B-30: registry-only — a referred player must have JOINED the server.
+  // (The old external fallback let referrers register arbitrary Mojang names
+  // that never played; the reward requires an in-game rank-up anyway.)
+  const referredUuid = await getUuidByUsername(referredUsername, { external: false });
   if (!referredUuid) {
-    return c.json({ error: 'Could not find a Minecraft account with that username. They must have joined the server or exist on Mojang.' }, 404);
+    return c.json({ error: 'Could not find a player with that username. They must have joined the server at least once.' }, 404);
   }
   if (referredUuid === referrerUuid) {
     return c.json({ error: 'You cannot refer yourself.' }, 400);
   }
 
-  // Check if this player was already referred by someone else
+  // B-30 ELIGIBILITY — the comment promised this check since the route was
+  // written; the code went straight to INSERT. Source of truth is the
+  // plugin's ReferralCompletionListener: a referral completes at exactly
+  // rank_level 5 (Rank V, REQUIRED_RANK = 5) and pays both players 50K
+  // Denarius + 5K Auctoritas. A referred player ALREADY at/above rank V can
+  // never fire that RankUpEvent again — referring them is pure reward
+  // farming. Game MySQL live first, Postgres mirror fallback; if neither DB
+  // can answer we REFUSE (503) rather than guess the player past the gate.
+  let rankLevel: number | null = null;
+  let rankDegraded = false;
+  try {
+    const rp = await getGamePlayerRankAndPrestige(referredUuid);
+    rankLevel = rp.rank_level;
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[referrals] game MySQL failed — Postgres rank fallback');
+    try {
+      const r = await query<{ rank_level: string }>(
+        'SELECT rank_level FROM player_ranks WHERE uuid = $1',
+        [referredUuid],
+      );
+      rankLevel = r.rows.length > 0 ? Number(r.rows[0].rank_level) : 0;
+    } catch (pgErr) {
+      logger.error({ err: String(pgErr) }, '[referrals] Postgres rank read failed too — refusing creation');
+      rankDegraded = true;
+    }
+  }
+  if (rankDegraded) {
+    return c.json({ error: 'Cannot verify the referred player\'s rank right now. Please try again shortly.' }, 503);
+  }
+  if ((rankLevel ?? 0) >= 5) {
+    return c.json({ error: `${referredUsername} is already at or above Rank V — referrals are for new players.` }, 409);
+  }
+
+  // Check if this player was already referred by someone else (friendly
+  // pre-check; the guarded INSERT below is the authoritative race guard).
   const existing = await query<{ referrer_uuid: string }>(
     'SELECT referrer_uuid FROM referrals WHERE referred_uuid = $1', [referredUuid]
   );
@@ -2570,15 +2609,22 @@ api.post('/referrals/create', requireMcIdentity, async (c) => {
     return c.json({ error: `${referredUsername} has already been referred by another player.` }, 409);
   }
 
-  // Check if the referred player already has a rank higher than I (rank V = prestige 5+)
-  // This prevents referring established players just for the reward
+  // B-30 race guard: two referrers used to pass the SELECT above concurrently
+  // and both INSERT (the schema only backed UNIQUE(referrer, referred)).
+  // ON CONFLICT DO NOTHING + RETURNING makes the insert compare-and-insert;
+  // the new partial UNIQUE index on referred_uuid (migrate-tables.cjs) makes
+  // one-referral-per-referred-player structural. Zero returned rows → 409.
   try {
-    await query(
+    const inserted = await query<{ id: string }>(
       `INSERT INTO referrals (referrer_uuid, referred_uuid, referred_username, status)
        VALUES ($1, $2, $3, 'pending')
-       ON CONFLICT (referrer_uuid, referred_uuid) DO NOTHING`,
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
       [referrerUuid, referredUuid, referredUsername],
     );
+    if (inserted.rows.length === 0) {
+      return c.json({ error: `${referredUsername} has already been referred by another player.` }, 409);
+    }
     return c.json({ ok: true, message: `Referral created. When ${referredUsername} reaches Rank V, you both get a reward!` });
   } catch (err) {
     logger.error({ err: String(err), referrerUuid }, 'referral create failed');
