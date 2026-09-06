@@ -93,6 +93,16 @@ import { emit } from '../webhooks/deliver.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
+/**
+ * Shared single-token schemas (B-27/B-28): values interpolated into in-game
+ * command strings (/legion/*) or used as registry lookup keys (/player/lookup)
+ * are validated against strict charsets — legion names match the plugin's own
+ * LegionManager.createLegion gate ([A-Za-z0-9_]{3,16}); usernames are the
+ * Mojang/Floodgate shape, Bedrock dot-prefix included.
+ */
+const LEGION_NAME_SCHEMA = /^[A-Za-z0-9_]{3,16}$/;
+const MC_USERNAME_SCHEMA = /^\.?[A-Za-z0-9_]{3,16}$/;
+
 /** Full API surface mounted at /api by the main app. */
 export const api = new Hono<ApiEnv>();
 
@@ -2033,21 +2043,41 @@ api.post('/store/subscription/change', storeAuth, async (c) => {
  * GET /api/player/lookup?username=... — resolve a username to a UUID (and
  * display name). Used by the gifting flow AND by the auth/me endpoint to
  * auto-resolve a Discord user's MC account when they share the same username.
+ *
+ * B-28: two tiers, because this used to be a username→UUID oracle open to ANY
+ * login (link not required) that also fetched Mojang/PlayerDB for arbitrary
+ * names and wrote the results into the shared player_names registry:
+ *   - bot/service token: full resolution (registry + Mojang/PlayerDB fallback
+ *     + registry cache write) — the trusted server path (auth/me, bot panel).
+ *   - session: LINKED sessions only, strict username schema, REGISTRY-ONLY
+ *     resolution (no outbound fetch, no registry write), and no-store so the
+ *     per-player answer never sits in a shared edge cache. A miss simply 404s
+ *     — the enumeration oracle over all of Mojang is gone; what remains is
+ *     "has this player joined", the same fact public profiles already expose.
+ * The route also has its own 30/min bucket (tighter than the 60/min global —
+ * B-28's "tighter per-route limiter").
  */
-api.get('/player/lookup', async (c) => {
-  // Accept either bot token OR session auth
-  if (!botTokenMatches(c) && !c.var.user) {
+const lookupRateLimit = rateLimit(30, 60_000, 'player-lookup');
+api.get('/player/lookup', lookupRateLimit, async (c) => {
+  const isBot = botTokenMatches(c);
+  if (!isBot && !c.var.user) {
     return c.json({ error: 'Unauthorized' }, 401);
+  }
+  if (!isBot && !c.var.mcUuid) {
+    return c.json({ error: 'Minecraft account not linked', linkRequired: true }, 403);
   }
   const username = (c.req.query('username') ?? '').trim();
   if (!username) {
     return c.json({ error: 'Missing username query parameter' }, 400);
   }
-  const uuid = await getUuidByUsername(username);
-  if (!uuid) {
-    return c.json({ error: 'No player found with that username' }, 404);
+  if (!MC_USERNAME_SCHEMA.test(username)) {
+    return c.json({ error: 'Invalid username — expected a 3-16 character Minecraft name (Bedrock names may start with a ".")' }, 400);
   }
-  return c.json({ uuid, username });
+  const uuid = await getUuidByUsername(username, { external: isBot });
+  if (!uuid) {
+    return c.json({ error: 'No player found with that username' }, 404, { 'Cache-Control': 'no-store' });
+  }
+  return c.json({ uuid, username }, 200, { 'Cache-Control': 'no-store' });
 });
 
 /**
@@ -2636,18 +2666,10 @@ api.get('/marketplace/mine', requireMcIdentity, async (c) => {
 /* ---------------------------------------------------------- Legion Management */
 
 /**
- * B-27: these routes compose an in-game command string that the plugin
- * executes. The verb is a fixed literal; the single argument is the only
- * variable, so it gets a strict single-token charset — matching the plugin's
- * own gates exactly (LegionManager.createLegion: [A-Za-z0-9_]{3,16};
- * usernames: Mojang/Floodgate shape). Length-only checks used to let
- * spaces/extra tokens through, a plugin-parse injection surface.
- */
-const LEGION_NAME_SCHEMA = /^[A-Za-z0-9_]{3,16}$/;
-const MC_USERNAME_SCHEMA = /^\.?[A-Za-z0-9_]{3,16}$/;
-
-/**
  * POST /api/legion/create — create a new legion (in-game command dispatch).
+ * B-27: the command verb is a fixed literal; the single argument must match
+ * the shared LEGION_NAME_SCHEMA (the plugin's own gate) so no extra tokens
+ * can ride the dispatch. Length-only checks let 'IX Legio leave' through.
  */
 api.post('/legion/create', requireAuth, requireLinked, async (c) => {
   const uuid = c.var.mcUuid!;

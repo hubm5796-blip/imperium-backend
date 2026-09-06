@@ -388,13 +388,26 @@ export async function getPlayerProfile(uuid: string): Promise<PlayerProfile | nu
  *
  * Resolved Mojang UUIDs are cached into `player_names` so subsequent lookups
  * (checkout, webhook delivery) are instant and don't re-hit Mojang.
+ *
+ * B-28: `external: false` restricts the call to the REGISTRY ONLY — no
+ * outbound Mojang/PlayerDB fetch and no registry write. Low-privilege paths
+ * (any linked session calling /player/lookup) get that mode so they can
+ * neither enumerate arbitrary Mojang names nor grow the shared registry with
+ * attacker-chosen rows; trusted paths (bot token, checkout resolution) keep
+ * the full fallback.
  */
-export async function getUuidByUsername(username: string): Promise<string | null> {
+export async function getUuidByUsername(
+  username: string,
+  opts: { external?: boolean } = {},
+): Promise<string | null> {
+  const external = opts.external !== false;
   const result = await query<{ uuid: string }>(
     'SELECT uuid FROM player_names WHERE LOWER(username) = LOWER($1)',
     [username],
   );
   if (result.rows[0]?.uuid) return result.rows[0].uuid;
+
+  if (!external) return null;
 
   // Bedrock/Floodgate usernames start with "." — no Mojang equivalent exists.
   if (username.startsWith('.')) return null;
