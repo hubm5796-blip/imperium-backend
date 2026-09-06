@@ -14,8 +14,9 @@ import {
   exchangeCodeForToken,
   fetchDiscordUser,
 } from '../auth/discord.js';
-import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
+import { attachUser, botTokenMatches, requireAuth, requireLinked } from '../middleware/auth.js';
 import {
+  attachPrincipal,
   parseMcUuid,
   requireMcIdentity,
   resolveActorFromToken,
@@ -96,35 +97,10 @@ export const api = new Hono<ApiEnv>();
 
 // Attach the current user (if any) to every request.
 api.use('*', attachUser);
+// Resolve the principal ONCE per request (B-05) — gates read the cached value.
+api.use('*', attachPrincipal);
 // Apply a default sliding-window limit to everything.
 api.use('*', globalRateLimit);
-
-/**
- * Shared-secret bot authentication. The Discord bot sends the
- * `X-Bot-Token` header (matching BOT_API_TOKEN) on bot-only requests.
- * Returns true when the token matches; false otherwise (including when the
- * token is unset in dev). Callers decide how to treat a failure: 401 for
- * bot-only endpoints, or fall through to cookie auth for mixed endpoints.
- *
- * Compared with `timingSafeEqual` to avoid leaking the secret via timing
- * side-channels (early-exit string comparison can be exploited to recover the
- * token byte-by-byte).
- */
-function requireBotAuth(c: Context): boolean {
-  const token = c.req.header('X-Bot-Token');
-  if (!env.botApiToken || !token) return false;
-  try {
-    const a = Buffer.from(env.botApiToken);
-    const b = Buffer.from(token);
-    // Length must match before timingSafeEqual (it throws on mismatched
-    // lengths); the length check itself is constant-time-safe because the
-    // secret length is not sensitive.
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
-}
 
 /**
  * AUDIT ATTRIBUTION (#12): map the X-Bot-Token to a named actor identity.
@@ -134,12 +110,15 @@ function requireBotAuth(c: Context): boolean {
  * is NEVER trusted for audit — it can only be resolved from the token.
  */
 /**
- * BOT-AUTH MIDDLEWARE (2026-08-25 fix): routes passed the boolean requireBotAuth guard
+ * BOT-AUTH MIDDLEWARE (2026-08-25 fix): routes passed the boolean bot-auth guard
  * as Hono middleware — a false return is not a Response, so every UNAUTHENTICATED call
  * to those routes crashed into a generic 500 instead of a clean 401.
+ *
+ * B-04: the token predicate itself is middleware/auth's botTokenMatches — the
+ * ONE implementation (this file's private timing-safe copy was deleted).
  */
 const botAuthMiddleware = async (c: Context, next: Next) => {
-  if (!requireBotAuth(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   await next();
@@ -168,7 +147,7 @@ const botAuthMiddleware = async (c: Context, next: Next) => {
 
 /** Admin-route authentication: valid bot/service token OR valid session. */
 function adminAuthOk(c: Context): boolean {
-  return requireBotAuth(c) || c.var.user !== null;
+  return botTokenMatches(c) || c.var.user !== null;
 }/**
  * Rate limiter for /auth/webcode/verify. This route is bot-token-gated (only
  * imperium-frontend's own edge proxy can call it — see the route below), so
@@ -182,7 +161,7 @@ function adminAuthOk(c: Context): boolean {
  * than colliding into a single 'unknown' bucket.
  */
 const webcodeRateLimit = rateLimit(8, 5 * 60_000, 'webcode', (c) => {
-  if (requireBotAuth(c)) {
+  if (botTokenMatches(c)) {
     const forwarded = c.req.header('x-original-client-ip');
     if (forwarded) return forwarded;
   }
@@ -308,7 +287,7 @@ api.get('/auth/me', requireAuth, async (c) => {
  * frontend" for every request.
  */
 api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
-  if (!requireBotAuth(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   let body: { code?: string };
@@ -419,7 +398,7 @@ api.get('/player/profile', async (c) => {
   // Targeted lookups (?uuid= / ?discord_id=) are bot-only. Without a valid
   // bot token, anyone could read any player's data, so fall through to the
   // cookie-based "self" path (which is the only thing a browser may do).
-  if ((queryUuid || queryDiscordId) && !requireBotAuth(c)) {
+  if ((queryUuid || queryDiscordId) && !botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
@@ -1091,7 +1070,7 @@ api.post('/admin/reload', async (c) => {
  * Used by the frontend admin gate + AdminContext.
  */
 api.get('/player/permissions', async (c) => {
-  if (!requireBotAuth(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const uuidParam = c.req.query('uuid');
@@ -1474,7 +1453,7 @@ api.post('/link/initiate', requireAuth, async (c) => {
  */
 api.post('/link/confirm', async (c) => {
   // Bot-only: persisting arbitrary account links must be authenticated.
-  if (!requireBotAuth(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   let body: { code?: string; uuid?: string; discordId?: string };
@@ -1563,7 +1542,7 @@ api.post('/link/confirm', async (c) => {
  */
 api.delete('/link', async (c) => {
   // Bot-only: unlinking arbitrary accounts must be authenticated.
-  if (!requireBotAuth(c)) {
+  if (!botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const discordId = c.req.query('discord_id');
@@ -1648,7 +1627,7 @@ const storeAuth: MiddlewareHandler<ApiEnv> = async (c, next) => {
     Boolean(env.internalServiceToken) &&
     presented.length === env.internalServiceToken.length &&
     timingSafeEqual(Buffer.from(presented), Buffer.from(env.internalServiceToken));
-  if (requireBotAuth(c) || isService) {
+  if (botTokenMatches(c) || isService) {
     const uuid = c.req.header('x-mc-uuid');
     if (uuid && !isService) {
       return c.json({ error: 'X-Mc-Uuid requires the internal service token', code: 'IDENTITY_NEEDS_SERVICE_TOKEN' }, 403);
@@ -1997,7 +1976,7 @@ api.post('/store/subscription/change', storeAuth, async (c) => {
  */
 api.get('/player/lookup', async (c) => {
   // Accept either bot token OR session auth
-  if (!requireBotAuth(c) && !c.var.user) {
+  if (!botTokenMatches(c) && !c.var.user) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const username = (c.req.query('username') ?? '').trim();

@@ -1,4 +1,6 @@
 import type { Context } from 'hono';
+// Type-only (erased at runtime) — no import cycle with the gate module.
+import type { Principal } from '../middleware/gates.js';
 
 /** Discord user profile as returned by the OAuth2 /users/@me endpoint. */
 export interface DiscordUser {
@@ -120,6 +122,8 @@ export interface PlayerProfile {
 export interface AppContextVariables {
   user: JwtPayload | null;
   mcUuid: string | null;
+  /** Resolved once per request (B-05) — see gates.attachPrincipal/getPrincipal. */
+  principal?: Principal;
 }
 
 export type AppContext = Context<{
