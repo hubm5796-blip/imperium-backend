@@ -81,6 +81,14 @@ export interface EnvShape {
   /** Discord webhook for staff error alerts — optional; unset = alerting off. */
   staffAlertWebhookUrl?: string;
   /**
+   * B-25: rateLimitV2 per-minute cost budgets. Bindings-first — set
+   * RL_V2_IP_BUDGET / RL_V2_PRINCIPAL_BUDGET as Worker vars (or Node env);
+   * reading process.env directly inside the Worker always yields the
+   * defaults (cronConfig.ts evidence). Fallback 240/480.
+   */
+  rlV2IpBudget: number;
+  rlV2PrincipalBudget: number;
+  /**
    * Pterodactyl panel access for the aidev artifact gallery (renders the
    * /aidev vision tools write to plugins/ImperiumMC/ai/ on the game server).
    * Optional — unset = the gallery endpoints answer configured:false and the
@@ -208,6 +216,11 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     bridgeEventsWebhookUrl: optional('BRIDGE_EVENTS_WEBHOOK_URL') ?? '',
     changelogChannelId: optional('CHANGELOG_CHANNEL_ID') ?? '',
     staffAlertWebhookUrl: optional('STAFF_ALERT_WEBHOOK_URL') || '',
+    // optionalInt throws on garbage (same as REDIS_PORT) — a mistyped budget
+    // should fail the boot, not silently deploy the default. Floor of 10 so a
+    // "0" can't brick the whole v2 surface.
+    rlV2IpBudget: Math.max(10, optionalInt('RL_V2_IP_BUDGET', 240)),
+    rlV2PrincipalBudget: Math.max(10, optionalInt('RL_V2_PRINCIPAL_BUDGET', 480)),
     panelUrl: optional('PANEL_URL', '').replace(/\/+$/, ''),
     panelApiKey: optional('PANEL_API_KEY', ''),
     panelServerId: optional('PANEL_SERVER_ID', ''),
