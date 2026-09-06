@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler, type Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { gameQuery, getGamePlayerBalances, getGamePlayerProfile, getGamePlayerStats, getGamePlayerAchievements, getGamePlayerSkills, getGamePlayerRankAndPrestige, getGamePlayerFactions, getGameParkourRecords, getGamePlayerLegionId, getGameLegionInfo, getGameLegionMembers, getGamePlayerCosmetics, getGamePlayerDailyQuests } from '../db/gameMysql.js';
@@ -1610,6 +1610,46 @@ function frontendUrl(): string {
 }
 
 /**
+ * B-C25 — guest checkout identity resolution.
+ *
+ * The frontend's guest flow (CartDrawer) calls cart-checkout with the bot
+ * token and a `guestUsername` in the JSON body instead of a verified
+ * `X-Mc-Uuid`. Resolution mirrors the repo's existing identity stack:
+ *
+ *   1. getUuidByUsername — the plugin-maintained player_names registry
+ *      (covers Java + Bedrock players who have joined), falling back to
+ *      Mojang/PlayerDB for Java names never seen on the server.
+ *   2. Bedrock dot-names never resolve externally (no Mojang equivalent), so
+ *      a player_names miss derives the offline UUID exactly the way the
+ *      plugin's UuidMigrationService.offlineUuid does — UUID v3 (MD5) of
+ *      "OfflinePlayer:<name>" (name including the dot). Verified against a
+ *      real offline-mode server log: name "Notch" →
+ *      b50ad385-829d-3141-a216-7e7d7539ba7f.
+ *
+ * Anything else (bad charset, too long, unknown Java name) is unresolvable —
+ * the caller must 400, never guess.
+ */
+function bedrockOfflineUuid(username: string): string {
+  // Java: UUID.nameUUIDFromBytes → MD5, version nibble forced to 3 (v3),
+  // IETF variant bits — byte-identical to the JDK (and thus the plugin).
+  const h = createHash('md5').update(`OfflinePlayer:${username}`, 'utf8').digest();
+  h[6] = (h[6]! & 0x0f) | 0x30;
+  h[8] = (h[8]! & 0x3f) | 0x80;
+  const hex = h.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function resolveGuestBuyerUuid(username: string): Promise<string | null> {
+  const name = username.trim();
+  const isBedrock = /^\.[a-zA-Z0-9_]{3,16}$/.test(name);
+  if (!isBedrock && !/^[a-zA-Z0-9_]{3,16}$/.test(name)) return null; // reject anything name-shaped wrong
+  const known = await getUuidByUsername(name).catch(() => null);
+  if (known) return known;
+  if (isBedrock) return bedrockOfflineUuid(name);
+  return null; // Java name unknown to player_names AND Mojang/PlayerDB
+}
+
+/**
  * Auth gate for /store/* routes. Real browser traffic never carries this
  * backend's own session cookie — the live session lives on imperium-frontend's
  * edge-native cookie (a different domain, a different JWT implementation
@@ -1622,6 +1662,32 @@ const storeAuth: MiddlewareHandler<ApiEnv> = async (c, next) => {
   if (requireBotAuth(c)) {
     const uuid = c.req.header('x-mc-uuid');
     if (!uuid) {
+      // B-C25: guest checkout. The frontend's guest flow sends the bot token
+      // plus `guestUsername` in the JSON body instead of X-Mc-Uuid; before
+      // this branch every such request died here with 400 'Missing X-Mc-Uuid'.
+      // Only fires when the header is absent AND the body carries a guest
+      // name — normal bot traffic (which always sends the header) is unchanged,
+      // and body-less GETs parse no body at all.
+      let guestUsername: string | undefined;
+      try {
+        const body = (await c.req.json()) as { guestUsername?: unknown } | null;
+        const raw = body?.guestUsername;
+        if (typeof raw === 'string' && raw.trim().length > 0) guestUsername = raw.trim();
+      } catch {
+        // No body / not JSON — not a guest request; fall through to the 400.
+      }
+      if (guestUsername !== undefined) {
+        const guestUuid = await resolveGuestBuyerUuid(guestUsername);
+        if (!guestUuid) {
+          return c.json(
+            { error: `unknown minecraft username "${guestUsername}" — check the spelling (Bedrock names start with a ".")` },
+            400,
+          );
+        }
+        c.set('mcUuid', guestUuid);
+        await next();
+        return;
+      }
       return c.json({ error: 'Missing X-Mc-Uuid header' }, 400);
     }
     // Validate UUID format — accepts Minecraft UUIDs and Bedrock .prefix names
