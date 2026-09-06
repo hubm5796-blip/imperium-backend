@@ -13,6 +13,7 @@
 import { Hono } from 'hono';
 import { query } from '../../db/pool.js';
 import { botTokenMatches } from '../../middleware/auth.js';
+import { parseMcUuid } from '../../middleware/gates.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
@@ -156,10 +157,14 @@ adminPanelV2.get('/admin/audit', async (c) => {
 // ── Economy: transactions ledger per player ────────────────────────────────
 adminPanelV2.get('/admin/economy/transactions', async (c) => {
   const { limit, offset, page } = pageParams(c);
-  const uuid = c.req.query('uuid');
+  // B-54: canonical shape (dashed/undashed/any-case accepted + normalized)
+  // — the old length-range regex admitted 36 dashes as a "uuid"; the
+  // normalized form is what reaches the query.
+  const uuid = parseMcUuid(c.req.query('uuid'));
   const reasonPrefix = c.req.query('reason_prefix');
 
-  if (!uuid || !/^[0-9a-fA-F-]{32,36}$/.test(uuid)) {
+  // B-54: canonical shape — dashed/undashed/any-case accepted + normalized.
+  if (!uuid) {
     return c.json({ error: 'uuid query param required' }, 400);
   }
 

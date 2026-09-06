@@ -13,6 +13,7 @@
 import { Hono } from 'hono';
 import { query } from '../../db/pool.js';
 import { botTokenMatches } from '../../middleware/auth.js';
+import { parseMcUuid } from '../../middleware/gates.js';
 import { readRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
@@ -35,13 +36,15 @@ ticketsV2.post('/tickets', writeRateLimit, async (c) => {
   } catch {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
-  const uuid = typeof body.uuid === 'string' ? body.uuid.trim() : '';
+  const uuid = typeof body.uuid === 'string' ? parseMcUuid(body.uuid) : null;
   const category = typeof body.category === 'string' ? body.category.trim().toLowerCase() : 'general';
   const subject = typeof body.subject === 'string' ? body.subject.trim().slice(0, 160) : '';
   const note = typeof body.body === 'string' ? body.body.trim().slice(0, 4000) : '';
   const discordThreadId = typeof body.discordThreadId === 'string' ? body.discordThreadId : null;
   const discordOpenerId = typeof body.discordOpenerId === 'string' ? body.discordOpenerId : null;
-  if (!/^[0-9a-f-]{32,36}$/i.test(uuid)) return c.json({ error: 'Invalid uuid' }, 400);
+  // B-54: canonical shape (dashed/undashed/any-case accepted + normalized) —
+  // the old length-range regex admitted 36 dashes as a "uuid".
+  if (!uuid) return c.json({ error: 'Invalid uuid' }, 400);
   if (!subject || !note) return c.json({ error: 'subject and body are required' }, 400);
   if (!CATEGORIES.has(category)) return c.json({ error: 'Invalid category', categories: [...CATEGORIES] }, 400);
 

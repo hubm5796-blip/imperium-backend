@@ -16,6 +16,8 @@ import {
 } from '../auth/discord.js';
 import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
 import {
+  parseMcUuid,
+  requireMcIdentity,
   resolveActorFromToken,
   resolveStaffActor,
   staffActorHasRole,
@@ -423,7 +425,12 @@ api.get('/player/profile', async (c) => {
 
   let uuid: string | null;
   if (queryUuid) {
-    uuid = queryUuid;
+    // B-06: validate + normalize (dashed/undashed/any-case are all legal —
+    // garbage 400s instead of silently reading as "no data").
+    uuid = parseMcUuid(queryUuid);
+    if (!uuid) {
+      return c.json({ error: 'Invalid uuid parameter' }, 400);
+    }
   } else if (queryDiscordId) {
     // Try PostgreSQL first, then SQLite fallback
     try {
@@ -1630,8 +1637,22 @@ async function resolveGuestBuyerUuid(username: string): Promise<string | null> {
  * fallback so these routes remain directly testable against the backend.
  */
 const storeAuth: MiddlewareHandler<ApiEnv> = async (c, next) => {
-  if (requireBotAuth(c)) {
+  // B-13 two-tier: X-Mc-Uuid is an identity ASSERTION, so once the split is
+  // active it requires the internal SERVICE token specifically — the shared
+  // bot token alone may no longer name any player. While
+  // INTERNAL_SERVICE_TOKEN is unset it falls back to BOT_API_TOKEN (env.ts
+  // compat), so nothing breaks until the owner deliberately activates the
+  // split. The outer gate accepts either secret.
+  const presented = c.req.header('x-bot-token') ?? '';
+  const isService =
+    Boolean(env.internalServiceToken) &&
+    presented.length === env.internalServiceToken.length &&
+    timingSafeEqual(Buffer.from(presented), Buffer.from(env.internalServiceToken));
+  if (requireBotAuth(c) || isService) {
     const uuid = c.req.header('x-mc-uuid');
+    if (uuid && !isService) {
+      return c.json({ error: 'X-Mc-Uuid requires the internal service token', code: 'IDENTITY_NEEDS_SERVICE_TOKEN' }, 403);
+    }
     if (!uuid) {
       // B-C25: guest checkout. The frontend's guest flow sends the bot token
       // plus `guestUsername` in the JSON body instead of X-Mc-Uuid; before
@@ -2290,9 +2311,8 @@ api.post(
 /**
  * POST /api/tickets — submit a support ticket. Requires a linked session.
  */
-api.post('/tickets', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.post('/tickets', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
 
   let body: { category?: string; subject?: string; body?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
@@ -2329,8 +2349,9 @@ api.get('/tickets', async (c) => {
   let scopeUuid: string | null = null;
   if (!isStaff) {
     // Non-staff self-scope: the session's linked uuid, else the delegated
-    // proxy's asserted uuid. No identity at all → refuse (never dump all).
-    scopeUuid = c.var.mcUuid ?? (((c.req.header('x-mc-uuid') ?? '').trim() || null));
+    // proxy's asserted uuid (shape-validated — B-06). No identity at all →
+    // refuse (never dump all).
+    scopeUuid = c.var.mcUuid ?? parseMcUuid(c.req.header('x-mc-uuid'));
     if (!scopeUuid) {
       return c.json({ error: 'Staff role helper or above required to list all tickets' }, 403);
     }
@@ -2370,9 +2391,8 @@ api.get('/tickets', async (c) => {
 /**
  * GET /api/tickets/mine — list only the calling player's own tickets.
  */
-api.get('/tickets/mine', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.get('/tickets/mine', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
   const result = await query(
     `SELECT id, category, subject, status, staff_response, responded_at, created_at
      FROM support_tickets WHERE uuid = $1 ORDER BY created_at DESC LIMIT 50`,
@@ -2425,9 +2445,8 @@ api.post('/tickets/:id/respond', async (c) => {
 /**
  * GET /api/player/crates — the calling player's crate key counts per type.
  */
-api.get('/player/crates', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.get('/player/crates', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
   const result = await query<{ crate_type: string; key_count: string }>(
     'SELECT crate_type, key_count FROM player_crate_keys WHERE uuid = $1 AND key_count > 0',
     [mcUuid],
@@ -2445,9 +2464,8 @@ api.get('/player/crates', botAuthMiddleware, async (c) => {
  * POST /api/referrals/create — referrer creates a referral for a referred player.
  * The referral is pending until the referred player reaches rank V (in-game).
  */
-api.post('/referrals/create', botAuthMiddleware, async (c) => {
-  const referrerUuid = c.req.header('x-mc-uuid');
-  if (!referrerUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.post('/referrals/create', requireMcIdentity, async (c) => {
+  const referrerUuid = c.var.mcUuid!;
 
   let body: { referredUsername?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
@@ -2491,9 +2509,8 @@ api.post('/referrals/create', botAuthMiddleware, async (c) => {
 /**
  * GET /api/referrals/mine — the calling player's referrals (as referrer).
  */
-api.get('/referrals/mine', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.get('/referrals/mine', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
 
   const result = await query(
     `SELECT id, referred_username, status, referrer_rewarded, referred_rewarded, created_at, completed_at
@@ -2556,9 +2573,8 @@ api.get('/marketplace/listings', botAuthMiddleware, async (c) => {
 /**
  * GET /api/marketplace/mine — the calling player's own listings.
  */
-api.get('/marketplace/mine', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.get('/marketplace/mine', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
   const result = await query(
     `SELECT id, item_nbt, quantity, price_each, category, expires_at, created_at
      FROM marketplace_listings WHERE seller_uuid = $1 ORDER BY created_at DESC LIMIT 50`,
@@ -2629,9 +2645,8 @@ api.post('/legion/invite', requireAuth, requireLinked, async (c) => {
 /**
  * GET /api/refcode/mine — get the caller's referral code (generates one if none exists).
  */
-api.get('/refcode/mine', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.get('/refcode/mine', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
 
   // Check if player already has a code
   const existing = await query<{ code: string; is_custom: boolean; total_redemptions: string }>(
@@ -2666,9 +2681,8 @@ api.get('/refcode/mine', botAuthMiddleware, async (c) => {
  * POST /api/refcode/custom — Patrician+ sets a custom 6-char code.
  * 30-day cooldown between changes.
  */
-api.post('/refcode/custom', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.post('/refcode/custom', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
 
   let body: { code?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
@@ -2767,9 +2781,8 @@ api.post('/errors/report', async (c) => {
   return c.json({ ok: true });
 });
 
-api.post('/refcode/redeem', botAuthMiddleware, async (c) => {
-  const mcUuid = c.req.header('x-mc-uuid');
-  if (!mcUuid) return c.json({ error: 'Missing X-Mc-Uuid' }, 400);
+api.post('/refcode/redeem', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
 
   let body: { code?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
