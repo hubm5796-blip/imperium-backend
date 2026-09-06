@@ -42,6 +42,7 @@ import {
   getNameByUuid,
   getWaveLeaderboard,
   isAlreadyLinked,
+  isSubscriptionCacheStale,
   query,
   setPaynowCustomerId,
   upsertCachedSubscription,
@@ -1685,14 +1686,15 @@ async function resolvePaynowCustomerId(uuid: string): Promise<string> {
  * GET /api/store/subscription — the caller's current donor subscription, if any.
  * Reads from our webhook-fed cache first (fast, no PayNow round trip); falls
  * back to a live Storefront API call if we've never seen a webhook for this
- * player yet (e.g. their very first purchase, before the webhook lands) or if
- * the cache itself is unreachable.
+ * player yet (e.g. their very first purchase, before the webhook lands), if the
+ * cache itself is unreachable, or if the cached row is STALE (B-09: a dropped
+ * cancel webhook would otherwise show a canceled subscriber as active forever).
  */
 api.get('/store/subscription', storeAuth, async (c) => {
   const uuid = c.var.mcUuid!;
 
   const cached = await dbReadOrNull('getCachedSubscription', () => getCachedSubscription(uuid));
-  if (cached) {
+  if (cached && !isSubscriptionCacheStale(cached.updated_at)) {
     return c.json({
       subscriptionId: cached.subscription_id,
       productId: cached.product_id,
@@ -2133,6 +2135,12 @@ api.post('/webhooks/paynow', async (c) => {
   // `data` — accept either so both generations of PayNow webhooks parse.
   const data = ((event.body ?? event.data) ?? {}) as Record<string, unknown>;
 
+  // B-09: cancel-path failures MUST return non-2xx so PayNow retries. A canceled
+  // subscription emits no further events — "the next renewal will self-heal it"
+  // is false for cancels, and one swallowed failure strands status:'active' in
+  // the cache forever. Activation/renewal failures stay 200: those events recur,
+  // and a retry storm over a cache write buys nothing.
+  let cancelPath = false;
   try {
     switch (canonicalEvent) {
       case 'order_completed': {
@@ -2162,6 +2170,7 @@ api.post('/webhooks/paynow', async (c) => {
         break;
       }
       case 'subscription_canceled': {
+        cancelPath = true;
         const customerId = String(data['customer_id'] ?? (data['customer'] as { id?: string })?.id ?? '');
         const subscriptionId = String(data['id'] ?? '');
         const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
@@ -2170,7 +2179,11 @@ api.post('/webhooks/paynow', async (c) => {
           await upsertCachedSubscription(uuid, subscriptionId, productId, 'canceled');
         } else {
           logger.error({ customerId, subscriptionId, eventType }, 'PayNow webhook cancel: customer could not be resolved to a uuid — subscription cache NOT updated');
+          // 500, not 200: a retry is the only way this cache row ever gets
+          // written (B-09).
+          return c.json({ error: 'cancel: customer could not be resolved to a uuid' }, 500);
         }
+        cancelPath = false;
         break;
       }
       case 'unknown':
@@ -2180,6 +2193,12 @@ api.post('/webhooks/paynow', async (c) => {
         break;
     }
   } catch (err) {
+    if (cancelPath) {
+      // B-09: the canceled write never landed and no future event will fix it.
+      // The upsert is idempotent, so PayNow's retries are safe.
+      logger.error({ err, eventType }, 'PayNow webhook CANCEL processing failed — returning 500 so PayNow retries');
+      return c.json({ error: 'cancel processing failed' }, 500);
+    }
     // Log but still 200 — PayNow retries on non-2xx, and a cache-write failure
     // isn't worth a retry storm; the next renewal event will self-heal it.
     logger.error({ err, eventType }, 'Failed to process PayNow webhook');

@@ -23,6 +23,8 @@ const {
   getUuidByPaynowCustomerIdMock,
   setPaynowCustomerIdMock,
   getPaynowCustomerMock,
+  upsertCachedSubscriptionMock,
+  getCachedSubscriptionMock,
   fakeD1,
 } = vi.hoisted(() => {
   /** Minimal D1 fake: tracks (order_id, line_key) claims, reports changes, honors DELETE. */
@@ -61,6 +63,8 @@ const {
     getUuidByPaynowCustomerIdMock: vi.fn(),
     setPaynowCustomerIdMock: vi.fn(),
     getPaynowCustomerMock: vi.fn(),
+    upsertCachedSubscriptionMock: vi.fn(),
+    getCachedSubscriptionMock: vi.fn(),
     fakeD1: makeFakeD1(),
   };
 });
@@ -72,7 +76,8 @@ vi.mock('../db/pool.js', async (importOriginal) => {
     getD1: () => fakeD1,
     getUuidByPaynowCustomerId: getUuidByPaynowCustomerIdMock,
     setPaynowCustomerId: setPaynowCustomerIdMock,
-    upsertCachedSubscription: vi.fn(),
+    upsertCachedSubscription: upsertCachedSubscriptionMock,
+    getCachedSubscription: getCachedSubscriptionMock,
   };
 });
 
@@ -94,6 +99,7 @@ import {
   resolveStoreDispatch,
   fulfillPaynowOrder,
 } from '../paynow/fulfillment.js';
+import { isSubscriptionCacheStale } from '../db/pool.js';
 
 const BUYER = '11111111-2222-4333-8444-555555555555';
 const RECIPIENT = '99999999-8888-4777-8666-555555555555';
@@ -111,6 +117,7 @@ beforeAll(() => {
     PAYNOW_API_KEY: 'pk_test',
     PAYNOW_STORE_ID: '1',
     PAYNOW_WEBHOOK_SECRETS: 'whsec_test',
+    BOT_API_TOKEN: 'bot-token-test',
   });
 });
 
@@ -119,6 +126,8 @@ beforeEach(() => {
   getUuidByPaynowCustomerIdMock.mockReset();
   setPaynowCustomerIdMock.mockReset();
   getPaynowCustomerMock.mockReset();
+  upsertCachedSubscriptionMock.mockReset();
+  getCachedSubscriptionMock.mockReset();
   fakeD1.__claimed.clear();
 });
 
@@ -373,5 +382,137 @@ describe('POST /api/webhooks/paynow (order_completed)', () => {
     const duplicate = await postWebhook('ON_ORDER_COMPLETED', aureusOrder());
     expect(duplicate.status).toBe(200);
     expect(sendCommandWithResponseMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+/* ── layer 4: B-09 — cancel-path webhook failures must 500 ────────────────── */
+
+describe('B-09: subscription cancel-path failures are not swallowed', () => {
+  async function postSubscriptionWebhook(
+    eventType: string,
+    payload: Record<string, unknown>,
+  ): Promise<Response> {
+    const { api } = await import('../api/routes.js');
+    const rawBody = JSON.stringify({ event_type: eventType, data: payload });
+    const timestamp = Date.now();
+    const { createHmac } = await import('node:crypto');
+    const signature = createHmac('sha256', 'whsec_test').update(`${timestamp}.${rawBody}`).digest('base64');
+    return api.request('/webhooks/paynow', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'PayNow-Signature': signature,
+        'PayNow-Timestamp': String(timestamp),
+        'cf-connecting-ip': '198.51.100.21',
+      },
+      body: rawBody,
+    });
+  }
+
+  it('a happy-path cancel writes status=canceled and 200s', async () => {
+    getUuidByPaynowCustomerIdMock.mockResolvedValue(BUYER);
+    upsertCachedSubscriptionMock.mockResolvedValue(undefined);
+    const res = await postSubscriptionWebhook('ON_SUBSCRIPTION_CANCELED', {
+      id: 'sub_1', product_id: '586713857251082240', customer_id: 'cus_buyer',
+    });
+    expect(res.status).toBe(200);
+    expect(upsertCachedSubscriptionMock).toHaveBeenCalledWith(BUYER, 'sub_1', '586713857251082240', 'canceled');
+  });
+
+  it('a cancel with an unresolvable customer returns 500 (pre-fix: 200, cache stranded active forever)', async () => {
+    getUuidByPaynowCustomerIdMock.mockResolvedValue(null);
+    getPaynowCustomerMock.mockRejectedValue(new Error('404'));
+    const res = await postSubscriptionWebhook('ON_SUBSCRIPTION_CANCELED', {
+      id: 'sub_1', product_id: '586713857251082240', customer_id: 'cus_ghost',
+    });
+    expect(res.status).toBe(500);
+  });
+
+  it('a cancel whose cache write throws returns 500 so PayNow retries', async () => {
+    getUuidByPaynowCustomerIdMock.mockResolvedValue(BUYER);
+    upsertCachedSubscriptionMock.mockRejectedValue(new Error('D1 write failed'));
+    const res = await postSubscriptionWebhook('ON_SUBSCRIPTION_CANCELED', {
+      id: 'sub_1', product_id: '586713857251082240', customer_id: 'cus_buyer',
+    });
+    expect(res.status).toBe(500);
+  });
+
+  it('activation failures still return 200 (recurring events self-heal — unchanged semantics)', async () => {
+    getUuidByPaynowCustomerIdMock.mockResolvedValue(null);
+    getPaynowCustomerMock.mockRejectedValue(new Error('404'));
+    const res = await postSubscriptionWebhook('ON_SUBSCRIPTION_ACTIVATED', {
+      id: 'sub_1', product_id: '586713857251082240', customer_id: 'cus_ghost',
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
+/* ── layer 5: B-09 — stale subscription cache rows fall through to live ───── */
+
+describe('B-09: isSubscriptionCacheStale + GET /store/subscription staleness', () => {
+  const NOW = Date.parse('2026-09-05T12:00:00Z');
+
+  it('fresh rows are trusted, old/missing/garbage rows are stale', () => {
+    expect(isSubscriptionCacheStale('2026-09-01 10:00:00', NOW)).toBe(false);      // 4 days
+    expect(isSubscriptionCacheStale('2026-07-01 10:00:00', NOW)).toBe(true);       // ~66 days
+    expect(isSubscriptionCacheStale(null, NOW)).toBe(true);
+    expect(isSubscriptionCacheStale('not-a-date', NOW)).toBe(true);
+  });
+
+  function d1DateString(msAgo: number): string {
+    const d = new Date(NOW - msAgo);
+    return d.toISOString().slice(0, 19).replace('T', ' ');
+  }
+
+  async function getSubscription(): Promise<Response> {
+    const { api } = await import('../api/routes.js');
+    return api.request('/store/subscription', {
+      headers: {
+        'x-bot-token': 'bot-token-test',
+        'x-mc-uuid': BUYER,
+        'cf-connecting-ip': '198.51.100.22',
+      },
+    });
+  }
+
+  it('a FRESH cached row is served without a PayNow round trip', async () => {
+    getCachedSubscriptionMock.mockResolvedValue({
+      uuid: BUYER, subscription_id: 'sub_1', product_id: '586713857251082240',
+      status: 'active', updated_at: d1DateString(3 * 24 * 3600 * 1000),
+    });
+    const fetchCalls: unknown[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (...args: unknown[]) => {
+      fetchCalls.push(args);
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+    try {
+      const res = await getSubscription();
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ subscriptionId: 'sub_1', status: 'active' });
+      expect(fetchCalls).toHaveLength(0); // cache hit — no live call
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('a STALE cached row is not served as fact — the route falls through to live PayNow', async () => {
+    getCachedSubscriptionMock.mockResolvedValue({
+      uuid: BUYER, subscription_id: 'sub_1', product_id: '586713857251082240',
+      status: 'active', updated_at: d1DateString(60 * 24 * 3600 * 1000), // 60 days stale
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response('gateway down', { status: 502 })) as typeof fetch;
+    try {
+      const res = await getSubscription();
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { status?: string; subscription?: unknown; available?: boolean };
+      // The stale 'active' status must NOT be echoed; live lookup failed →
+      // explicit unavailable marker instead of a confident lie.
+      expect(body.status).toBeUndefined();
+      expect(body).toMatchObject({ subscription: null, available: false });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
