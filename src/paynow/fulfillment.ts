@@ -138,21 +138,34 @@ export function resolveStoreDispatch(productId: string): ResolvedStoreDispatch |
   return null;
 }
 
-/** The signed Redis-bus command for one resolved product, per the plugin's WebPanelCommandHandler contract. */
+/**
+ * The signed Redis-bus command for one resolved product, per the plugin's
+ * WebPanelCommandHandler contract.
+ *
+ * B-C26: `quantity` is the ORDER LINE quantity and multiplies stackable goods
+ * — Aureus packs credit `amount * quantity` and crate-key bundles deliver
+ * `keyAmount * quantity` keys. Rank grants are NOT stackable (rank 3x is still
+ * one rank), so the rank branch deliberately ignores it. Default 1 keeps direct
+ * callers (single-unit paths) unchanged.
+ */
 export function buildStoreDispatchCommand(
   resolved: ResolvedStoreDispatch,
   playerUuid: string,
   orderId: string,
+  quantity: number = 1,
 ): { type: string; payload: Record<string, unknown> } {
   // The order id doubles as the transaction id — PayNow's order webhook has no
   // separate payment id, and it is unique per purchase which is what the
   // plugin's registry dedupe needs.
   const transaction_id = orderId;
+  // parsePaynowOrder clamps line quantity to 1..99; clamp again so direct
+  // callers can't zero-out or inflate a delivery.
+  const qty = Math.max(1, Math.min(99, Math.floor(quantity)));
   switch (resolved.kind) {
     case 'aureus':
       return {
         type: 'STORE_PURCHASE_AUREUS',
-        payload: { player_uuid: playerUuid, amount: resolved.amount, pack_name: resolved.packName, order_id: orderId, transaction_id },
+        payload: { player_uuid: playerUuid, amount: resolved.amount * qty, pack_name: resolved.packName, order_id: orderId, transaction_id },
       };
     case 'rank':
       return {
@@ -162,7 +175,7 @@ export function buildStoreDispatchCommand(
     case 'crate_key':
       return {
         type: 'STORE_PURCHASE_CRATE_KEY',
-        payload: { player_uuid: playerUuid, crate_id: resolved.crateId, quantity: resolved.keyAmount, order_id: orderId, transaction_id },
+        payload: { player_uuid: playerUuid, crate_id: resolved.crateId, quantity: resolved.keyAmount * qty, order_id: orderId, transaction_id },
       };
   }
 }
@@ -311,7 +324,9 @@ export async function fulfillPaynowOrder(body: Record<string, unknown>): Promise
         targetUuid = recipientUuid;
       }
 
-      const command = buildStoreDispatchCommand(resolved, targetUuid, order.orderId);
+      // B-C26: pass the line quantity so multi-pack/multi-bundle buyers get
+      // amount/keys multiplied by what they paid for.
+      const command = buildStoreDispatchCommand(resolved, targetUuid, order.orderId, line.quantity);
       const lineKey = `${line.productId}:${line.quantity}:${targetUuid}`;
       if (!(await claimOrderLine(order.orderId, lineKey, command.type))) {
         skippedDuplicate++;
