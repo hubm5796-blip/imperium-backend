@@ -157,13 +157,13 @@ describe('B-19/B-29 staff gates on admin reads', () => {
     ).toBe(403);
   });
 
-  it('TRANSITIONAL: the bare shared bot token still reads (deleted by the exemption-deletion commit)', async () => {
+  it('exemption deleted: the bare shared bot token is refused on admin reads (403)', async () => {
     expect(
       (await app.request('/api/admin/server/status', { headers: { 'X-Bot-Token': 'test-bot-token' } })).status,
-    ).toBe(200);
+    ).toBe(403);
     expect(
       (await app.request('/api/v2/admin/anticheat/alerts', { headers: { 'X-Bot-Token': 'test-bot-token' } })).status,
-    ).toBe(200);
+    ).toBe(403);
   });
 });
 

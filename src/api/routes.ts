@@ -136,9 +136,9 @@ const botAuthMiddleware = async (c: Context, next: Next) => {
  *      after its own LuckPerms verification; a bare header means nothing),
  *   3. the session's own staff role (JWT staffRole claim, else the linked
  *      account's LuckPerms group) when the header is absent,
- *   4. TRANSITIONALLY, the verified shared token with no identity attached
- *      (panel-service) — deleted once the frontend ships the header,
- *   5. anonymous (deny) otherwise.
+ *   4. anonymous (deny) otherwise — the bare shared token confers no
+ *      staff role (the transitional panel-service exemption is deleted).
+ *
  *
  * Route role gates: /admin/punish requires mod+; /admin/broadcast requires
  * helper+; /admin/reload requires admin. Admin routes accept EITHER a valid
@@ -971,7 +971,7 @@ api.post('/admin/punish', async (c) => {
   // it is simply ignored (the frontend is dropping the field — X-03 — and a
   // spoof warning on every legitimate action made the signal useless).
   const staffActor = await resolveStaffActor(c);
-  if (body.actor && (staffActor.source === 'service-transition' || staffActor.source === 'anonymous')) {
+  if (body.actor && staffActor.source === 'anonymous') {
     const resolvedActor = resolveActorFromToken(c);
     if (body.actor !== resolvedActor) {
       logger.warn(

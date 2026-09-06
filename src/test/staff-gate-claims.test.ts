@@ -155,16 +155,15 @@ describe('staff gate — X-Staff-Role trust protocol', () => {
     expect(res.status).toBe(403);
   });
 
-  it('TRANSITIONAL: the bare shared bot token still passes the gates until the exemption-deletion commit', async () => {
+  it('B-01 (c): the bare shared bot token is DENIED — the panel-service exemption is deleted', async () => {
     sent.length = 0;
     const res = await app.request('/api/admin/punish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...BOT },
       body: JSON.stringify(punishBody),
     });
-    expect(res.status).toBe(200);
-    const cmd = sent.find((c) => c.type === 'PUNISH_PLAYER');
-    expect(cmd?.payload.actor).toBe('panel-service');
+    expect(res.status).toBe(403);
+    expect(sent.find((c) => c.type === 'PUNISH_PLAYER')).toBeUndefined();
   });
 
   it('X-Staff-Role on a bot-token-authenticated request is honored (the bot forwards its verified staff gate)', async () => {

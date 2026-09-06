@@ -263,7 +263,7 @@ export interface StaffActor {
   role: StaffRole | 'none';
   rank: number;
   /** Which trust source produced this actor — audit + tests assert on it. */
-  source: 'staff-token' | 'header-claim' | 'session-claim' | 'service-transition' | 'anonymous';
+  source: 'staff-token' | 'header-claim' | 'session-claim' | 'anonymous';
 }
 
 /**
@@ -277,15 +277,14 @@ export interface StaffActor {
  *   3. No header + valid session → the session's own staff role: the JWT's
  *      `staffRole` claim, else the linked account's LuckPerms group. This is
  *      the "sessions keep working" fallback.
- *   4. Verified shared bot/service token with no identity attached → the
- *      TRANSITIONAL panel-service exemption (B-01's fix lands as a separate
- *      deletion once the frontend ships the header — see audit FINDINGS B-01
- *      and CROSS-REPO X-04 for why it must be sequenced frontend-first).
- *   5. Anything else → 'anonymous', rank 0, deny by default.
+ *   4. Anything else — including the bare shared bot/service token with no
+ *      identity attached — is 'anonymous', rank 0, deny by default (B-01's
+ *      panel-service exemption is DELETED; the panel must forward
+ *      X-Staff-Role after its LuckPerms check, per X-04).
  *
  * Precedence for identity (X-02): session cookie > X-Staff-Role claim >
- * bot token. The bot token alone NEVER confers a staff role once (4) is
- * deleted — it confers service scope only.
+ * bot token. The bot token alone NEVER confers a staff role — it confers
+ * service scope only.
  */
 
 /** Parse "token:name:role,..." with first-colon token splitting (B-03: a
@@ -451,23 +450,14 @@ export async function resolveStaffActor(c: Context): Promise<StaffActor> {
     return { name: mappedName, role: 'helper', rank: STAFF_ROLE_RANK.helper, source: 'staff-token' };
   }
 
-  // 4. Verified shared token, no identity — TRANSITIONAL panel-service
-  //    exemption. Deleted in a standalone commit once the frontend ships
-  //    X-Staff-Role forwarding (audit B-01/X-04 sequencing).
-  if (botOrServiceTokenValid(c)) {
-    return { name: 'panel-service', role: 'admin', rank: STAFF_ROLE_RANK.admin, source: 'service-transition' };
-  }
-
-  // 5. Unknown principal — deny by default.
+  // 4. Everything else — including the bare shared token with no identity
+  //    attached — is deny-by-default anonymous (B-01's panel-service
+  //    exemption deleted: absence of identity must never be privilege).
   return { name: 'anonymous', role: 'none', rank: 0, source: 'anonymous' };
 }
 
-/** Role gate. One implementation; asserts on rank, with the transitional
- *  service exemption until the frontend half of X-04 deploys. */
+/** Role gate. One implementation; asserts on rank. */
 export function staffActorHasRole(actor: StaffActor, minimum: StaffRole): boolean {
-  // TRANSITIONAL (B-01 step (c) deletes this branch): the panel-service pipe
-  // stays exempt while the frontend learns to forward X-Staff-Role.
-  if (actor.source === 'service-transition') return true;
   return actor.rank >= (STAFF_ROLE_RANK[minimum] ?? 99);
 }
 
