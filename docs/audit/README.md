@@ -16,6 +16,7 @@ Part of a cross-repo strict audit of the three ImperiumMC codebases.
 | [`ROUND-7.md`](ROUND-7.md) | B-43 … B-50 (expansion leftovers, Discord, test gaps, census, SSE) |
 | [`ROUND-8.md`](ROUND-8.md) | B-51 … B-54 + red-team verdicts (B-01 narrowed, webcode quantified, B-49/B-20 confirmed) + 7 fix hazards |
 | [`ROUND-9.md`](ROUND-9.md) | B-55, B-56 + dependency/CVE verdicts (zero applicable) + B-09 FIXED |
+| [`ROUND-10.md`](ROUND-10.md) | B-57 … B-59 + fix verdicts (fulfillment PARTIAL, referral PARTIAL) + C25–28 accuracy + unrunnable suites |
 | [`CROSS-REPO.md`](CROSS-REPO.md) | X-01 … X-04, the seams with the plugin and frontend |
 
 The full audit — executive summary, plugin and frontend findings, methodology,
