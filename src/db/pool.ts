@@ -1262,7 +1262,7 @@ export async function getLeaderboardPage(
     const result = await query<{ uuid: string; total_secs: string; name: string | null }>(
       `SELECT pl.uuid, pl.total_secs, pn.username AS name
          FROM player_playtime pl
-         LEFT JOIN player_names pn ON pl.uuid = pl.uuid
+         LEFT JOIN player_names pn ON pl.uuid = pn.uuid
         ${where}
         ORDER BY pl.total_secs DESC, pl.uuid ASC
         LIMIT $${params.length + 1}`,
