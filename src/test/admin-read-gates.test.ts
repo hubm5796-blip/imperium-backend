@@ -131,6 +131,16 @@ describe('B-19/B-29 staff gates on admin reads', () => {
     ).toBe(200);
   });
 
+  it('B-43: staff SWR views answer Cache-Control: private, no-store', async () => {
+    for (const path of ['/api/admin/liveops', '/api/admin/contraband/sweeps', '/api/economy/drift-alerts']) {
+      const res = await app.request(path, { headers: { Cookie: await cookie(ADMIN_DISCORD) } });
+      expect(res.headers.get('cache-control')).toBe('private, no-store');
+    }
+    // The public flow-summary keeps the shared-cacheable policy.
+    const pub = await app.request('/api/economy/flow-summary');
+    expect(pub.headers.get('cache-control') ?? '').toContain('public');
+  });
+
   it('v1 /admin/server/status + /admin/player are helper+', async () => {
     expect(
       (await app.request('/api/admin/server/status', { headers: { Cookie: await cookie(PLAIN_DISCORD) } })).status,

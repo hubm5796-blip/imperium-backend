@@ -133,15 +133,29 @@ function edgePut(c: Context, res: Response): void {
  * The response carries `Cache-Control: public, max-age=60, stale-while-revalidate=300`
  * so any upstream CDN/browser honors the same policy, plus an `X-Cache`
  * diagnostic header (EDGE | HIT | STALE | STALE-ERROR).
+ *
+ * B-43: pass `{ visibility: 'private' }` for staff-only payloads — the
+ * response becomes `Cache-Control: private, no-store` (the player-tools
+ * pattern) and the edge cache is skipped entirely, so a shared/CDN cache can
+ * never key a staff view by bare URL.
  */
+export interface SwrJsonOptions {
+  /** 'public' (default): SWR + edge cache. 'private': no-store, no edge. */
+  visibility?: 'public' | 'private';
+}
+
 export async function swrJson<T>(
   c: Context,
   cacheKey: string,
   fetcher: () => Promise<T | undefined>,
+  opts: SwrJsonOptions = {},
 ): Promise<Response> {
-  // Layer 1: edge cache. A hit is at most 60s old by its own Cache-Control
-  // policy, so serve it without touching Redis or Postgres at all.
-  const edgeHit = await edgeMatch(c);
+  const isPrivate = opts.visibility === 'private';
+
+  // Layer 1: edge cache — PUBLIC payloads only (B-43). A hit is at most 60s
+  // old by its own Cache-Control policy, so serve it without touching Redis
+  // or Postgres at all.
+  const edgeHit = isPrivate ? null : await edgeMatch(c);
   if (edgeHit) {
     const res = edgeHit.clone();
     res.headers.set('X-Cache', 'EDGE');
@@ -155,7 +169,12 @@ export async function swrJson<T>(
 
   const buildResponse = (data: T, cacheState: string): Response => {
     const res = c.json(data as unknown as Record<string, unknown>);
-    res.headers.set('Cache-Control', `public, max-age=${Math.floor(SWR_FRESH_MS / 1000)}, stale-while-revalidate=${Math.floor(SWR_STALE_MS / 1000)}`);
+    res.headers.set(
+      'Cache-Control',
+      isPrivate
+        ? 'private, no-store'
+        : `public, max-age=${Math.floor(SWR_FRESH_MS / 1000)}, stale-while-revalidate=${Math.floor(SWR_STALE_MS / 1000)}`,
+    );
     res.headers.set('X-Cache', cacheState);
     return res;
   };
@@ -195,7 +214,7 @@ export async function swrJson<T>(
       setCachedJson(cacheKey, { data: fresh, fetchedAt: Date.now() }, SWR_REDIS_TTL_SECONDS),
     );
     const res = buildResponse(fresh, 'MISS');
-    edgePut(c, res);
+    if (!isPrivate) edgePut(c, res); // B-43: staff payloads never enter the edge cache
     return res;
   } catch (err) {
     if (entry) {
