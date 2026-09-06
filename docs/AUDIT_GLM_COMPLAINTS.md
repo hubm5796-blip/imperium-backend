@@ -395,3 +395,54 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
      });
      ```
   3. Persist the delivered order row into `web_queue` and `paynow_orders` for order tracking parity.
+
+---
+
+### COMPLAINT 20: Total Guest Checkout Block & Forced Discord/MC Link Wall
+* **Severity:** CRITICAL
+* **Category:** Monetization Pipeline / Conversion Funnel / PayNow Integration
+* **Location:** `src/api/routes.ts:1616-1640, 2017-2020`
+* **The Problem:**
+  1. In `src/api/routes.ts:storeAuth`:
+     ```typescript
+     if (!c.var.user) {
+       return c.json({ error: 'Unauthorized' }, 401);
+     }
+     if (!c.var.mcUuid) {
+       return c.json({ error: 'Minecraft account not linked', linkRequired: true }, 403);
+     }
+     ```
+  2. `POST /api/store/cart-checkout` attaches `storeAuth`. Any customer visiting the store who does not have an active session cookie receives a 401 Unauthorized. Even if they log in via Discord, if they have not run `/webcode` in-game, they receive a 403 Forbidden.
+  3. This completely blocks:
+     - Parents purchasing ranks or keys as gifts for their kids.
+     - Mobile/Bedrock players browsing the web store.
+     - New players who want to buy a starter pack or rank *before* joining the server.
+  4. PayNow supports arbitrary customer identifiers (`customer_id`). The store backend should allow guest checkouts where the buyer inputs a `guestUsername`. The backend then resolves the UUID via Mojang API / Bedrock Floodgate prefix, eliminating the Discord/OAuth requirement entirely.
+* **Remediation Action:**
+  1. Modify `storeAuth` or create `storeCheckoutAuth`: if `c.var.user` is null, check if the request body contains a valid `guestUsername`.
+  2. Resolve `guestUsername` to a Minecraft UUID via Mojang API / PlayerDB or Bedrock prefix resolver.
+  3. Allow guest checkouts to proceed, setting `c.set('mcUuid', resolvedUuid)` and resolving or creating the PayNow customer.
+
+---
+
+### COMPLAINT 21: Raw JSON Error Exposure on OAuth State Validation Failure
+* **Severity:** MEDIUM
+* **Category:** Authentication UX / Error Handling / Mobile In-App Browsers
+* **Location:** `src/api/routes.ts:246-267`
+* **The Problem:**
+  1. In `GET /api/auth/discord/callback`:
+     ```typescript
+     if (!state || !cookieState || state !== cookieState) {
+       setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
+       return c.json({ error: 'Invalid state' }, 400);
+     }
+     ```
+  2. On mobile devices, opening links from Discord, Reddit, or Twitter often launches in-app web views (e.g. SFSafariViewController or Chrome Custom Tabs). Due to cookie partitioning or third-party cookie restrictions, the `oauth_state` cookie is frequently not echoed back on the redirect.
+  3. Instead of redirecting back to `${frontendUrl()}/login?error=state_mismatch` (which every other error branch in that handler does!), line 256 returns raw JSON `{"error": "Invalid state"}` with HTTP 400.
+  4. The user sees an ugly, unstyled white screen with raw JSON, completely breaking the login flow.
+* **Remediation Action:**
+  1. In `src/api/routes.ts:256`, change `return c.json({ error: 'Invalid state' }, 400);` to:
+     ```typescript
+     return c.redirect(`${frontendUrl()}/login?error=state_mismatch`, 302);
+     ```
+
