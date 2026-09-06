@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from 'hono';
 import type { AppContextVariables } from '../types/index.js';
 import { getD1 } from '../db/pool.js';
+import { env } from '../env.js';
 import { logger } from '../utils/logger.js';
 
 type RL = { Variables: AppContextVariables };
@@ -40,25 +41,26 @@ async function ensureSchema(): Promise<boolean> {
 }
 
 /**
- * Default IP resolution: `CF-Connecting-IP` is set by Cloudflare's edge and
+ * Client-IP resolution. `CF-Connecting-IP` is set by Cloudflare's edge and
  * cannot be spoofed by the client — Cloudflare strips any client-supplied
  * value for this header before it reaches the origin. `X-Forwarded-For`/
- * `X-Real-IP`, by contrast, are plain client-controlled headers unless a
- * trusted proxy in front of this server is known to overwrite them; trusting
- * the first hop of an unauthenticated X-Forwarded-For lets an attacker claim
- * a fresh IP on every request and bypass rate limiting entirely. Prefer the
- * Cloudflare header; only fall back to the spoofable ones as a weaker
- * heuristic when it's absent (e.g. local dev, or a non-Cloudflare deploy —
- * in which case rate limiting is only as strong as whatever sits in front of
- * this process actually sanitizing those headers).
+ * `X-Real-IP` are plain client-controlled headers unless a trusted proxy in
+ * front of this server is known to overwrite them; they are therefore read
+ * ONLY when TRUST_PROXY is enabled (B-26: the env var was documented as
+ * "the rate limiter reads this" but no resolver ever did — honored here
+ * rather than deleted).
  */
-function defaultResolveIp(c: { req: { header: (name: string) => string | undefined } }): string {
-  return (
-    c.req.header('cf-connecting-ip') ??
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
-    c.req.header('x-real-ip') ??
-    'unknown'
-  );
+export function clientIp(c: { req: { header: (name: string) => string | undefined } }): string {
+  const cf = c.req.header('cf-connecting-ip');
+  if (cf) return cf;
+  if (env.trustProxy) {
+    return (
+      c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+      c.req.header('x-real-ip') ??
+      'unknown'
+    );
+  }
+  return 'unknown';
 }
 
 /**
@@ -80,7 +82,7 @@ export function rateLimit(
   limit: number,
   windowMs: number,
   keyPrefix: string,
-  resolveIp: (c: Parameters<MiddlewareHandler<RL>>[0]) => string = defaultResolveIp,
+  resolveIp: (c: Parameters<MiddlewareHandler<RL>>[0]) => string = clientIp,
 ): MiddlewareHandler<RL> {
   return async (c, next) => {
     const ip = resolveIp(c);

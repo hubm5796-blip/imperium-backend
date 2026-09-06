@@ -19,6 +19,7 @@ import {
   attachPrincipal,
   parseMcUuid,
   requireMcIdentity,
+  requireStaffRole,
   resolveActorFromToken,
   resolveStaffActor,
   staffActorHasRole,
@@ -149,28 +150,24 @@ const botAuthMiddleware = async (c: Context, next: Next) => {
 function adminAuthOk(c: Context): boolean {
   return botTokenMatches(c) || c.var.user !== null;
 }/**
- * Rate limiter for /auth/webcode/verify. This route is bot-token-gated (only
- * imperium-frontend's own edge proxy can call it — see the route below), so
- * `X-Original-Client-IP` is trustworthy here specifically: an attacker can't
- * reach this route at all without the bot token, and the only party that
- * holds it (our own frontend) sets that header from the *real* incoming
- * request's Cloudflare-verified `CF-Connecting-IP`, not from anything an end
- * user controls directly. Falls back to the normal spoofable-header chain
- * for requests that (somehow) reach here without valid bot auth — they'll be
- * rejected by the route handler anyway, but still get bucketed sanely rather
- * than colliding into a single 'unknown' bucket.
+ * Rate limiter for /auth/webcode/verify (B-26). The bucket key is NEVER a
+ * caller-supplied header: X-Original-Client-IP was trivially rotatable by
+ * anyone holding the shared bot token (fresh bucket per request = unbounded
+ * guesses against a 6-digit code). Bucketing order: the VERIFIED session
+ * identity (cookie verified by attachUser) > Cloudflare's unspoofable
+ * cf-connecting-ip > a hash of the presented token (dev/no-CF callers).
  */
 const webcodeRateLimit = rateLimit(8, 5 * 60_000, 'webcode', (c) => {
-  if (botTokenMatches(c)) {
-    const forwarded = c.req.header('x-original-client-ip');
-    if (forwarded) return forwarded;
+  const user = c.get('user');
+  if (user) {
+    const stable = user.discordId ?? user.mcUuid;
+    if (stable) return `session:${stable}`;
   }
-  return (
-    c.req.header('cf-connecting-ip') ??
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
-    c.req.header('x-real-ip') ??
-    'unknown'
-  );
+  const cf = c.req.header('cf-connecting-ip');
+  if (cf) return cf;
+  const token = c.req.header('x-bot-token') ?? '';
+  if (token) return `tok:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
+  return 'unknown';
 });
 
 /* ------------------------------------------------------------------ Auth */
@@ -837,7 +834,7 @@ api.get('/player/legion', requireAuth, requireLinked, async (c) => {
  * player list). The frontend proxy route (src/app/api/admin/status/route.ts)
  * forwards here with the X-Bot-Token + X-Admin-Discord-Id headers.
  */
-api.get('/admin/server/status', async (c) => {
+api.get('/admin/server/status', requireStaffRole('helper'), async (c) => {
   if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
@@ -876,7 +873,7 @@ api.get('/admin/server/status', async (c) => {
  * GET /api/admin/player?query=... — staff player lookup by username or UUID.
  * Returns the full profile (rank, prestige, stats, balances, username).
  */
-api.get('/admin/player', async (c) => {
+api.get('/admin/player', requireStaffRole('helper'), async (c) => {
   if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }

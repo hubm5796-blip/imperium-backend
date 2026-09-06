@@ -28,6 +28,7 @@ import { env } from '../env.js';
 import { authenticateApiKey, type Scope } from '../auth/apiKeys.js';
 import { botTokenMatches } from './auth.js';
 import { query } from '../db/pool.js';
+import { logger } from '../utils/logger.js';
 import type { AppContextVariables, JwtPayload } from '../types/index.js';
 
 type AuthEnv = { Variables: AppContextVariables };
@@ -469,3 +470,28 @@ export function staffActorHasRole(actor: StaffActor, minimum: StaffRole): boolea
   if (actor.source === 'service-transition') return true;
   return actor.rank >= (STAFF_ROLE_RANK[minimum] ?? 99);
 }
+
+/** Any verified credential: a session JWT or the bot/service token. */
+export function isAuthenticated(c: Context): boolean {
+  return c.get('user') !== null || botOrServiceTokenValid(c);
+}
+
+/**
+ * Staff-role gate as middleware (B-19/B-29): 401 with no credentials at
+ * all, 403 when authenticated but below the role. The resolved actor is
+ * cached on the context for audit logging by the route.
+ */
+export const requireStaffRole =
+  (minimum: StaffRole): MiddlewareHandler<AuthEnv> =>
+  async (c, next) => {
+    if (!isAuthenticated(c)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const actor = await resolveStaffActor(c);
+    c.set('staffActor', actor);
+    if (!staffActorHasRole(actor, minimum)) {
+      logger.debug({ actor: actor.name, role: actor.role, minimum }, 'staff gate refused');
+      return c.json({ error: `Staff role ${minimum} or above required` }, 403);
+    }
+    await next();
+  };

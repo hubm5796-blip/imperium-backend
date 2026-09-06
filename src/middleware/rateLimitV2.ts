@@ -16,6 +16,7 @@
  * knows better.
  */
 import type { MiddlewareHandler } from 'hono';
+import { clientIp } from './rateLimit.js';
 import type { AppContextVariables } from '../types/index.js';
 
 type RL = { Variables: AppContextVariables };
@@ -106,11 +107,9 @@ export function rateLimitV2(): MiddlewareHandler<RL> {
     const cls = inferClass(c.req.method, path);
     const cost = COST_BY_CLASS[cls];
 
-    const ip =
-      c.req.header('cf-connecting-ip') ??
-      c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
-      c.req.header('x-real-ip') ??
-      'unknown';
+    // B-26: shared resolver — cf-connecting-ip, with forwarded headers only
+    // when TRUST_PROXY is enabled (see rateLimit.clientIp).
+    const ip = clientIp(c);
 
     const ipClass = cls === 'write' ? 'write' : 'public';
     const ipVerdict = consume(`rl:ip:${ip}:${ipClass}`, cost, IP_BUDGET, now);

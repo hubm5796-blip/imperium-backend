@@ -3,12 +3,12 @@
 //   GET /api/admin/contraband/sweeps    (contraband sweeper log + verdict stats)
 //   GET /api/admin/player-tools?uuid=   (read-only extended player lookup)
 //
-// Auth: bot token only. These are consumed exclusively by the frontend's
-// server-side edge proxies (src/app/api/admin/*), which enforce the Discord
-// role gate themselves BEFORE forwarding with X-Bot-Token; the backend treats
-// that token as the staff trust anchor (same model as the existing
-// /api/admin/server/status + /api/admin/player routes). Everything is
-// read-only — mutating staff actions stay in-game where the audit trails are.
+// Auth: the real staff gate, helper+ (B-19 — the comment used to promise
+// this while the code checked the shared bot token alone). Sessions qualify
+// via the claim/linkage fallback; authenticated proxies forward
+// X-Staff-Role; the bare shared token keeps the transitional exemption
+// until the exemption-deletion commit. Everything is read-only — mutating
+// staff actions stay in-game where the audit trails are.
 //
 // Data sources:
 //  - festival_fund_ledger: LIVE plugin table (FestivalFundLedger).
@@ -16,7 +16,7 @@
 //    specced plugin tables — each section degrades independently to
 //    available:false + empty (see docs/api.md).
 import { Hono, type Context } from 'hono';
-import { botTokenMatches } from '../../middleware/auth.js';
+import { requireStaffRole } from '../../middleware/gates.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
 import { query } from '../../db/pool.js';
 import { minorUnitsToDisplay } from '../../utils/money.js';
@@ -51,10 +51,7 @@ async function softRows<T extends Record<string, unknown>>(
  * (start/skip) and the festival fund ledger. The calendar itself is served by
  * the public /api/seasons/current (the frontend proxy merges both).
  */
-adminViewsApi.get('/admin/liveops', readRateLimit, async (c) => {
-  if (!botTokenMatches(c)) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
+adminViewsApi.get('/admin/liveops', readRateLimit, requireStaffRole('helper'), async (c) => {
   try {
     return await swrJson(c, 'admin:liveops:v1', async () => {
       const overrides = await softRows<{
@@ -114,10 +111,7 @@ adminViewsApi.get('/admin/liveops', readRateLimit, async (c) => {
  * (vault/ender-chest/carried sweeps with verdicts) plus verdict distribution.
  * Read-only; sweep verdicts and confiscations themselves happen in-game.
  */
-adminViewsApi.get('/admin/contraband/sweeps', readRateLimit, async (c) => {
-  if (!botTokenMatches(c)) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
+adminViewsApi.get('/admin/contraband/sweeps', readRateLimit, requireStaffRole('helper'), async (c) => {
   const limitRaw = Number.parseInt(c.req.query('limit') ?? '25', 10);
   const limit = Math.min(Math.max(Number.isNaN(limitRaw) ? 25 : limitRaw, 1), 100);
   try {
@@ -186,10 +180,7 @@ adminViewsApi.get('/admin/contraband/sweeps', readRateLimit, async (c) => {
  * The headline profile/balances come from the existing /api/player/profile;
  * the frontend merges both. No mutations — refunds/unlocks stay in-game.
  */
-adminViewsApi.get('/admin/player-tools', readRateLimit, async (c) => {
-  if (!botTokenMatches(c)) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
+adminViewsApi.get('/admin/player-tools', readRateLimit, requireStaffRole('helper'), async (c) => {
   const parsed = mcUuidSchema.safeParse(c.req.query('uuid') ?? '');
   if (!parsed.success) {
     return c.json({ error: 'Invalid uuid parameter' }, 400);

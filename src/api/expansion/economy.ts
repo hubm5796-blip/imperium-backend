@@ -14,6 +14,7 @@
 import { Hono } from 'hono';
 import { readRateLimit } from '../../middleware/rateLimit.js';
 import { botTokenMatches } from '../../middleware/auth.js';
+import { requireStaffRole } from '../../middleware/gates.js';
 import { query } from '../../db/pool.js';
 import { logger } from '../../utils/logger.js';
 import { swrJson } from './cache.js';
@@ -139,10 +140,7 @@ economyApi.get('/flow-summary', readRateLimit, async (c) => {
  * past its threshold); until the table exists the inbox degrades to empty
  * with available:false.
  */
-economyApi.get('/drift-alerts', readRateLimit, async (c) => {
-  if (!botTokenMatches(c)) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
+economyApi.get('/drift-alerts', readRateLimit, requireStaffRole('helper'), async (c) => {
   try {
     return await swrJson(c, 'economy:drift-alerts:v1', async () => {
       try {

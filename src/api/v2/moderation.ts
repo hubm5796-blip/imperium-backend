@@ -7,7 +7,7 @@
  */
 import { Hono } from 'hono';
 import { query } from '../../db/pool.js';
-import { botTokenMatches } from '../../middleware/auth.js';
+import { requireStaffRole } from '../../middleware/gates.js';
 import { parseMcUuid } from '../../middleware/gates.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
 import { logger } from '../../utils/logger.js';
@@ -17,10 +17,8 @@ type ApiEnv = { Variables: AppContextVariables };
 
 export const moderationV2 = new Hono<ApiEnv>();
 
-moderationV2.use('/moderation*', readRateLimit, async (c, next) => {
-  if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
-  await next();
-});
+// B-19: punishment history is mod+ (the same doctrine as the v1 ledger).
+moderationV2.use('/moderation*', readRateLimit, requireStaffRole('mod'));
 
 moderationV2.get('/moderation/history', async (c) => {
   // B-54: canonical shape — dashed/undashed/any-case accepted + normalized
