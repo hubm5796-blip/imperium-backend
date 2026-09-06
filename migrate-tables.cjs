@@ -107,6 +107,19 @@ const STATEMENTS = [
   ['referrals UNIQUE (referrer,referred)', `CREATE UNIQUE INDEX IF NOT EXISTS uniq_referrals_referrer_referred ON referrals(referrer_uuid, referred_uuid)`],
   ['referrals idx referrer',            `CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_uuid)`],
   ['referrals idx referred',            `CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_uuid)`],
+  // B-30: the (referrer, referred) UNIQUE above does NOT stop two referrers
+  // racing to refer the SAME player — each pair is distinct, both insert, and
+  // the app-level SELECT-then-INSERT raced anyway. One referral per referred
+  // player is the actual rule (ReferralCompletionListener pays at rank V,
+  // once). Dedupe first (keep the EARLIEST row per referred_uuid — the first
+  // claim wins), then the partial unique index makes the race structurally
+  // impossible; routes.ts guards with ON CONFLICT DO NOTHING + RETURNING →
+  // 409. Same dedupe-then-index pattern as referral_redemptions below.
+  ['referrals dedupe referred', `DELETE FROM referrals a USING referrals b
+      WHERE a.referred_uuid IS NOT NULL
+        AND a.referred_uuid = b.referred_uuid
+        AND (a.created_at, a.id) > (b.created_at, b.id)`],
+  ['referrals UNIQUE referred', `CREATE UNIQUE INDEX IF NOT EXISTS uniq_referrals_referred ON referrals(referred_uuid) WHERE referred_uuid IS NOT NULL`],
 
   // ===================== referral_codes =====================
   // Already matches routes.ts (uuid PK, code, username, is_custom,
