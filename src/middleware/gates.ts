@@ -36,6 +36,21 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(x, y);
 }
 
+/* ── Minecraft UUID shape (B-06/B-54): normalize, don't reject ──────────────
+ * Dashed, undashed and any-case forms are all legal caller inputs; the
+ * canonical store form is dashed lowercase (VARCHAR(36) in every game
+ * table). Bedrock `.name` identities are USERNAMES and never valid here. */
+const MC_UUID_RE = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
+
+/** Validate and normalize a Minecraft UUID to dashed-lowercase; null on garbage. */
+export function parseMcUuid(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!MC_UUID_RE.test(trimmed)) return null;
+  const hex = trimmed.replace(/-/g, '').toLowerCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /**
  * Resolve the request's principal. ORDER MATTERS only between the bearer and
  * the bot-token shapes (they use different headers, so there is no ambiguity):
@@ -65,21 +80,27 @@ export async function resolvePrincipal(c: Context): Promise<Principal> {
     };
   }
 
-  // 3. Bot / delegated — SPLIT TOKENS (V6 05-04): the bot token alone is the
-  // 'bot' principal; a DELEGATED (X-Mc-Uuid) call requires the SERVICE token
-  // specifically, so the frontend proxy secret and the bot secret are never the
-  // same credential once INTERNAL_SERVICE_TOKEN is set (fallback = compat).
+  // 3. Bot / delegated — SPLIT TOKENS, two-tier (B-02 fix): the outer check
+  // accepts EITHER secret; a DELEGATED (X-Mc-Uuid) call requires the SERVICE
+  // token specifically. The previous code required the token to equal
+  // BOT_API_TOKEN (outer) AND INTERNAL_SERVICE_TOKEN (inner) — reachable
+  // only when the two secrets were identical, i.e. the split was inert and
+  // activating it (the documented goal) broke every delegated call.
   const botToken = c.req.header('x-bot-token') ?? '';
-  if (botToken && env.botApiToken && safeEqual(botToken, env.botApiToken)) {
-    const asserted = c.req.header('x-mc-uuid');
-    if (asserted && safeEqual(botToken, env.internalServiceToken)) {
-      return { kind: 'delegated', mcUuid: asserted };
-    }
-    if (asserted && botToken !== env.internalServiceToken) {
-      // Bot token attempting identity assertion — treat as plain bot (no uuid trust).
+  if (botToken) {
+    const isBot = Boolean(env.botApiToken) && safeEqual(botToken, env.botApiToken);
+    const isService = Boolean(env.internalServiceToken) && safeEqual(botToken, env.internalServiceToken);
+    if (isBot || isService) {
+      const asserted = c.req.header('x-mc-uuid');
+      if (asserted && isService) {
+        // Identity assertion — shape-validated by the gates that consume it
+        // (requireSelfOrDelegated / requireMcIdentity 400 on garbage, B-06).
+        return { kind: 'delegated', mcUuid: asserted };
+      }
+      // Bot token attempting (or lacking) identity assertion: service scope
+      // only — the shared bot token never confers a player identity.
       return { kind: 'bot' };
     }
-    return { kind: 'bot' };
   }
 
   return { kind: 'anonymous' };
@@ -95,16 +116,51 @@ export const requireBot: MiddlewareHandler<AuthEnv> = async (c, next) => {
 /**
  * Reads/writes a player's own data: a session (linked), a delegated proxy
  * call, or an API key owned by that player. The uuid is NOT a header for
- * sessions/keys — only the delegated shape may assert it.
+ * sessions/keys — only the delegated shape may assert it, and the asserted
+ * shape is validated + normalized here (B-06: garbage 400s instead of
+ * silently missing rows).
  */
 export const requireSelfOrDelegated: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const p = await resolvePrincipal(c);
   if (p.kind === 'delegated') {
-    c.set('mcUuid', p.mcUuid);
+    const normalized = parseMcUuid(p.mcUuid);
+    if (!normalized) return c.json({ error: 'Invalid X-Mc-Uuid' }, 400);
+    c.set('mcUuid', normalized);
   } else if (p.kind === 'session' && p.mcUuid) {
     c.set('mcUuid', p.mcUuid);
   } else if (p.kind === 'api_key' && p.ownerUuid) {
     c.set('mcUuid', p.ownerUuid);
+  } else {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  await next();
+};
+
+/**
+ * Player-identity gate for the v1 X-Mc-Uuid routes (B-13): a session may
+ * act as its own linked account (self-scope stays session-allowed); acting
+ * as ANY other player requires the delegated SERVICE token — the shared
+ * bot token alone never again confers an arbitrary identity. The asserted
+ * uuid is shape-validated and normalized (B-06).
+ */
+export const requireMcIdentity: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  const p = await resolvePrincipal(c);
+  if (p.kind === 'session') {
+    if (!p.mcUuid) {
+      return c.json({ error: 'Minecraft account not linked', linkRequired: true }, 403);
+    }
+    c.set('mcUuid', p.mcUuid);
+  } else if (p.kind === 'delegated') {
+    const normalized = parseMcUuid(p.mcUuid);
+    if (!normalized) return c.json({ error: 'Invalid X-Mc-Uuid' }, 400);
+    c.set('mcUuid', normalized);
+  } else if (p.kind === 'bot') {
+    // A valid shared bot token WITH an X-Mc-Uuid header: identity assertion
+    // under the wrong credential once the split is active. Name the fix.
+    if (c.req.header('x-mc-uuid')) {
+      return c.json({ error: 'X-Mc-Uuid requires the internal service token', code: 'IDENTITY_NEEDS_SERVICE_TOKEN' }, 403);
+    }
+    return c.json({ error: 'Unauthorized' }, 401);
   } else {
     return c.json({ error: 'Unauthorized' }, 401);
   }

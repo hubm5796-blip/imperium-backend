@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import { query } from '../../db/pool.js';
 import { botTokenMatches } from '../../middleware/auth.js';
+import { parseMcUuid } from '../../middleware/gates.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
@@ -22,8 +23,10 @@ moderationV2.use('/moderation*', readRateLimit, async (c, next) => {
 });
 
 moderationV2.get('/moderation/history', async (c) => {
-  const uuid = (c.req.query('uuid') ?? '').trim();
-  if (!/^[0-9a-fA-F-]{32,36}$/.test(uuid)) {
+  // B-54: canonical shape — dashed/undashed/any-case accepted + normalized
+  // (the old length-range regex admitted 36 dashes as a "uuid").
+  const uuid = parseMcUuid(c.req.query('uuid'));
+  if (!uuid) {
     return c.json({ error: 'Invalid uuid' }, 400);
   }
   try {
