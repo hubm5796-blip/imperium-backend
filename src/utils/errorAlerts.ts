@@ -14,7 +14,11 @@
  * Anti-spam contract (the plugin's ErrorReporterService has the same shape):
  *   - one immediate alert per SIGNATURE per 10 minutes;
  *   - repeats within the window are counted, not sent;
- *   - a hard cap of 10 distinct signatures per rolling minute.
+ *   - a hard cap of 10 distinct signatures per rolling minute AND 60 per
+ *     rolling hour (B-38: the shared-token /errors/report surface must never
+ *     become an unaudited staff-ping cannon);
+ *   - `kind` is allowlisted (identifier shape) before it touches routing or
+ *     presentation, and alert posts can never resolve mentions.
  * Never throws, never blocks the caller — alerting must not take the API down
  * with it. Fire-and-forget callers can `void alertError(...)`.
  */
@@ -40,8 +44,31 @@ interface SignatureState {
 const signatures = new Map<string, SignatureState>();
 const WINDOW_MS = 10 * 60 * 1000;
 const MAX_PER_MINUTE = 10;
+/** B-38: distinct-signature ceiling per rolling hour — the per-minute cap
+ *  alone still allowed 600/hr of attacker-chosen text into staff channels. */
+const MAX_PER_HOUR = 60;
 let sentThisMinute = 0;
 let minuteStart = Date.now();
+let sentThisHour = 0;
+let hourStart = Date.now();
+
+/** B-38: `kind` rides into alert routing/presentation — free-form values let
+ *  a caller forge "[STAFF] API <anything>" headers or poison filtering.
+ *  Anything outside the conservative identifier shape folds to the generic
+ *  'plugin-error' bucket (the same default the route uses for a missing kind). */
+export function sanitizeAlertKind(kind: string): string {
+  const trimmed = kind.trim();
+  return /^[A-Za-z0-9_.:-]{2,60}$/.test(trimmed) ? trimmed : 'plugin-error';
+}
+
+/** Test seam: reset the dedupe/cap counters between tests. */
+export function __resetAlertStateForTests(): void {
+  signatures.clear();
+  sentThisMinute = 0;
+  minuteStart = Date.now();
+  sentThisHour = 0;
+  hourStart = Date.now();
+}
 
 /** Fold volatile detail (ids, numbers, trace ids) so recurrence groups into one line. */
 function signatureOf(kind: string, detail: string): string {
@@ -62,9 +89,15 @@ export function alertError(kind: string, detail: string): void {
     minuteStart = now;
     sentThisMinute = 0;
   }
+  if (now - hourStart > 3_600_000) {
+    hourStart = now;
+    sentThisHour = 0;
+  }
   if (sentThisMinute >= MAX_PER_MINUTE) return;
+  if (sentThisHour >= MAX_PER_HOUR) return; // B-38 hourly ceiling
 
-  const sig = signatureOf(kind, detail);
+  const safeKind = sanitizeAlertKind(kind);
+  const sig = signatureOf(safeKind, detail);
   const state = signatures.get(sig);
   if (state) {
     state.count++;
@@ -74,9 +107,10 @@ export function alertError(kind: string, detail: string): void {
     signatures.set(sig, { count: 1, lastSentMs: now });
   }
   sentThisMinute++;
+  sentThisHour++;
 
   const body =
-    `**[STAFF] API ${kind}** — ${state && state.count > 1 ? `x${state.count} recent` : 'first sighting'}\n` +
+    `**[STAFF] API ${safeKind}** — ${state && state.count > 1 ? `x${state.count} recent` : 'first sighting'}\n` +
     '```\n' +
     (detail.length > 1200 ? detail.slice(0, 1200) + '…' : detail) +
     '\n```';
@@ -87,10 +121,12 @@ export function alertError(kind: string, detail: string): void {
 
 function sendToWebhook(url: string, body: string): void {
   // Never await, never throw: the fetch is the LAST thing considered.
+  // B-38: `body` embeds caller-supplied detail — an injected @everyone/@here
+  // must never resolve into a real ping via the staff webhook.
   void fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: body }),
+    body: JSON.stringify({ content: body, allowed_mentions: { parse: [] } }),
     signal: AbortSignal.timeout(5000),
   }).catch((err: unknown) => {
     console.error('[errorAlerts] webhook post failed:', err instanceof Error ? err.message : err);
