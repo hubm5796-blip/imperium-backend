@@ -15,6 +15,7 @@ import {
   fetchDiscordUser,
 } from '../auth/discord.js';
 import { attachUser, requireAuth, requireLinked } from '../middleware/auth.js';
+import { resolveStaffActor, staffActorHasRole } from '../middleware/gates.js';
 import { authRateLimit, globalRateLimit, rateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
@@ -149,55 +150,29 @@ function resolveActorFromToken(c: Context): string {
 }
 
 /**
- * AUDIT ATTRIBUTION — staff role resolution (2026-08-31, design doc implementation).
+ * AUDIT ATTRIBUTION + STAFF ROLE GATES (2026-08-31; Phase 1 rewrite B-01/X-04).
  *
- * Per-staff tokens live in the STAFF_ACTOR_TOKEN_MAP env var, entries "token:name:role".
- * Roles: admin > mod > helper. A staff caller presents BOTH:
- *   X-Staff-Token — their personal token (separate from the shared bot token)
- *   X-Staff-Actor — must match the name bound to that token (typo/mismatch = rejected,
- *                   so a leaked header pair can't be reused with a different name)
+ * The implementation lives in middleware/gates.ts (the ONE sanctioned copy —
+ * B-04) and resolves the staff actor from, in order:
+ *   1. per-staff tokens (X-Staff-Token + X-Staff-Actor, name-bound),
+ *   2. X-Staff-Role — honored ONLY on requests already authenticated by a
+ *      valid session JWT or the bot/service token (the frontend forwards it
+ *      after its own LuckPerms verification; a bare header means nothing),
+ *   3. the session's own staff role (JWT staffRole claim, else the linked
+ *      account's LuckPerms group) when the header is absent,
+ *   4. TRANSITIONALLY, the verified shared token with no identity attached
+ *      (panel-service) — deleted once the frontend ships the header,
+ *   5. anonymous (deny) otherwise.
  *
- * Route role gates: /admin/punish requires mod+; /admin/broadcast requires helper+;
- * /admin/reload requires admin. The shared-token fallback identity "panel-service" is
- * exempt from the role gates because the webpanel already session-gates its users via
- * LuckPerms groups (see /player/permissions) — the panel is trusted infrastructure.
- * Once per-staff tokens are minted, the panel should forward the staff headers so the
- * audit trail names the human, not the pipe.
+ * Route role gates: /admin/punish requires mod+; /admin/broadcast requires
+ * helper+; /admin/reload requires admin. Admin routes accept EITHER a valid
+ * bot/service token OR a valid session — the staff gate above decides what
+ * that identity may do (a logged-in non-staff player resolves to anonymous).
  */
-const STAFF_ROLE_RANK: Record<string, number> = { helper: 1, mod: 2, admin: 3 };
 
-interface StaffActor {
-  name: string;
-  role: string;
-  rank: number;
-}
-
-function resolveStaffActor(c: Context): StaffActor {
-  const map = env.staffActorTokenMap ?? '';
-  const staffToken = c.req.header('X-Staff-Token') ?? '';
-  const claimedName = c.req.header('X-Staff-Actor') ?? '';
-  if (staffToken && claimedName) {
-    for (const entry of map.split(',')) {
-      const [tok, name, role] = entry.split(':').map((s) => s.trim());
-      if (tok && tok === staffToken && name && name === claimedName) {
-        const rank = STAFF_ROLE_RANK[role ?? ''] ?? 0;
-        if (rank > 0) return { name, role: role as string, rank };
-      }
-    }
-    logger.warn(
-      { claimed: claimedName },
-      'AUDIT: X-Staff-Token/X-Staff-Actor pair not in staffActorTokenMap — falling back to token identity',
-    );
-  }
-  const fallback = resolveActorFromToken(c);
-  const role = fallback === 'panel-service' ? 'admin' : 'helper';
-  return { name: fallback, role, rank: STAFF_ROLE_RANK[role] };
-}
-
-function staffActorHasRole(actor: StaffActor, minimum: keyof typeof STAFF_ROLE_RANK): boolean {
-  // panel-service stays exempt (trusted pipe — the webpanel role-gates its humans)
-  if (actor.name === 'panel-service') return true;
-  return actor.rank >= (STAFF_ROLE_RANK[minimum] ?? 99);
+/** Admin-route authentication: valid bot/service token OR valid session. */
+function adminAuthOk(c: Context): boolean {
+  return requireBotAuth(c) || c.var.user !== null;
 }
 
 /**
@@ -885,7 +860,7 @@ api.get('/player/legion', requireAuth, requireLinked, async (c) => {
  * forwards here with the X-Bot-Token + X-Admin-Discord-Id headers.
  */
 api.get('/admin/server/status', async (c) => {
-  if (!requireBotAuth(c)) {
+  if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   // Get the online count from Redis (fast, reliable)
@@ -924,7 +899,7 @@ api.get('/admin/server/status', async (c) => {
  * Returns the full profile (rank, prestige, stats, balances, username).
  */
 api.get('/admin/player', async (c) => {
-  if (!requireBotAuth(c)) {
+  if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   const query_param = c.req.query('query') ?? '';
@@ -984,7 +959,7 @@ api.get('/admin/player', async (c) => {
  * Body: { target, action, reason, duration, actor }
  */
 api.post('/admin/punish', async (c) => {
-  if (!requireBotAuth(c)) {
+  if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   let body: { target?: string; action?: string; reason?: string; duration?: string; actor?: string };
@@ -1002,21 +977,24 @@ api.post('/admin/punish', async (c) => {
     return c.json({ error: 'Missing target or action' }, 400);
   }
 
-  // AUDIT ATTRIBUTION (security review #12): the `actor` field was free text from the
-  // caller — anyone holding the shared bot token could write any name into the audit
-  // log. The actor is now derived from the authenticated token, never from the body.
-  // A body actor that differs from the resolved identity is logged as a spoof attempt.
-  const resolvedActor = resolveActorFromToken(c);
-  if (body.actor && body.actor !== resolvedActor) {
-    logger.warn(
-      { claimed: body.actor, resolved: resolvedActor },
-      'AUDIT SPOOF ATTEMPT: body actor differs from token-derived identity — body value discarded',
-    );
+  // ROLE GATE + AUDIT ATTRIBUTION (B-01/X-04 + X-03): the actor is resolved
+  // from the authenticated identity — never from the body. When the request
+  // carries an attributed human (staff-token, X-Staff-Role claim on an
+  // authenticated request, or a staff session), that name rides the dispatch.
+  // The body `actor` is only compared when NO attribution exists; with one,
+  // it is simply ignored (the frontend is dropping the field — X-03 — and a
+  // spoof warning on every legitimate action made the signal useless).
+  const staffActor = await resolveStaffActor(c);
+  if (body.actor && (staffActor.source === 'service-transition' || staffActor.source === 'anonymous')) {
+    const resolvedActor = resolveActorFromToken(c);
+    if (body.actor !== resolvedActor) {
+      logger.warn(
+        { claimed: body.actor, resolved: resolvedActor },
+        'AUDIT SPOOF ATTEMPT: body actor differs from token-derived identity — body value discarded',
+      );
+    }
   }
 
-  // ROLE GATE (2026-08-31): /admin/punish is mod+ (per-staff tokens; panel-service exempt —
-  // the webpanel session gate already vets its users). Non-staff service identities are refused.
-  const staffActor = resolveStaffActor(c);
   if (!staffActorHasRole(staffActor, 'mod')) {
     logger.warn({ actor: staffActor.name, role: staffActor.role, target, action }, 'AUDIT: punish refused — role below mod');
     return c.json({ error: 'Staff role mod or above required for punishments' }, 403);
@@ -1043,7 +1021,7 @@ api.post('/admin/punish', async (c) => {
  * POST /api/admin/broadcast — forward a broadcast to the plugin.
  */
 api.post('/admin/broadcast', async (c) => {
-  if (!requireBotAuth(c)) {
+  if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   let body: { message?: string };
@@ -1058,9 +1036,9 @@ api.post('/admin/broadcast', async (c) => {
     return c.json({ error: 'Message must be 1-256 characters' }, 400);
   }
 
-  // ROLE GATE + ATTRIBUTION (2026-08-31): broadcasts are helper+ and carry the actor so the
-  // plugin-side audit trail names who sent it.
-  const staffActor = resolveStaffActor(c);
+  // ROLE GATE + ATTRIBUTION (B-01/X-04): broadcasts are helper+ and carry the
+  // resolved staff actor so the plugin-side audit trail names who sent it.
+  const staffActor = await resolveStaffActor(c);
   if (!staffActorHasRole(staffActor, 'helper')) {
     logger.warn({ actor: staffActor.name, role: staffActor.role }, 'AUDIT: broadcast refused — role below helper');
     return c.json({ error: 'Staff role helper or above required for broadcasts' }, 403);
@@ -1082,12 +1060,13 @@ api.post('/admin/broadcast', async (c) => {
  * POST /api/admin/reload — trigger a config reload on the plugin.
  */
 api.post('/admin/reload', async (c) => {
-  if (!requireBotAuth(c)) {
+  if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
-  // ROLE GATE + ATTRIBUTION (2026-08-31): reloads are admin-only (they can change live economy
-  // and anticheat behavior) and carry the actor for the audit trail.
-  const staffActor = resolveStaffActor(c);
+  // ROLE GATE + ATTRIBUTION (B-01/X-04): reloads are admin-only (they can
+  // change live economy and anticheat behavior) and carry the actor for the
+  // audit trail.
+  const staffActor = await resolveStaffActor(c);
   if (!staffActorHasRole(staffActor, 'admin')) {
     logger.warn({ actor: staffActor.name, role: staffActor.role }, 'AUDIT: reload refused — role below admin');
     return c.json({ error: 'Staff role admin required for reloads' }, 403);

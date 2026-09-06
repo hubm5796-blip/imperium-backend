@@ -56,6 +56,14 @@ export async function verifyJwt(token: string | undefined | null): Promise<JwtPa
       discordUsername: decoded.discordUsername,
       discordAvatar: decoded.discordAvatar ?? null,
       mcUuid: decoded.mcUuid,
+      // B-01/X-04 claim fallback: forwarded tokens may carry the panel's
+      // verified staff role. Only the closed enum survives verification —
+      // anything else is dropped (the LuckPerms linkage fallback then
+      // decides, never the garbage claim).
+      staffRole:
+        decoded.staffRole === 'helper' || decoded.staffRole === 'mod' || decoded.staffRole === 'admin'
+          ? decoded.staffRole
+          : undefined,
       iat: decoded.iat,
       exp: decoded.exp,
     };

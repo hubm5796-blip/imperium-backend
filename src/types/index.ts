@@ -23,6 +23,13 @@ export interface JwtPayload {
   discordUsername?: string;
   discordAvatar?: string | null;
   mcUuid?: string;
+  /**
+   * Staff role baked into the token at sign time (B-01/X-04 claim fallback).
+   * Optional and absent on legacy tokens — the staff gate additionally
+   * resolves the role from the linked account's LuckPerms group when this
+   * claim is missing, so old sessions keep working.
+   */
+  staffRole?: 'helper' | 'mod' | 'admin';
   iat?: number;
   exp?: number;
 }
