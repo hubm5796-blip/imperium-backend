@@ -568,3 +568,127 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
       });
       ```
 
+---
+
+### COMPLAINT 25: `storeAuth` Blocks Guest Checkout With HTTP 400 (`Missing X-Mc-Uuid header`), Breaking All Guest Purchases
+* **Severity:** CRITICAL
+* **Category:** Authentication / Store Checkout / Revenue Loss
+* **Location:** `src/api/routes.ts:1622-1648, 2024-2025`
+* **The Problem:**
+   1. In `imperium-frontend` commit `f4a310f`, guest checkout was introduced so players can purchase from the web store by typing their Minecraft username without logging in.
+   2. The frontend proxies checkout requests via `POST /api/store/cart-checkout/route.ts:53-60` using `guestBackendHeaders()` (which supplies `X-Bot-Token`, but intentionally **omits `X-Mc-Uuid`**) and includes `{ items, guestUsername }` in the JSON body.
+   3. In `imperium-backend/src/api/routes.ts`, `storeAuth` middleware explicitly enforces:
+      ```typescript
+      const storeAuth: MiddlewareHandler<ApiEnv> = async (c, next) => {
+        if (requireBotAuth(c)) {
+          const uuid = c.req.header('x-mc-uuid');
+          if (!uuid) {
+            return c.json({ error: 'Missing X-Mc-Uuid header' }, 400);
+          }
+      ```
+   4. Because `X-Mc-Uuid` is absent on guest requests, `storeAuth` unconditionally returns `HTTP 400: Missing X-Mc-Uuid header`, terminating the request before it reaches the handler.
+   5. Furthermore, inside `POST /api/store/cart-checkout` (lines 2024-2025):
+      ```typescript
+      api.post('/store/cart-checkout', storeAuth, async (c) => {
+        const buyerUuid = c.var.mcUuid!;
+      ```
+      The handler assumes `c.var.mcUuid` is present and never reads or resolves `body.guestUsername`!
+   6. **Result:** 100% of guest checkouts fail immediately across the entire store. Parents or players attempting to purchase items without logging into Discord are completely blocked.
+* **Remediation Action:**
+   1. Update `storeAuth` (or provide a cart checkout variant) to allow requests with valid bot auth to omit `X-Mc-Uuid` IF they are calling `/store/cart-checkout`.
+   2. In `POST /api/store/cart-checkout`, if `c.var.mcUuid` is not present:
+      - Read `body.guestUsername`.
+      - Validate username constraints (1–16 chars for Java, 1–17 chars starting with `.` for Bedrock).
+      - Resolve `guestUsername` to a UUID via `getUuidByUsername(username)` (or generate a Floodgate offline UUID for Bedrock).
+      - Set `buyerUuid = resolvedUuid`.
+
+---
+
+### COMPLAINT 26: `buildStoreDispatchCommand` Drops `line.quantity`, Defrauding Multi-Pack Buyers
+* **Severity:** CRITICAL
+* **Category:** Real-Money Transaction / Order Fulfillment / Under-Delivery Exploit
+* **Location:** `src/paynow/fulfillment.ts:142-168, 314-315`
+* **The Problem:**
+   1. In `src/paynow/fulfillment.ts`, `fulfillPaynowOrder` parses line item quantities:
+      `const quantity = Math.max(1, Math.min(99, Math.floor(line.quantity ?? 1)));`
+   2. However, line 314 dispatches the command without passing `quantity`:
+      ```typescript
+      const command = buildStoreDispatchCommand(resolved, targetUuid, order.orderId);
+      ```
+   3. `buildStoreDispatchCommand` only populates the fixed base amount:
+      ```typescript
+      case 'aureus':
+        return {
+          type: 'STORE_PURCHASE_AUREUS',
+          payload: { player_uuid: playerUuid, amount: resolved.amount, ... }
+        };
+      case 'crate_key':
+        return {
+          type: 'STORE_PURCHASE_CRATE_KEY',
+          payload: { player_uuid: playerUuid, crate_id: resolved.crateId, quantity: resolved.keyAmount, ... }
+        };
+      ```
+   4. If a player purchases a quantity of 3 for a 5,000 Aureus pack ($150 paid), the backend dispatches a single command for **5,000 Aureus** instead of 15,000!
+   5. If a player purchases 4 bundles of 5 crate keys ($40 paid), the backend dispatches only **5 keys** instead of 20!
+   6. Customers are severely shortchanged on multi-item purchases, creating massive chargeback risk.
+* **Remediation Action:**
+   1. Update `buildStoreDispatchCommand` signature:
+      ```typescript
+      export function buildStoreDispatchCommand(
+        resolved: ResolvedStoreDispatch,
+        playerUuid: string,
+        orderId: string,
+        quantity: number = 1,
+      ): { type: string; payload: Record<string, unknown> }
+      ```
+   2. In the `aureus` branch, multiply `amount: resolved.amount * quantity`.
+   3. In the `crate_key` branch, multiply `quantity: resolved.keyAmount * quantity`.
+   4. At line 314, pass `line.quantity`: `buildStoreDispatchCommand(resolved, targetUuid, order.orderId, line.quantity)`.
+
+---
+
+### COMPLAINT 27: `mysqlWire.ts` `applyPlaceholders` Corrupts Parameter Substitution On Strings Containing `?` & Incomplete Character Escaping (bC2)
+* **Severity:** CRITICAL
+* **Category:** Database Driver / Query Parsing / SQL Injection / Data Corruption
+* **Location:** `src/db/mysqlWire.ts:140-168`
+* **The Problem:**
+   1. `applyPlaceholders` blindly iterates through the raw SQL string and replaces every `?` character:
+      ```typescript
+      for (let i = 0; i < sql.length; i++) {
+        const ch = sql[i];
+        if (ch === '?' && param < params.length) {
+          out += escapeValue(params[param++]);
+        } else {
+          out += ch;
+        }
+      }
+      ```
+   2. If a query contains a literal `?` inside a string literal, comment, or identifier (e.g. `LIKE '%?%'`, JSON strings, or regex patterns), the parser substitutes the parameter into the string literal!
+   3. This causes every subsequent parameter placeholder to shift by 1 or more positions, causing silent data corruption or throwing parameter mismatch errors.
+   4. Furthermore, `escapeValue` on lines 146-147 only replaces `\\`, `\0`, `'`, `\n`, and `\r`. It fails to escape `\b` (backspace), `\t` (tab), `\"` (double quotes), and `\x1a` (ASCII 26, Ctrl+Z which causes Windows MySQL to interpret as EOF).
+* **Remediation Action:**
+   1. Implement state-aware SQL tokenizer in `applyPlaceholders`: track `inSingleQuote`, `inDoubleQuote`, `inBackticks`, `inLineComment`, and `inBlockComment`, taking into account backslash escape characters.
+   2. Only replace `?` when NOT inside quotes or comments.
+   3. Expand `escapeValue` to escape all control characters including `\b`, `\t`, `\"`, and `\x1a`.
+
+---
+
+### COMPLAINT 28: Subscription Webhook Handlers Bypass Management API Customer Resolution Fallback
+* **Severity:** HIGH
+* **Category:** Subscription Sync / Webhook Resilience / Outage Vector
+* **Location:** `src/api/routes.ts:2162, 2177`
+* **The Problem:**
+   1. In `src/api/routes.ts`, the webhook handlers for `subscription_activated`, `subscription_renewed`, and `subscription_canceled` attempt to resolve the player UUID using:
+      ```typescript
+      const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
+      ```
+   2. `getUuidByPaynowCustomerId` only checks the local DB `paynow_customers` table.
+   3. Unlike `resolveCustomerUuid` in `fulfillment.ts`, it DOES NOT query the PayNow Management API (`/v1/stores/:id/customers/:id`) if the local cache misses.
+   4. If a subscription event arrives for a customer whose UUID was not previously cached (e.g. external checkout, database restore, or guest purchase before linking):
+      - On activation/renewal: It logs an error and silently drops the event, leaving the subscription cache permanently stale.
+      - On cancellation: It returns HTTP 500 (`cancel: customer could not be resolved to a uuid`), causing PayNow to retry the webhook indefinitely!
+* **Remediation Action:**
+   1. Replace `getUuidByPaynowCustomerId(customerId)` in lines 2162 and 2177 with `resolveCustomerUuid(customerId, null)`.
+   2. Ensure all webhook subscription handlers take advantage of the Management API fallback so cache misses self-heal immediately.
+
+

@@ -15,6 +15,7 @@ Part of a cross-repo strict audit of the three ImperiumMC codebases.
 | [`ROUND-6.md`](ROUND-6.md) | B-35 … B-42 (scripts, expansion, cron, Discord, wiring, sweep) |
 | [`ROUND-7.md`](ROUND-7.md) | B-43 … B-50 (expansion leftovers, Discord, test gaps, census, SSE) |
 | [`ROUND-8.md`](ROUND-8.md) | B-51 … B-54 + red-team verdicts (B-01 narrowed, webcode quantified, B-49/B-20 confirmed) + 7 fix hazards |
+| [`ROUND-9.md`](ROUND-9.md) | B-55, B-56 + dependency/CVE verdicts (zero applicable) + B-09 FIXED |
 | [`CROSS-REPO.md`](CROSS-REPO.md) | X-01 … X-04, the seams with the plugin and frontend |
 
 The full audit — executive summary, plugin and frontend findings, methodology,
@@ -96,6 +97,16 @@ safe on the bus but not `web_queue`; exemption removal needs X-04 first (both
 lines, atomically); status enum must union the sweep's `'stale'`; UUID
 validation must normalize not reject; scope enforcement is a flag-day; wrap
 gameQuery callers before flipping to throw.
+
+## Round 9
+
+A ninth pass ([`ROUND-9.md`](ROUND-9.md)) screened dependencies for known CVEs,
+reviewed the full config surface, and closed two slivers: **B-55, B-56**.
+Dependency verdict: zero confirmed-applicable vulns (hono/undici/nanoid sit
+exactly on security-fix releases). Config: no new live values; fail-closed
+defaults verified. **First fix verified: B-09 FIXED by `d5d9913`** (cancel-path
+500s with correct 200 asymmetry, 45-day MAX_CACHE_AGE, claimed 4 tests +
+324/324 suite — message matches diff exactly, exemplary).
 
 ## State at time of audit
 
