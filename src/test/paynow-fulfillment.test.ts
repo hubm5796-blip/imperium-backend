@@ -222,6 +222,41 @@ describe('resolveStoreDispatch + buildStoreDispatchCommand', () => {
     expect(resolveStoreDispatch('not-a-product')).toBeNull();
     expect(resolveStoreDispatch('586713857251082240')).toBeNull(); // subscription id is not a one-time product
   });
+
+  /* B-C26: line.quantity must multiply stackable goods. A quantity-3 purchase
+   * of a 5,600-Aureus pack paid for 16,800 — the old signature dropped the
+   * quantity and delivered a single pack's worth. */
+  it('B-C26: a quantity multiplier scales the Aureus amount (3x pack → 3x amount)', () => {
+    const resolved = resolveStoreDispatch(AUREUS_50)!;
+    expect(buildStoreDispatchCommand(resolved, BUYER, 'ord_9', 3)).toEqual({
+      type: 'STORE_PURCHASE_AUREUS',
+      payload: { player_uuid: BUYER, amount: 16800, pack_name: 'aureus_5600', order_id: 'ord_9', transaction_id: 'ord_9' },
+    });
+  });
+
+  it('B-C26: a quantity multiplier scales the crate-key count (4x bundle of 5 → 20 keys)', () => {
+    const resolved = { kind: 'crate_key', crateId: 'vote', keyAmount: 5 } as const;
+    expect(buildStoreDispatchCommand(resolved, BUYER, 'ord_9', 4)).toEqual({
+      type: 'STORE_PURCHASE_CRATE_KEY',
+      payload: { player_uuid: BUYER, crate_id: 'vote', quantity: 20, order_id: 'ord_9', transaction_id: 'ord_9' },
+    });
+  });
+
+  it('B-C26: rank grants stay single regardless of quantity (a rank is not stackable)', () => {
+    const resolved = resolveStoreDispatch(UPGRADE_IMPERATOR)!;
+    expect(buildStoreDispatchCommand(resolved, BUYER, 'ord_9', 3)).toEqual({
+      type: 'STORE_PURCHASE_RANK',
+      payload: { player_uuid: BUYER, tier: 'IMPERATOR', subscription: 'PERMANENT', order_id: 'ord_9', transaction_id: 'ord_9' },
+    });
+  });
+
+  it('B-C26: omitted quantity defaults to a single unit (back-compat for direct callers)', () => {
+    const resolved = resolveStoreDispatch(AUREUS_50)!;
+    expect(buildStoreDispatchCommand(resolved, BUYER, 'ord_9')).toEqual({
+      type: 'STORE_PURCHASE_AUREUS',
+      payload: { player_uuid: BUYER, amount: 5600, pack_name: 'aureus_5600', order_id: 'ord_9', transaction_id: 'ord_9' },
+    });
+  });
 });
 
 /* ── layer 2: orchestrator ────────────────────────────────────────────────── */
@@ -304,6 +339,19 @@ describe('fulfillPaynowOrder', () => {
       expect.objectContaining({ player_uuid: BUYER }),
       expect.any(Number),
     );
+  });
+
+  it('B-C26: a 3x Aureus-pack order dispatches the MULTIPLIED amount, not one pack (defrauds multi-pack buyers)', async () => {
+    sendCommandWithResponseMock.mockResolvedValue(okResponse());
+    const result = await fulfillPaynowOrder(aureusOrder({
+      lines: [{ id: 'l1', product_id: AUREUS_50, quantity: 3 }],
+    }));
+    expect(result.status).toBe('ok');
+    expect(result.dispatched).toBe(1);
+    const [type, payload] = sendCommandWithResponseMock.mock.calls[0]!;
+    expect(type).toBe('STORE_PURCHASE_AUREUS');
+    // $150 paid for 3x 5,600 → the payload must carry 16,800. Pre-fix this was 5,600.
+    expect(payload).toMatchObject({ player_uuid: BUYER, amount: 16800, order_id: 'ord_test' });
   });
 
   it('gift lines deliver to the recipient, not the buyer', async () => {
