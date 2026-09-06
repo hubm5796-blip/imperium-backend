@@ -765,4 +765,77 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
       ```
    2. Ensure the catalog matches the in-game `crates.yml` IDs.
 
+---
+
+### COMPLAINT 31: Discord Bot/Web Account Linking Grants 0 In-Game Rewards Due to Missing Plugin Redis Notification
+* **Severity:** HIGH
+* **Category:** Player Retention / Onboarding Incentive / Cross-Platform Sync
+* **Location:** `src/api/routes.ts:1559-1575` & `ImperiumMC-Plugin: WebPanelCommandHandler.kt:1435`
+* **The Problem:**
+   1. In `src/api/routes.ts:1559-1575` (`POST /api/link/confirm`):
+      ```typescript
+      await upsertDiscordLink(record.uuid, discordId);
+      ```
+      The endpoint persists the link to the PostgreSQL `discord_links` table and returns JSON to the bot or web dashboard.
+   2. In `ImperiumMC-Plugin`, the in-game link flow awards **25,000 Denarius + 1 Crate Key** via `DiscordLinkService.grantFirstLinkReward(uuid)`.
+   3. `WebPanelCommandHandler.kt:1435` exposes a `"CONFIRM_DISCORD_LINK"` Redis handler specifically designed to execute `discordLinkService.confirmLink`, announce the link to the server, and grant the starter reward.
+   4. However, `POST /api/link/confirm` in the backend **never publishes `CONFIRM_DISCORD_LINK`** to Redis!
+   5. Players who link their account via Discord bot (`/link <code>`) or the web portal receive **zero Denarius, zero crate keys, and zero chat announcement** in-game, cheating them out of their promised starter bonus and breaking new player retention.
+* **Remediation Action:**
+   1. In `src/api/routes.ts:1560`, after `upsertDiscordLink`, publish the `CONFIRM_DISCORD_LINK` command to Redis:
+      ```typescript
+      await sendCommandWithoutResponse('CONFIRM_DISCORD_LINK', {
+        uuid: record.uuid,
+        discord_id: discordId,
+        code,
+      }).catch((err) => {
+        logger.warn({ err: String(err), uuid: record.uuid }, 'failed to dispatch CONFIRM_DISCORD_LINK to game server');
+      });
+      ```
+   2. This ensures the player's account is credited immediately with the 25,000 Denarius and crate key bonus even if they completed the link on Discord or web.
+
+---
+
+### COMPLAINT 32: Multi-Item PayNow Cart Fulfillment Dedupe Collision Eats Secondary Purchases via Shared `transaction_id = orderId`
+* **Severity:** CRITICAL
+* **Category:** Monetization / Store Fulfillment / Real-Money Purchase Loss
+* **Location:** `src/paynow/fulfillment.ts:160`, `src/paynow/constants.ts:145-151`, `src/api/routes.ts:2141`
+* **The Problem:**
+   1. In `src/paynow/fulfillment.ts:151-169`:
+      ```typescript
+      export function buildStoreDispatchCommand(resolved: ResolvedStoreDispatch, playerUuid: string, orderId: string, quantity: number = 1) {
+        const transaction_id = orderId;
+        ...
+        return { type: 'STORE_PURCHASE_AUREUS', payload: { ..., transaction_id } };
+      }
+      ```
+   2. If a buyer checks out a multi-item cart (e.g. 1x Rank Upgrade + 1x Aureus Pack + 5x Crate Keys):
+      - All line items share the exact same `orderId` (e.g. `"ord_98765"`).
+      - Each command is dispatched to the plugin with `payload.transaction_id = "ord_98765"`.
+      - In `ImperiumMC-Plugin`'s `PurchaseRegistryService`, `transaction_id` is the **UNIQUE PRIMARY KEY** of `purchase_registry`.
+      - The first line item is recorded and granted.
+      - Every subsequent line item in the cart is rejected by `purchase_registry` as `RecordResult.DUPLICATE`!
+      - The plugin logs `"STORE_PURCHASE_AUREUS duplicate tx ignored"` and replies `"OK"`.
+      - **Result:** The buyer paid real money for all cart items, but **every line item after the first is silently discarded and never delivered**!
+   3. Furthermore, in `src/paynow/constants.ts:145-151`, `isOneTimeStoreProduct` does not check `CRATE_KEY_PRODUCTS`. Any cart checkout containing crate keys is rejected at `POST /api/store/cart-checkout` with HTTP 400!
+* **Remediation Action:**
+   1. Scope the `transaction_id` in `buildStoreDispatchCommand` per line item:
+      ```typescript
+      const lineSuffix = resolved.kind === 'aureus' ? `aureus_${resolved.amount}` :
+                         resolved.kind === 'crate_key' ? `crate_${resolved.crateId}` :
+                         `rank_${resolved.tier}`;
+      const transaction_id = `${orderId}:${lineSuffix}`;
+      ```
+   2. In `src/paynow/constants.ts:145-151`, update `isOneTimeStoreProduct` to include crate key products:
+      ```typescript
+      export function isOneTimeStoreProduct(productId: string): boolean {
+        return (
+          LIFETIME_PRODUCT_IDS.has(productId) ||
+          AUREUS_PACK_PRODUCT_IDS.has(productId) ||
+          RANK_UPGRADE_PRODUCT_IDS.has(productId) ||
+          CRATE_KEY_PRODUCTS.has(productId)
+        );
+      }
+      ```
+
 
