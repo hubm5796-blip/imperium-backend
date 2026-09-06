@@ -17,6 +17,8 @@ import { botAdmin } from './bot/adminRegisterRoute.js';
 import { bridgeApi } from './bot/bridge.js';
 import { logger } from './utils/logger.js';
 import { rateLimitV2 } from './middleware/rateLimitV2.js';
+import { attachUser } from './middleware/auth.js';
+import { ALLOWED_BROWSER_ORIGINS, attachPrincipal, sessionCsrfGuard } from './middleware/gates.js';
 import { alertError } from './utils/errorAlerts.js';
 import type { AppContextVariables } from './types/index.js';
 
@@ -27,16 +29,8 @@ export function createApp() {
     '*',
     cors({
       origin: (origin) => {
-        const allowed = new Set<string>([
-          'https://imperiummc.net',
-          'https://www.imperiummc.net',
-          'http://localhost:5173',
-          'http://localhost:3000',
-          'http://127.0.0.1:5173',
-          'http://127.0.0.1:3000',
-        ]);
         if (!origin) return null; // non-browser / curl requests
-        return allowed.has(origin) ? origin : null;
+        return ALLOWED_BROWSER_ORIGINS.has(origin) ? origin : null;
       },
       credentials: true,
       allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
@@ -46,6 +40,18 @@ export function createApp() {
   );
 
   app.use('*', secureHeaders());
+
+  // B-49: the v2 sub-app is a SIBLING of `api` (mounted below), so it never
+  // ran attachUser — every linked-gated v2 route (keys, gallery, guides,
+  // guide comments, storeOrders' session path) always 401/403'd for real
+  // browser sessions. Attached HERE (before rateLimitV2) so the limiter
+  // sees the principal rather than the bare IP, with a CSRF Origin guard
+  // now that cookie-authenticated v2 mutations exist. attachUser is
+  // idempotent, so the expansion residents under /api/v2 that also run it
+  // via the `api` mount do no double work.
+  app.use('/api/v2/*', attachUser);
+  app.use('/api/v2/*', attachPrincipal);
+  app.use('/api/v2/*', sessionCsrfGuard);
 
   // RATE LIMITING V2 (V6 05-05): cost classes + principal dimension. Composes WITH
   // the existing per-route v1 limiters (they stay first-line caps); this layer adds
