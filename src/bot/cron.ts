@@ -20,6 +20,7 @@ import { runNotificationSweep } from './notify/scheduler.js';
 import { runRoleAuditTick } from './roles/audit.js';
 import { runDailyRollup } from './analytics/rollup.js';
 import { getCronConfig } from './cronConfig.js';
+import { claim } from './botdb.js';
 
 export interface CronReport {
   webhookDeliveries: { processed: number; delivered: number; retried: number; dead: number };
@@ -29,10 +30,21 @@ export interface CronReport {
   rollup: { ran: boolean; metrics: number };
   tickets: { threaded: number; staleClosed: number; errors: number };
   dms: { sent: number; failed: number; skipped: number };
+  /** B-39: true when another isolate already ran this minute's pass — every
+   *  leg stayed untouched (the report is all-zero). */
+  skipped?: boolean;
 }
 
 /** One full cron pass. Never throws — every leg catches its own errors and
- *  the report carries what actually happened for the log line. */
+ *  the report carries what actually happened for the log line.
+ *
+ *  B-39 self-isolation: cron.ts isolated legs from EACH OTHER, but nothing
+ *  isolated a leg from itself — a pass running past the 60s tick overlapped
+ *  the next invocation (different isolate) and every queue-based leg
+ *  double-processed. The whole pass now claims its minute in Postgres
+ *  (discord_dedupe) before doing anything; the loser returns immediately.
+ *  Work inside the legs is additionally lease/claim-guarded, so a pass that
+ *  dies mid-flight self-heals on the next minute. */
 export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
   const report: CronReport = {
     webhookDeliveries: { processed: 0, delivered: 0, retried: 0, dead: 0 },
@@ -43,6 +55,21 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
     tickets: { threaded: 0, staleClosed: 0, errors: 0 },
     dms: { sent: 0, failed: 0, skipped: 0 },
   };
+
+  // Minute-granular claim: one pass per wall-clock minute, fleet-wide.
+  try {
+    const minuteKey = `cron:pass:${now.toISOString().slice(0, 16)}`; // YYYY-MM-DDTHH:mm
+    if (!(await claim(minuteKey))) {
+      report.skipped = true;
+      return report;
+    }
+  } catch (err) {
+    // Claim infrastructure down: RUN anyway. Skipping a whole minute because
+    // the dedupe table blipped is the "silent skip" half of B-39 — the legs'
+    // own claims/leases/cursors are the correctness boundary, this gate is
+    // only the overlap damper.
+    logger.warn({ err: String(err) }, 'cron: pass claim failed — running unguarded (legs self-guard)');
+  }
 
   try {
     report.webhookDeliveries = await runDeliveryTick(now.getTime());

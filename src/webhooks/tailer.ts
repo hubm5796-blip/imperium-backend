@@ -92,7 +92,12 @@ export async function runEventsTailer(): Promise<TailerReport> {
     const event = feedRowToEvent(row);
     if (!event) continue;
     try {
-      const queued = await emit(event);
+      // B-39 idempotency on the SOURCE row id: the event id is derived from
+      // web_events.id, so a forced rescan (cursor write failed) re-emits the
+      // same id and the delivery queue's (subscriber_id, event_id) PK +
+      // ON CONFLICT DO NOTHING collapses the duplicate — a rescan can no
+      // longer double-deliver as "new" events.
+      const queued = await emit(event, `wev:${row.id}`);
       report.emitted += queued;
     } catch (err) {
       logger.error({ err: String(err), eventId: String(row.id) }, 'webhook tailer: emit failed for one row');

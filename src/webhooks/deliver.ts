@@ -14,6 +14,7 @@ import { logger } from '../utils/logger.js';
 import { envelopeOf, type OutboundEvent, type WebhookEnvelope } from './types.js';
 import {
   activeSubscribersFor,
+  claimDelivery,
   dueDeliveries,
   enqueueDeliveries,
   getSubscriber,
@@ -27,6 +28,10 @@ const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3_600_000, 6 * 3_6
 const MAX_ATTEMPTS = 8;
 const DELIVERY_TIMEOUT_MS = 10_000;
 const TICK_BATCH = 20;
+/** B-39: how long a claimed row stays invisible to other ticks. A tick that
+ *  dies mid-POST leaves the row 'sending' until the lease expires, then the
+ *  next tick reclaims it — at-least-once, never double-concurrent. */
+const CLAIM_LEASE_MS = 120_000;
 
 export function signPayload(secret: string, timestamp: number, body: string): string {
   return createHmac('sha256', secret).update(`t.${timestamp}.${body}`).digest('hex');
@@ -38,9 +43,14 @@ export function botSignature(secret: string, body: string): string {
 }
 
 /** Fan an event out to every active subscriber of its type (queue only —
- *  delivery happens on the cron tick, so emission never blocks the caller). */
-export async function emit(event: OutboundEvent): Promise<number> {
-  const id = crypto.randomUUID();
+ *  delivery happens on the cron tick, so emission never blocks the caller).
+ *  B-39: `eventId` may be supplied by the caller — the tailer passes a value
+ *  derived from the source web_events row id, so a cursor-write failure that
+ *  forces a rescan re-emits the SAME id and the (subscriber_id, event_id)
+ *  primary key + ON CONFLICT DO NOTHING makes the rescan a no-op instead of
+ *  a duplicate delivery. */
+export async function emit(event: OutboundEvent, eventId: string = crypto.randomUUID()): Promise<number> {
+  const id = eventId;
   const envelope = envelopeOf(event, id);
   const body = JSON.stringify(envelope);
 
@@ -182,6 +192,14 @@ export async function runDeliveryTick(now = Date.now()): Promise<DeliveryTickRep
         // Subscriber gone/paused — drop the delivery.
         await markDelivery(row.subscriber_id, row.event_id, { status: 'dead', lastError: 'subscriber inactive' });
         report.dead += 1;
+        continue;
+      }
+      // B-39: claim the row before touching the network. Overlapping ticks
+      // (a slow pass running past the 60s cron cadence) used to SELECT the
+      // same due rows and POST them twice; a lost claim means another tick
+      // owns this row — leave it alone.
+      if (!(await claimDelivery(row.subscriber_id, row.event_id, now, CLAIM_LEASE_MS))) {
+        report.processed -= 1;
         continue;
       }
       const outcome = await deliverOne(row, subscriber, now);
