@@ -110,7 +110,10 @@ galleryV2.get('/community/gallery', async (c) => {
   try {
     await ensureSchema();
   } catch (err) {
-    return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.', String((err as Error)?.message ?? err));
+    // B-33: driver text can carry table/SQL fragments — log it, never reflect
+    // it to an unauthenticated caller.
+    logger.error({ err: String(err) }, 'gallery schema ensure failed');
+    return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.');
   }
   const album = c.req.query('album') ?? '';
   const page = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1);
@@ -133,8 +136,9 @@ galleryV2.get('/community/gallery', async (c) => {
       albums: [...ALBUMS],
     });
   } catch (err) {
+    // B-33: same reflection rule — generic message out, real detail to the log.
     logger.error({ err: String(err) }, 'gallery list failed');
-    return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.', String((err as Error)?.message ?? err));
+    return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.');
   }
 });
 
