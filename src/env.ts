@@ -70,7 +70,10 @@ export interface EnvShape {
   bridgeSecret: string;
   bridgeWebhookUrl: string;
   bridgeEventsWebhookUrl: string;
-  /** V6: the Discord channel for changelog posts (owner's channel 1430014299425738752). */
+  /** V6: the Discord channel for changelog posts. Empty = the changelog route
+   *  answers 503 — B-23 deleted the hardcoded fallback to the owner's real
+   *  channel (caller-controlled content must never have a default audience).
+   *  Set CHANGELOG_CHANNEL_ID (1430014299425738752 is the owner's channel) to arm it. */
   changelogChannelId: string;
   /** Owner DM overrides for error alerts — optional; defaults to username search. */
   ownerDiscordId?: string;
@@ -203,7 +206,7 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     bridgeSecret: optional('BRIDGE_SECRET') ?? '',
     bridgeWebhookUrl: optional('BRIDGE_WEBHOOK_URL') ?? '',
     bridgeEventsWebhookUrl: optional('BRIDGE_EVENTS_WEBHOOK_URL') ?? '',
-    changelogChannelId: optional('CHANGELOG_CHANNEL_ID') ?? '1430014299425738752',
+    changelogChannelId: optional('CHANGELOG_CHANNEL_ID') ?? '',
     staffAlertWebhookUrl: optional('STAFF_ALERT_WEBHOOK_URL') || '',
     panelUrl: optional('PANEL_URL', '').replace(/\/+$/, ''),
     panelApiKey: optional('PANEL_API_KEY', ''),
