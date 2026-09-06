@@ -55,16 +55,42 @@ communityApi.post('/lfg/posts', writeRateLimit, zValidator('json', lfgPostSchema
   }
   const body = c.req.valid('json');
 
+  // B-45: resolve the poster's Minecraft name SERVER-SIDE from the
+  // discord->MC link (the memberRoles pattern). The caller-asserted field
+  // used to be stored verbatim, so anyone holding the shared token could
+  // put any player's name on the board as party leader.
+  let linked: string | null = null;
+  try {
+    const row = await query<{ username: string | null }>(
+      `SELECT pn.username
+         FROM discord_links dl
+         LEFT JOIN player_names pn ON pn.uuid = dl.uuid
+        WHERE dl.discord_id = $1
+        LIMIT 1`,
+      [body.discordId],
+    );
+    linked = row.rows[0]?.username ?? null;
+  } catch (err) {
+    logger.warn({ err }, 'lfg post: link lookup failed');
+    return c.json({ error: 'LFG board unavailable — try again shortly' }, 503);
+  }
+  if (!linked) {
+    return c.json({ error: 'No linked Minecraft account for that Discord user', code: 'NOT_LINKED' }, 400);
+  }
+  if (body.username !== undefined && body.username !== linked) {
+    return c.json({ error: 'Username does not match the linked account', code: 'USERNAME_MISMATCH' }, 400);
+  }
+
   const expires = new Date(Date.now() + LFG_TTL_MINUTES * 60_000);
   try {
     const result = await query<{ id: number | string }>(
       `INSERT INTO lfg_posts (dungeon_id, note, discord_id, username, created_at, expires_at, delivered_at)
        VALUES ($1, $2, $3, $4, NOW(), $5, NULL)
        RETURNING id`,
-      [body.dungeon, body.note ?? null, body.discordId, body.username, expires.toISOString()],
+      [body.dungeon, body.note ?? null, body.discordId, linked, expires.toISOString()],
     );
     const postId = String(result.rows[0]?.id ?? '');
-    return c.json({ ok: true, postId, expiresAt: expires.toISOString() }, 202);
+    return c.json({ ok: true, postId, username: linked, expiresAt: expires.toISOString() }, 202);
   } catch (err) {
     logger.error({ err, dungeon: body.dungeon }, 'lfg post insert failed');
     return c.json({ error: 'LFG board unavailable — try again shortly' }, 503);

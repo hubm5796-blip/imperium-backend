@@ -111,28 +111,71 @@ beforeEach(() => {
 describe('POST /api/lfg/posts', () => {
   const body = { dungeon: 'cloaca_maxima', note: 'need healer', discordId: '999000111222333444', username: 'Caesar' };
 
+  /** Stub the server-side link resolution (B-45) + the insert. */
+  function stubLfg(linkedUsername: string | null, insertId = 9) {
+    stubQuery([
+      { match: (sql) => sql.includes('FROM discord_links'), rows: linkedUsername ? [{ username: linkedUsername }] : [] },
+      { match: (sql) => sql.includes('INSERT INTO lfg_posts'), rows: [{ id: insertId }] },
+    ]);
+  }
+
   function lastInsertParams(): unknown[] {
     const call = vi.mocked(queryMock).mock.calls.find(([sql]) => (sql as string).includes('INSERT INTO lfg_posts'));
     if (!call) throw new Error('no lfg_posts insert captured');
     return call[1] as unknown[];
   }
 
-  it('bot token: 202 with postId + expiresAt 15 minutes out', async () => {
-    stubQuery([{ match: (sql) => sql.includes('INSERT INTO lfg_posts'), rows: [{ id: 9 }] }]);
+  it('bot token: 202 — the username inserted is the SERVER-RESOLVED linked name (B-45)', async () => {
+    stubLfg('Caesar');
     const res = await app.request('/api/lfg/posts', {
       method: 'POST',
       headers: { 'CF-Connecting-IP': nextIp(), ...BOT_HEADERS, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     expect(res.status).toBe(202);
-    const parsed = (await res.json()) as { ok: boolean; postId: string; expiresAt: string };
+    const parsed = (await res.json()) as { ok: boolean; postId: string; username: string; expiresAt: string };
     expect(parsed.ok).toBe(true);
     expect(parsed.postId).toBe('9');
+    expect(parsed.username).toBe('Caesar');
     const ttl = Date.parse(parsed.expiresAt) - Date.now();
     expect(ttl).toBeGreaterThan(13 * 60_000);
     expect(ttl).toBeLessThanOrEqual(15 * 60_000);
     const [dungeon, note, discordId, username] = lastInsertParams() as [string, string, string, string];
     expect([dungeon, note, discordId, username]).toEqual(['cloaca_maxima', 'need healer', '999000111222333444', 'Caesar']);
+  });
+
+  it('a caller-asserted username that disagrees with the link is rejected (no impersonation)', async () => {
+    stubLfg('Caesar');
+    const res = await app.request('/api/lfg/posts', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': nextIp(), ...BOT_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, username: 'Impostor' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code?: string }).code).toBe('USERNAME_MISMATCH');
+    expect(vi.mocked(queryMock).mock.calls.some(([sql]) => (sql as string).includes('INSERT INTO lfg_posts'))).toBe(false);
+  });
+
+  it('an unlinked Discord user cannot post (400 NOT_LINKED)', async () => {
+    stubLfg(null);
+    const res = await app.request('/api/lfg/posts', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': nextIp(), ...BOT_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code?: string }).code).toBe('NOT_LINKED');
+  });
+
+  it('username omitted: the linked name is used', async () => {
+    stubLfg('Caesar');
+    const res = await app.request('/api/lfg/posts', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': nextIp(), ...BOT_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dungeon: 'cloaca_maxima', discordId: '999000111222333444' }),
+    });
+    expect(res.status).toBe(202);
+    expect(lastInsertParams()[3]).toBe('Caesar');
   });
 
   it('401 without the bot token', async () => {
@@ -145,10 +188,10 @@ describe('POST /api/lfg/posts', () => {
   });
 
   it('400 for a bad body (uppercase dungeon / bad discordId)', async () => {
+    stubLfg('Caesar');
     for (const bad of [
       { ...body, dungeon: 'Not A Slug' },
       { ...body, discordId: 'abc' },
-      { dungeon: 'ok', discordId: '999000111222333444' }, // missing username
     ]) {
       const res = await app.request('/api/lfg/posts', {
         method: 'POST',
