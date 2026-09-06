@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler, type Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { gameQuery, getGamePlayerBalances, getGamePlayerProfile, getGamePlayerStats, getGamePlayerAchievements, getGamePlayerSkills, getGamePlayerRankAndPrestige, getGamePlayerFactions, getGameParkourRecords, getGamePlayerLegionId, getGameLegionInfo, getGameLegionMembers, getGamePlayerCosmetics, getGamePlayerDailyQuests } from '../db/gameMysql.js';
@@ -2787,24 +2787,33 @@ api.get('/refcode/mine', requireMcIdentity, async (c) => {
     return c.json({ code: existing.rows[0].code, isCustom: existing.rows[0].is_custom, redemptions: parseInt(existing.rows[0].total_redemptions, 10) });
   }
 
-  // Generate a new random 6-char code
+  // B-31: codes come from crypto.randomBytes over the unambiguous alphabet
+  // (Math.random is the predictable-PRNG class the repo already replaced in
+  // generateLinkCode), and the insert is compare-and-insert: ON CONFLICT DO
+  // NOTHING + RETURNING — a swallowed collision used to return the OTHER
+  // player's code as the caller's own (two owners, redemptions attributed to
+  // the wrong row). Zero returned rows = collision → regenerate and retry;
+  // a genuinely thrown error is surfaced, not eaten by the loop.
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let attempts = 0;
-  while (attempts < 10) {
+  const generateCode = (): string => {
+    const bytes = randomBytes(6);
     let code = '';
-    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-    try {
-      await query(
-        'INSERT INTO referral_codes (uuid, code) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-        [mcUuid, code]
-      );
-      return c.json({ code, isCustom: false, redemptions: 0 });
-    } catch (err) {
-      logger.warn({ err: String(err), attempt: attempts }, 'refcode generation insert failed');
-      attempts++;
+    for (let i = 0; i < 6; i++) code += chars[bytes[i]! % chars.length];
+    return code;
+  };
+  const MAX_ATTEMPTS = 10;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const code = generateCode();
+    const inserted = await query<{ code: string }>(
+      'INSERT INTO referral_codes (uuid, code) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING code',
+      [mcUuid, code]
+    );
+    if (inserted.rows.length > 0) {
+      return c.json({ code: inserted.rows[0].code, isCustom: false, redemptions: 0 });
     }
+    logger.warn({ attempt, code }, 'refcode collision — code already taken, regenerating');
   }
-  logger.error({ mcUuid }, 'refcode generation exhausted 10 attempts');
+  logger.error({ mcUuid }, `refcode generation exhausted ${MAX_ATTEMPTS} attempts`);
   return c.json({ error: 'Failed to generate code' }, 500);
 });
 
