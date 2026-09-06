@@ -181,6 +181,29 @@ describe('poller dedupe + resume', () => {
     expect(pulls).toBe(1);
   });
 
+  it('B-50: SEQUENTIAL calls within one interval also produce ONE pull', async () => {
+    let pulls = 0;
+    const def: TopicDefinition = {
+      name: 'seq-topic',
+      intervalMs: 1000,
+      fetch: async () => {
+        pulls += 1;
+        await new Promise((r) => setTimeout(r, 5));
+        return { n: pulls };
+      },
+      same: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+    };
+    // The normal case: each connection's loop tick lands inside the interval
+    // window of the previous pull. Injected clocks — no real waiting.
+    await sharedSnapshot(def, 0);        // pulls (cache empty)
+    await sharedSnapshot(def, 200);      // cached — no pull
+    await sharedSnapshot(def, 700);      // cached — no pull
+    await sharedSnapshot(def, 999);      // cached — no pull
+    expect(pulls).toBe(1);
+    await sharedSnapshot(def, 1001);     // window elapsed — pulls again
+    expect(pulls).toBe(2);
+  });
+
   it('frames only on change and replays missed frames by seq', async () => {
     let value = 1;
     const def: TopicDefinition = {
@@ -190,19 +213,22 @@ describe('poller dedupe + resume', () => {
       same: (a, b) => (a as { value?: number } | null)?.value === (b as { value?: number } | null)?.value,
     };
 
-    await sharedSnapshot(def);
+    // Injected clocks: B-50 froze the snapshot inside the interval window, so
+    // a change only becomes visible on the NEXT window's pull — by design.
+    await sharedSnapshot(def, 0);
     const first = frameIfChanged(def);
     expect(first).not.toBeNull();
     expect(first!.seq).toBe(1);
 
-    // Unchanged: no frame.
-    await sharedSnapshot(def);
+    // Unchanged within the window: no frame.
+    await sharedSnapshot(def, 500);
     expect(frameIfChanged(def)).toBeNull();
 
-    // Changed: seq 2.
+    // Changed AND the window elapsed: the new snapshot frames as seq 2.
     value = 2;
-    await sharedSnapshot(def);
+    await sharedSnapshot(def, 1001);
     const second = frameIfChanged(def);
+    expect(second).not.toBeNull();
     expect(second!.seq).toBe(2);
 
     // Resume from seq 1 replays exactly the seq-2 frame.
@@ -211,4 +237,5 @@ describe('poller dedupe + resume', () => {
     expect(missed[0]!.seq).toBe(2);
     expect(JSON.parse(missed[0]!.data)).toEqual({ value: 2 });
   });
+
 });
