@@ -146,6 +146,12 @@ const STATEMENTS = [
   // all existing rows), multiple NULLs treated as distinct.
   ['referral_redemptions UNIQUE (redeemer,code)', `CREATE UNIQUE INDEX IF NOT EXISTS uniq_referral_redemptions_redeemer_code ON referral_redemptions(redeemer_uuid, code_used)`],
   ['referral_redemptions idx redeemer',    `CREATE INDEX IF NOT EXISTS idx_referral_redemptions_redeemer ON referral_redemptions(redeemer_uuid)`],
+  // B-C18 backstop: one redemption per LIFETIME per account. This CAN fail on
+  // legacy data if the per-code loophole was already farmed (same redeemer on
+  // multiple codes) — guarded per-statement, so a failure is logged and the
+  // app-level check in routes.ts still holds. Clean the dupes (keep the
+  // earliest row per redeemer), then re-run to land the index.
+  ['referral_redemptions UNIQUE redeemer', `CREATE UNIQUE INDEX IF NOT EXISTS uniq_referral_redemptions_redeemer ON referral_redemptions(redeemer_uuid)`],
 
   // ===================== paynow_customers =====================
   // Already matches pool.ts (uuid PK, customer_id). Add an index on customer_id

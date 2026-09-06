@@ -2665,10 +2665,15 @@ api.post('/refcode/redeem', botAuthMiddleware, async (c) => {
     return c.json({ error: 'You cannot redeem your own code.' }, 400);
   }
 
-  // Check if already redeemed
-  const already = await query('SELECT 1 FROM referral_redemptions WHERE redeemer_uuid = $1 AND code_used = $2', [mcUuid, code]);
+  // B-C18: ONE referral redemption per account, per LIFETIME — not one per code.
+  // The old `AND code_used = $2` check let a single alt account redeem every
+  // code on the server (one reward each), an unbounded Sybil economy dupe.
+  // (IP guard is meaningless here: the caller is the game server, not the
+  // player. Account-age/playtime guards need the live game DB or an AltGraph
+  // hook — noted as follow-up, not smuggled into this bot-auth route.)
+  const already = await query('SELECT 1 FROM referral_redemptions WHERE redeemer_uuid = $1', [mcUuid]);
   if (already.rows.length > 0) {
-    return c.json({ error: 'You have already redeemed this code.' }, 400);
+    return c.json({ error: 'You have already redeemed a referral code.' }, 400);
   }
 
   // Record the redemption AND bump the owner's counter. Single CTE statement =
