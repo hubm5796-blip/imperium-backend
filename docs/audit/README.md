@@ -12,6 +12,7 @@ Part of a cross-repo strict audit of the three ImperiumMC codebases.
 | [`ROUND-3.md`](ROUND-3.md) | P-13 … P-19 (plugin mirror) + B-11 … B-17, this repo's findings + re-verification |
 | [`ROUND-4.md`](ROUND-4.md) | B-18 … B-25 (v2/expansion, bot, paynow, scopes, SSE, limiter) + C8…C13 dedupe |
 | [`ROUND-5.md`](ROUND-5.md) | B-26 … B-34 (routes remainder, deploy surface, trust boundaries) + C14…C15 dedupe |
+| [`ROUND-6.md`](ROUND-6.md) | B-35 … B-42 (scripts, expansion, cron, Discord, wiring, sweep) |
 | [`CROSS-REPO.md`](CROSS-REPO.md) | X-01 … X-04, the seams with the plugin and frontend |
 
 The full audit — executive summary, plugin and frontend findings, methodology,
@@ -53,6 +54,14 @@ the bot, the PayNow client, API-key scopes, the SSE stream, and the limiter:
 defect — fix once). Headliners: B-19 (admin reads are shared-token-only),
 B-20 (`requireScope` has zero consumers), B-25 (the limiter reintroduces the
 exact in-memory shape its own doc says was fixed).
+
+## Round 6
+
+A sixth pass ([`ROUND-6.md`](ROUND-6.md)) covered the one-shot scripts, the
+expansion remainder, cron legs, Discord-side commands, v2 wiring, and a
+last-chance routes sweep: **B-35 … B-42**. Headliners: B-35 (third password
+copy + live MySQL password in a one-shot script), B-36 (rebuild wipes balances
+with no guard), B-39 (cron legs duplicate/skip without overlap guards).
 
 ## Round 5
 
