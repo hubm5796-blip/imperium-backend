@@ -691,4 +691,78 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
    1. Replace `getUuidByPaynowCustomerId(customerId)` in lines 2162 and 2177 with `resolveCustomerUuid(customerId, null)`.
    2. Ensure all webhook subscription handlers take advantage of the Management API fallback so cache misses self-heal immediately.
 
+---
+
+### COMPLAINT 29: Support Ticket Authorization Bypass: Any Authenticated Player Can View and Respond to All Server Tickets (B-12 / B-40)
+* **Severity:** CRITICAL
+* **Category:** Security / Privacy Violation / Broken Object Level Authorization (BOLA)
+* **Location:** `src/api/routes.ts:2279-2334`
+* **The Problem:**
+   1. In `src/api/routes.ts:2279-2300`, `GET /api/tickets` is protected only by `botAuthMiddleware` (which also accepts player sessions):
+      ```typescript
+      api.get('/tickets', botAuthMiddleware, async (c) => {
+        ...
+        const result = await query(
+          `SELECT id, uuid, username, category, subject, status, priority, staff_response, responded_at, created_at
+           FROM support_tickets ${where}
+           ORDER BY ... LIMIT $1 OFFSET $2`,
+          params,
+        );
+      ```
+   2. The comment says: `"list tickets for the calling player, or ALL tickets if the caller has a staff permission... Staff see all tickets with pagination; players see only their own."`
+   3. But the SQL query contains **zero `WHERE uuid = $mcUuid` filter** and **zero staff role check**! Any player or bot with a valid session can call `GET /api/tickets` to retrieve every support ticket submitted by every player on the server, leaking usernames, UUIDs, report subjects, and dispute contents.
+   4. Worse, in `POST /api/tickets/:id/respond` (lines 2319-2334):
+      ```typescript
+      api.post('/tickets/:id/respond', botAuthMiddleware, async (c) => {
+        const mcUuid = c.req.header('x-mc-uuid');
+        ...
+        await query(
+          `UPDATE support_tickets SET staff_response = $1, responded_by = $2, responded_at = CURRENT_TIMESTAMP, status = $3 WHERE id = $4`,
+          [response, mcUuid, newStatus, ticketId],
+        );
+      ```
+      There is ZERO check that `mcUuid` belongs to a staff member! Any player can answer, overwrite, or close any other player's support tickets.
+* **Remediation Action:**
+   1. Verify staff authorization in `GET /api/tickets` and `POST /api/tickets/:id/respond` (e.g. check user staff roles / permissions).
+   2. If a non-staff player calls `GET /api/tickets`, redirect them to `GET /api/tickets/mine` or append `WHERE uuid = $mcUuid`.
+   3. Reject `POST /api/tickets/:id/respond` with HTTP 403 if the caller is not staff.
+
+---
+
+### COMPLAINT 30: Empty `CRATE_KEY_PRODUCTS` Disables Real-Money Web Store Crate Key Bundle Fulfillment
+* **Severity:** HIGH
+* **Category:** Monetization / Store Fulfillment / Unreachable Products
+* **Location:** `src/paynow/fulfillment.ts:116-117`
+* **The Problem:**
+   1. In `src/paynow/fulfillment.ts:116-117`:
+      ```typescript
+      /** Crate-key bundles sold via PayNow. None exist yet — one entry adds one product. */
+      export const CRATE_KEY_PRODUCTS: ReadonlyMap<string, { crateId: string; keyAmount: number }> = new Map([]);
+      ```
+   2. The map is completely empty.
+   3. When PayNow webhooks deliver an order for crate key bundles (e.g. 5x Rare Crate Keys, 10x Epic Keys, or Roman Crate Bundles), `resolveStoreDispatch` queries `CRATE_KEY_PRODUCTS.get(productId)`.
+   4. Because the map is empty, `resolveStoreDispatch` returns `null`.
+   5. In `fulfillOrder`:
+      ```typescript
+      if (!resolved) {
+        logger.warn({ productId: line.productId, orderId: order.orderId }, 'fulfillment: unknown store product — skipped');
+        skippedUnknownProduct++;
+        return;
+      }
+      ```
+   6. Crate key purchases are permanently ignored, no in-game keys are delivered, and the transaction is marked complete in PayNow while the player receives nothing.
+* **Remediation Action:**
+   1. Populate `CRATE_KEY_PRODUCTS` with PayNow product IDs for all standard crate key tiers and bundles:
+      ```typescript
+      export const CRATE_KEY_PRODUCTS: ReadonlyMap<string, { crateId: string; keyAmount: number }> = new Map([
+        ['587751600000000001', { crateId: 'common_crate', keyAmount: 5 }],
+        ['587751600000000002', { crateId: 'rare_crate', keyAmount: 5 }],
+        ['587751600000000003', { crateId: 'epic_crate', keyAmount: 5 }],
+        ['587751600000000004', { crateId: 'legendary_crate', keyAmount: 5 }],
+        ['587751600000000005', { crateId: 'imperial', keyAmount: 3 }],
+        ['587751600000000006', { crateId: 'godly', keyAmount: 1 }],
+      ]);
+      ```
+   2. Ensure the catalog matches the in-game `crates.yml` IDs.
+
 
