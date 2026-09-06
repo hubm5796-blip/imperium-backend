@@ -170,6 +170,17 @@ const webcodeRateLimit = rateLimit(8, 5 * 60_000, 'webcode', (c) => {
   return 'unknown';
 });
 
+/**
+ * B-51: /auth/exchange gets its OWN limiter namespace. It previously shared
+ * the webcode instance ('webcode' prefix + resolver), so 8 fat-fingered
+ * webcode guesses exhausted the same D1 bucket the OAuth callback handoff
+ * needs — a backend-completed login became unredeemable for 5 minutes
+ * (self-DoS conflating a brute-force bound with an unauthenticated handoff).
+ * The exchange code is a 24-char single-use capability with a 60s TTL — the
+ * tighter keyspace concern does not apply.
+ */
+const exchangeRateLimit = rateLimit(10, 60_000, 'exchange');
+
 /* ------------------------------------------------------------------ Auth */
 
 /** GET /api/auth/discord — redirect to Discord OAuth2 authorize URL. */
@@ -340,7 +351,7 @@ api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
  * imperium-frontend's edge callback calls this to sign its own session cookie on
  * imperiummc.net after the backend completed the Discord OAuth. Single-use.
  */
-api.post('/auth/exchange', webcodeRateLimit, async (c) => {
+api.post('/auth/exchange', exchangeRateLimit, async (c) => {
   let body: { code?: string };
   try {
     body = (await c.req.json()) as { code?: string };
