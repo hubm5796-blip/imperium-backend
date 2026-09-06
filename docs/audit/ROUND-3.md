@@ -20,6 +20,13 @@ which supersedes it.
 | P-17 | Medium | plugin | Anticheat VL accumulation is a non-atomic read-modify-write from async threads |
 | P-18 | Low | plugin | Crate rewards drawn from a predictable 48-bit LCG |
 | P-19 | Low | plugin | Money column type varies by install age; a dead balance table is still maintained |
+| B-11 | High | backend | `gameQuery` swallows every DB failure into `[]` — outages render as "no data" |
+| B-12 | High | backend | `GET /api/tickets` returns *all* tickets to *any* player; `POST respond` lets any player answer as staff |
+| B-13 | High | backend | ~15 v1 routes accept arbitrary `X-Mc-Uuid` under the shared bot token |
+| B-14 | Medium | backend | `POST /api/store/checkout` passes client `productId` + `subscription` flag with no allowlist |
+| B-15 | Medium | backend | Guide vote score spans 4 non-atomic statements vs the "same statement" comment |
+| B-16 | Medium | backend | v2 ticket PATCH accepts arbitrary `status`/`priority`/`satisfaction`; note author defaults to `'staff'` |
+| B-17 | Low | backend | Bridge Bearer compare skips the length guard → 500 + staff alert instead of 401 |
 
 ---
 
@@ -405,3 +412,135 @@ Separately, drop `player_balances` — remove the `CREATE TABLE`, remove it from
 - **`weightedRandom` itself is correct** — it sums actual weights rather than
   assuming they total 1.0, and falls back to the last element to cover
   floating-point shortfall.
+
+---
+
+## Addendum — backend depth pass (B-11…B-17 + re-verification)
+
+Second Round-3 sweep (HEAD `598daa6`, code-identical to the heads above):
+the game-MySQL pool, tickets, v2 routes, checkout siblings, the bot bridge —
+plus line-level re-verification of B-01/B-02/B-03/B-06 and every Round-1
+backend complaint. No overlaps with B-01…B-10.
+
+## B-11 · High · `gameQuery` swallows every DB failure into `[]`
+
+**Evidence:** `src/db/gameMysql.ts:130-154` (`return [];` at `:152` on every
+outage), `src/api/routes.ts:1652-1665` (`dbReadOrNull` → null,
+`dbWriteBestEffort` fire-and-forget), `src/db/pool.ts:636-638` (empty catch →
+stale Postgres mirror with no `available:false` flag). Callers treat empty as a
+valid answer: `GET /store/subscription` serves `subscription: null` (`:1689-1696`),
+the leaderboard serves a frozen mirror, and the cancel route returns `{ok:true}`
+at `:1789` while its cache write (`:1784-1787`) is still in flight — a failed
+write leaves `status:'active'` in D1 permanently (B-09's exact shape, new
+instance). The swallow even masks this repo's own bugs: `getGamePlayerLegionId`
+queries `legion_members WHERE uuid = ?` (`gameMysql.ts:299-304`) while the
+Postgres fallback queries `WHERE player_uuid = $1` (`pool.ts:1061-1064`), and
+`getGameLegionMembers` selects `uuid, rank, contribution` (`:315-320`) vs
+`player_uuid, role` (`pool.ts:1081-1088`) — if the game schema matches the
+Postgres names, the game path errors on every call and nobody can tell.
+
+**Fix:** make `gameQuery` throw (or return `{ok, rows}`) and force each call site
+to degrade explicitly with an `available:false`/staleness signal; `await` the
+cancel-path cache write; reconcile the `legion_members` column names.
+
+---
+
+## B-12 · High · Tickets: any player reads all, answers any as staff
+
+**Evidence:** `src/api/routes.ts:2229-2255` — the comment promises a staff gate
+that does not exist (`api.get('/tickets', botAuthMiddleware, …)` reads
+`X-Mc-Uuid` for presence only, then selects with no uuid filter and no role
+check). `POST /tickets/:id/respond` (`:2274-2289`) writes `staff_response` /
+`responded_by` / `status` for any caller, with `status` free-form
+(`body.status ?? 'responded'`) — arbitrary strings the 48 h auto-close sweep
+(`bot/cron.ts:143-162`) then acts on.
+
+**Fix:** scope the list to `WHERE uuid = $n` unless the caller passes a real
+staff gate (`staffActorHasRole(..., 'helper')`); gate `/respond` the same way;
+allowlist `status`.
+
+---
+
+## B-13 · High · ~15 v1 routes accept arbitrary `X-Mc-Uuid` under the shared token
+
+**Evidence:** `src/api/routes.ts:2206-2208` (representative — tickets, referrals,
+marketplace, crates, legion reads): `botAuthMiddleware` (`:133-138`) checks only
+`X-Bot-Token == BOT_API_TOKEN`, and the header is used directly as identity. The
+`INTERNAL_SERVICE_TOKEN` split from `gates.ts` is not consulted on any of these
+paths (B-04 non-adoption, now with teeth). Leak of the one widely-shared secret
+lets an attacker act as *any* player — including checkouts billed against
+another player's PayNow mapping.
+
+**Fix:** require `safeEqual(botToken, env.internalServiceToken)` wherever
+`X-Mc-Uuid` is accepted as identity (or migrate these routes to
+`requireSelfOrDelegated`); apply UUID-shape validation everywhere meanwhile.
+
+---
+
+## B-14 · Medium · Checkout passes unvalidated `productId` + `subscription` flag
+
+**Evidence:** `src/api/routes.ts:1835-1856` (presence-only check), mapped verbatim
+to PayNow (`src/paynow/client.ts:142-147`, no validation). Every sibling
+validates: preview-change (`:1880-1882`), change (`:1911`), gift (`:1966-1968`),
+cart (`:2062-2067`). Callable outcome: hidden/test/foreign products purchasable,
+type/flag mismatches → paid-but-undelivered orders and support load.
+
+**Fix:** validate against `isDonorSubscriptionProduct() || isLifetimeProduct()`
+and require the flag to match the product kind, mirroring the cart route.
+
+---
+
+## B-15 · Medium · Guide vote score is 4 non-atomic statements vs the "same statement" comment
+
+**Evidence:** comment `src/api/v2/guides.ts:10-14` ("maintained on the same
+statement as the vote insert (D1 serializes writes per database)") vs code at
+`:146-161`: SELECT guide, SELECT existing vote, INSERT/UPDATE vote, then a
+*separate* `UPDATE guides SET score = score + ?`. Concurrent votes interleave the
+read-modify-write and lose updates, drifting `score` with no reconciliation.
+
+**Fix:** vote + score change in one `batch()`, or recompute `score` from
+`guide_votes`.
+
+---
+
+## B-16 · Medium · v2 ticket PATCH: arbitrary values, author defaults to `'staff'`
+
+**Evidence:** `src/api/v2/tickets.ts:117-131` (columns allowlisted — good — but
+values `String(v)` unvalidated), `:154` (any non-player/discord author recorded
+as staff). Bot-token holders can close tickets to dodge the stale-sweep, invent
+priorities, poison `satisfaction` analytics; unattributed notes land as staff
+statements.
+
+**Fix:** enum-validate `status`/`priority`/`satisfaction` (400 on unknown);
+default unknown authors to `'discord'` or reject.
+
+---
+
+## B-17 · Low · Bridge Bearer compare skips the length guard (length oracle + alert spam)
+
+**Evidence:** `src/bot/bridge.ts:169-174` (`timingSafeEqual` without the
+length guard every other check has). Wrong-length secrets throw → generic 500 +
+`alertError('unhandled', …)` staff ping (`app.ts:113-120`): unauthenticated
+probers distinguish wrong-length (500) from wrong-bytes (401) and can spam staff
+alerts at will.
+
+**Fix:** copy the `a.length !== b.length → false` guard from `botTokenMatches`.
+
+---
+
+## Re-verification (all at `598daa6`, code-identical to round-1 head)
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| B-01 RBAC exemption | **STILL PRESENT** | `routes.ts:191-193`, `:196-199` byte-identical |
+| B-02 unreachable delegated branch | **STILL PRESENT** | `gates.ts:71-82` |
+| B-03 `:`-split + `===` | **STILL PRESENT** | `routes.ts:143-145`, `:180-181` |
+| B-06 unvalidated UUID | **PARTIAL** | `storeAuth` now validates (`:1627-1630`); `gates.ts:73-75` + ~9 v1 routes still presence-only |
+| X-03 `X-Admin-Uuid` | **NOT FIXED** | zero readers in `src/` |
+| Plaintext DB password | **NOT FIXED** | `wrangler.jsonc:23-24` still has it (re-added with Hyperdrive rebuild); **second copy** in `migrate-tables.cjs:22-24` (port 6543). Rotate + placeholder both |
+| `unhandledrejection` suppression | **NOT FIXED** | `worker.ts:18-20` still bare `preventDefault()` |
+| Placeholder shifting | **NOT FIXED** (latent) | `mysqlWire.ts:152-168`, `escapeValue :140-150` |
+| Per-query handshakes | **NOT FIXED by design** | documented tradeoff; retained risk |
+| Missing socket timeouts | **NOT FIXED** | `WireStream.fill`, `ChunkReader.fill`; only `redisSubscribeOnce` has a deadline |
+| Refunds/chargebacks | **NOT FIXED** | `routes.ts:2151-2154` still `default: break`; unresolvable-customer still 200s |
+| Multi-DB split brain | **NOT FIXED** | no `DATA_TOPOLOGY.md`, no compensation; B-11 legion mismatch is a new instance |
