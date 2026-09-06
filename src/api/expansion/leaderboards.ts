@@ -65,8 +65,17 @@ export interface LegionBoardEntry {
   name: string;
   displayName: string | null;
   level: number;
+  /** Legion XP — whole units, exactly as stored. Never a civitas proxy. */
   xp: number;
   members: number;
+  /**
+   * OWNER DIRECTIVE: the legion board ranks by CIVITAS — the summed whole-unit
+   * civitas balances of each legion's members (currency_balances WHOLE-UNIT
+   * STORAGE per publicProfiles.ts: no ÷100 anywhere — B-37 killed the game
+   * path's /100). Both DB paths compute the identical subquery so the board
+   * answers with the SAME order and magnitude whichever database serves it.
+   */
+  value: number;
 }
 
 /** Fetch one of the four expansion boards. Throws on DB failure (caller decides fallback). */
@@ -136,8 +145,12 @@ export async function fetchExpansionBoard(
   if (board === 'legion') {
     // GAME MYSQL FIRST (2026-08-25): legions/legion_members are plugin-owned tables in
     // the game DB. OWNER DIRECTIVE: legion top ranks by CIVITAS — the summed civitas
-    // balances of each legion's members (currency_balances, cents! -> /100 display) —
-    // NOT by XP. `value` carries the civitas total; xp kept for response compatibility.
+    // balances of each legion's members — NOT by XP. `value` carries the civitas
+    // total (whole units — WHOLE-UNIT STORAGE, no ÷100 per the repo rule;
+    // B-37 removed the old /100 that made the game path 100x smaller than the
+    // fallback), and BOTH paths run the identical civitas subquery so the
+    // board has ONE ranking key and ONE unit path whichever DB answers (the
+    // fallback used to order by raw l.xp — different order per database).
     const gameRows = await gameRowsOrFallback<{
       name: string;
       display_name: string | null;
@@ -163,8 +176,9 @@ export async function fetchExpansionBoard(
         name: row.name,
         displayName: row.display_name,
         level: Number(row.level ?? 1),
-        xp: Number(row.civitas ?? 0) / 100,
+        xp: Number(row.xp ?? 0),
         members: Number(row.members ?? 0),
+        value: Number(row.civitas ?? 0),
       }));
       return { entries };
     }
@@ -173,12 +187,16 @@ export async function fetchExpansionBoard(
       display_name: string | null;
       level: string;
       xp: string;
+      civitas: string;
       members: string;
     }>(
       `SELECT l.name, l.display_name, l.level::text, l.xp::text,
-              (SELECT COUNT(*) FROM legion_members m WHERE m.legion_name = l.name)::text AS members
+              (SELECT COUNT(*) FROM legion_members m WHERE m.legion_name = l.name)::text AS members,
+              COALESCE((SELECT SUM(cb.balance) FROM legion_members m2
+                 JOIN currency_balances cb ON cb.uuid = m2.player_uuid AND cb.currency = 'civitas'
+                WHERE m2.legion_name = l.name), 0)::text AS civitas
          FROM legions l
-        ORDER BY l.xp DESC, l.level DESC
+        ORDER BY civitas DESC, l.xp DESC, l.level DESC
         LIMIT $1`,
       [cap],
     );
@@ -189,6 +207,7 @@ export async function fetchExpansionBoard(
       level: Number(row.level ?? 1),
       xp: Number(row.xp ?? 0),
       members: Number(row.members ?? 0),
+      value: Number(row.civitas ?? 0),
     }));
     return { entries };
   }
