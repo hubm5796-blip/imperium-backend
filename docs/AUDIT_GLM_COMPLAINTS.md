@@ -250,3 +250,40 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
 * **Remediation Action:**
   - Migrate edge rate limiting to Cloudflare's native `env.RATE_LIMITER` binding (Cloudflare's distributed in-memory rate limiting engine) or use an in-memory sliding window cache per isolate with KV/D1 fallback, eliminating ACID SQLite disk writes on hot HTTP read paths.
 
+---
+
+### COMPLAINT 14: Silent Author Missing and Inconsistent Schema Validation in Support Tickets API
+* **Severity:** MEDIUM
+* **Category:** Data Integrity / API Consistency
+* **Location:** `src/api/v2/tickets.ts:64, 97` vs `src/api/routes.ts:2213, 2223, 2285`
+* **The Problem:**
+  1. In `ticketsV2.post` (`src/api/v2/tickets.ts:64`), `username` is omitted from the `INSERT INTO support_tickets` statement:
+     ```typescript
+     INSERT INTO support_tickets (uuid, category, subject, body, status, priority, discord_thread_id, created_at)
+     VALUES ($1, $2, $3, $4, 'open', 'normal', $5, now())
+     ```
+     When `ticketsV2.get` retrieves ticket records with `SELECT id::text, uuid, username...`, `username` is returned as `null` for all tickets submitted via the bot or v2 API. The web dashboard renders empty author fields for these tickets.
+  2. In `POST /api/tickets/:id/respond` (`src/api/routes.ts:2285`):
+     ```typescript
+     await query(
+       `UPDATE support_tickets SET staff_response = $1, responded_by = $2, responded_at = CURRENT_TIMESTAMP, status = $3 WHERE id = $4`,
+       [response, mcUuid, newStatus, ticketId],
+     );
+     ```
+     The query does not verify whether the targeted `ticketId` exists or check `rowCount`. If a non-existent ID is passed, it silently returns `{ ok: true }`. Furthermore, `body.status` is completely unvalidated, allowing arbitrary string values to overwrite ticket statuses.
+* **Remediation Action:**
+  - Resolve and insert the player's username in `ticketsV2.post`.
+  - Validate ticket status against an allowed enum (`['open', 'responded', 'closed', 'pending']`) in `POST /api/tickets/:id/respond`, and verify that `rowCount > 0` before returning success.
+
+---
+
+### COMPLAINT 15: Missing Replay Protection Nonces in PayNow Webhook Verification
+* **Severity:** HIGH
+* **Category:** Payment Security / Replay Attacks
+* **Location:** `src/paynow/webhookVerify.ts:30-36` and `src/api/routes.ts:2099-2160`
+* **The Problem:**
+  `verifyPaynowWebhook` permits any signature as long as `Math.abs(Date.now() - timestamp) <= 300,000` (5-minute window). However, neither the verification helper nor the webhook route records or checks event idempotency tokens. If an attacker intercepts a valid signed PayNow webhook, they can replay that exact request multiple times within the 5-minute window without signature invalidation, triggering repeated state updates or duplicate actions.
+* **Remediation Action:**
+  - Enforce idempotency by storing webhook event IDs (or payload signatures) in Redis with a 10-minute expiration using `SET paynow:event:<id> 1 EX 600 NX`. Reject any request whose ID has already been recorded.
+
+
