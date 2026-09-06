@@ -124,10 +124,15 @@ discordInteractions.post('/', async (c) => {
   // time (a bug upstream), fall back to a deferred ack so the interaction
   // doesn't just fail outright — the error handler above can still editReply
   // once `run()` actually finishes.
-  const ackPayload = await Promise.race([
-    shim.firstAck,
-    new Promise((resolve) => setTimeout(() => resolve({ type: 5 }), FIRST_ACK_TIMEOUT_MS)),
-  ]);
+  // B-22 (C9 timer-leak class): the fallback timer is CLEARED the moment the
+  // race settles — firstAck usually wins long before 2.5s, and an uncleared
+  // setTimeout keeps firing into a dead interaction otherwise.
+  let ackTimer: ReturnType<typeof setTimeout> | undefined;
+  const ackFallback = new Promise((resolve) => {
+    ackTimer = setTimeout(() => resolve({ type: 5 }), FIRST_ACK_TIMEOUT_MS);
+  });
+  const ackPayload = await Promise.race([shim.firstAck, ackFallback]);
+  if (ackTimer !== undefined) clearTimeout(ackTimer);
 
   // Let the rest of the handler (editReply calls, etc.) keep running after
   // we've returned. Workers only guarantees execution continues past a

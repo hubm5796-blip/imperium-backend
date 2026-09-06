@@ -13,16 +13,19 @@
  * cosmetic). Ledger: bot_mod_log before dispatch, outcome updated after.
  */
 import { SlashCommandBuilder, EmbedBuilder } from '@discordjs/builders';
-import { getProfile, adminPlayerLookup, moderationHistory } from '../apiClient.js';
+import { adminPlayerLookup, moderationHistory } from '../apiClient.js';
 import { errorEmbed } from '../embeds.js';
 import { COLORS, formatNumber } from '../config.js';
-import { handleModCommand, dispatchPunishment, moderationEmbed } from '../moderation.js';
+import { handleModCommand, dispatchPunishment, moderationEmbed, requireStaff, type StaffLevel } from '../moderation.js';
 import { type BotCommand } from './_shared.js';
 import type { InteractionShim } from '../interactionShim.js';
 
 // ── single-use confirmations (customId: modconfirm:<nonce>) ────────────────
 interface PendingConfirm {
   discordId: string;
+  /** Staff level the execute-time gate demanded — re-checked at consume (B-22:
+   *  rank loss between request and click must void the confirmation). */
+  requiredLevel: StaffLevel;
   target: string;
   action: string;
   reason: string;
@@ -33,27 +36,47 @@ const pendingConfirms = new Map<string, PendingConfirm>();
 
 /** Called from interactions.ts on a modconfirm button click. Single-use + 60s TTL. */
 export async function consumeModConfirm(nonce: string, interaction: InteractionShim): Promise<void> {
+  await interaction.deferUpdate();
   const pending = pendingConfirms.get(nonce);
   if (!pending) {
-    await interaction.deferUpdate();
+    // Unknown nonce: already consumed, expired out of the map, or created on a
+    // different isolate before a recycle. A bare ack here reads as "done" while
+    // nothing happened — say so instead (B-22 silent-drop).
+    await interaction.editReply({
+      embeds: [errorEmbed('This confirmation has expired or was already used. Run the command again.', 'Confirmation unavailable')],
+    });
     return;
   }
   pendingConfirms.delete(nonce); // single-use: honored exactly once
-  if (Date.now() > pending.expiresAt || pending.discordId !== interaction.user.id) {
-    await interaction.deferUpdate();
+  if (Date.now() > pending.expiresAt) {
+    await interaction.editReply({
+      embeds: [errorEmbed('This confirmation expired (60s limit). Run the command again.', 'Confirmation expired')],
+    });
     return;
   }
-  await interaction.deferUpdate();
-  // The actor identity was resolved at button-request time; re-verify the link
-  // cheaply (the profile is the identity source for the ledger).
-  const profile = await getProfile({ discordId: interaction.user.id });
-  if (!profile.ok) {
-    await interaction.editReply({ embeds: [errorEmbed('Link lost — punishment NOT applied.')] });
+  if (pending.discordId !== interaction.user.id) {
+    // Not the initiator's view — leave their message alone, tell the clicker privately.
+    await interaction.reply({
+      embeds: [errorEmbed('Only the staff member who ran the command can confirm it.', 'Not your confirmation')],
+      ephemeral: true,
+    });
+    return;
+  }
+  // TOCTOU (B-22): the rank was verified when the button was REQUESTED; the
+  // click may come up to 60s later. Re-run the full staff gate at consume
+  // time — same level the execute-time check demanded, which the record now
+  // carries. requireStaff re-resolves the linked identity too, so a link
+  // lost in between also voids the confirmation.
+  const actor = await requireStaff(interaction, pending.requiredLevel);
+  if (!actor) {
+    await interaction.editReply({
+      embeds: [errorEmbed('Link or staff rank no longer valid — punishment NOT applied. Re-run the command if this is unexpected.', 'Not authorized')],
+    });
     return;
   }
   const result = await dispatchPunishment(
     interaction.user.id,
-    { actorUuid: profile.data.uuid, actorName: profile.data.username ?? profile.data.uuid },
+    actor,
     pending.target,
     pending.action,
     pending.reason,
@@ -87,8 +110,11 @@ function confirmButtonRow(nonce: string): unknown {
   };
 }
 
+/** B-22: Math.random-based nonces were predictable (the P-18 class) — a
+ *  guessable customId let anyone forge a confirm click within the 60s window.
+ *  crypto.randomUUID is the platform CSPRNG. */
 function randomNonce(): string {
-  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  return crypto.randomUUID().replace(/-/g, '');
 }
 
 export const lookupCommand: BotCommand = {
@@ -222,6 +248,7 @@ function confirmPunishCommand(name: 'tempban' | 'ban', level: 'mod' | 'admin', n
         const nonce = randomNonce();
         pendingConfirms.set(nonce, {
           discordId: interaction.user.id,
+          requiredLevel: level,
           target,
           action: name,
           reason,
