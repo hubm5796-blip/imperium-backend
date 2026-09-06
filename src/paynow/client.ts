@@ -91,6 +91,23 @@ export async function createCustomerToken(customerId: string): Promise<string> {
   return res.token;
 }
 
+/** A PayNow customer, as returned by the Management API's get-customer endpoint. */
+export interface PaynowCustomer {
+  id: string;
+  /** The customer's Minecraft UUID, if linked (null for never-linked customers). */
+  minecraft_uuid?: string | null;
+  minecraft?: { id?: string; name?: string | null } | null;
+  [key: string]: unknown;
+}
+
+/** Fetch a customer by id (Management API) — the webhook's buyer-resolution fallback. */
+export async function getPaynowCustomer(customerId: string): Promise<PaynowCustomer> {
+  return managementRequest<PaynowCustomer>(
+    `/v1/stores/${env.paynow.storeId}/customers/${customerId}`,
+    { signal: AbortSignal.timeout(4000) },
+  );
+}
+
 export interface CreateCheckoutSessionResult {
   id: string;
   url: string;
