@@ -70,6 +70,9 @@ function reqInit(ip: string, extra: Record<string, string> = {}, withSession = f
 }
 
 const BOT_HEADERS = { 'X-Bot-Token': 'test-bot-token' };
+// The panel's post-B-01 shape: the bot token authenticates the pipe and
+// X-Staff-Role carries the LuckPerms-verified role the panel resolved.
+const STAFF_HEADERS = { ...BOT_HEADERS, 'X-Staff-Role': 'helper' };
 
 /** Route one SQL statement to a rows array; anything unexpected throws loudly. */
 function stubQuery(handlers: Array<{ match: (sql: string) => boolean; rows: unknown[] }>) {
@@ -504,7 +507,7 @@ describe('GET /api/economy/drift-alerts', () => {
         ],
       },
     ]);
-    const res = await app.request('/api/economy/drift-alerts', reqInit(nextIp(), BOT_HEADERS));
+    const res = await app.request('/api/economy/drift-alerts', reqInit(nextIp(), STAFF_HEADERS));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { available: boolean; alerts: Array<{ direction: string; status: string; magnitudePct: number }> };
     expect(body.available).toBe(true);
@@ -513,7 +516,7 @@ describe('GET /api/economy/drift-alerts', () => {
 
   it('degrades to an empty inbox until the plugin ships the monitor table', async () => {
     vi.mocked(queryMock).mockRejectedValue(new Error('relation does not exist'));
-    const res = await app.request('/api/economy/drift-alerts', reqInit(nextIp(), BOT_HEADERS));
+    const res = await app.request('/api/economy/drift-alerts', reqInit(nextIp(), STAFF_HEADERS));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { available: boolean; alerts: unknown[] };
     expect(body).toEqual({ available: false, alerts: [] });
@@ -536,7 +539,7 @@ describe('GET /api/admin/liveops', () => {
         rows: [{ ts: '2026-08-14T09:30:00Z', kind: 'CREDIT', source: 'lottery:2026-08-14', amount: 12500, actor: 'system' }],
       },
     ]);
-    const res = await app.request('/api/admin/liveops', reqInit(nextIp(), BOT_HEADERS));
+    const res = await app.request('/api/admin/liveops', reqInit(nextIp(), STAFF_HEADERS));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       available: boolean;
@@ -551,7 +554,7 @@ describe('GET /api/admin/liveops', () => {
 
   it('degrades section-by-section when tables are missing', async () => {
     vi.mocked(queryMock).mockRejectedValue(new Error('relation does not exist'));
-    const res = await app.request('/api/admin/liveops', reqInit(nextIp(), BOT_HEADERS));
+    const res = await app.request('/api/admin/liveops', reqInit(nextIp(), STAFF_HEADERS));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { available: boolean; overrides: unknown[]; festivalLedger: unknown[] };
     expect(body.available).toBe(false);
@@ -576,7 +579,7 @@ describe('GET /api/admin/contraband/sweeps', () => {
         rows: [{ verdict: 'confiscated', count: '5' }, { verdict: 'cleared', count: '20' }],
       },
     ]);
-    const res = await app.request('/api/admin/contraband/sweeps?limit=25', reqInit(nextIp(), BOT_HEADERS));
+    const res = await app.request('/api/admin/contraband/sweeps?limit=25', reqInit(nextIp(), STAFF_HEADERS));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       sweeps: Array<{ target: string; items: number; verdict: string }>;
@@ -588,7 +591,7 @@ describe('GET /api/admin/contraband/sweeps', () => {
 
   it('degrades to an empty log until the sweeper writes a table', async () => {
     vi.mocked(queryMock).mockRejectedValue(new Error('relation does not exist'));
-    const res = await app.request('/api/admin/contraband/sweeps', reqInit(nextIp(), BOT_HEADERS));
+    const res = await app.request('/api/admin/contraband/sweeps', reqInit(nextIp(), STAFF_HEADERS));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { available: boolean; sweeps: unknown[]; verdictStats: unknown[] };
     expect(body).toEqual({ available: false, sweeps: [], verdictStats: [] });
@@ -600,7 +603,7 @@ describe('GET /api/admin/contraband/sweeps', () => {
 describe('GET /api/admin/player-tools', () => {
   it('401 without bot token; 400 for a bad uuid', async () => {
     expect((await app.request('/api/admin/player-tools', reqInit(nextIp()))).status).toBe(401);
-    expect((await app.request('/api/admin/player-tools?uuid=nope', reqInit(nextIp(), BOT_HEADERS))).status).toBe(400);
+    expect((await app.request('/api/admin/player-tools?uuid=nope', reqInit(nextIp(), STAFF_HEADERS))).status).toBe(400);
   });
 
   it('200 with flow tail + lockouts + pity counters', async () => {
@@ -620,7 +623,7 @@ describe('GET /api/admin/player-tools', () => {
         rows: [{ counter_id: 'cosmic_storm', rolls: 40, threshold: 100 }],
       },
     ]);
-    const res = await app.request(`/api/admin/player-tools?uuid=${TEST_UUID}`, reqInit(nextIp(), BOT_HEADERS));
+    const res = await app.request(`/api/admin/player-tools?uuid=${TEST_UUID}`, reqInit(nextIp(), STAFF_HEADERS));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       player: {
@@ -643,7 +646,7 @@ describe('GET /api/admin/player-tools', () => {
     ]);
     // dungeon_lockouts / pity_counters are NOT stubbed — stubQuery throws for
     // them, which the endpoint must swallow into empty sections.
-    const res = await app.request(`/api/admin/player-tools?uuid=${TEST_UUID}`, reqInit(nextIp(), BOT_HEADERS));
+    const res = await app.request(`/api/admin/player-tools?uuid=${TEST_UUID}`, reqInit(nextIp(), STAFF_HEADERS));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { player: { lockouts: unknown[]; pity: unknown[] } };
     expect(body.player.lockouts).toEqual([]);

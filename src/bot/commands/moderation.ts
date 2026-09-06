@@ -131,10 +131,12 @@ export const historyCommand: BotCommand = {
       .addStringOption((o) => o.setName('name').setDescription('Player name').setRequired(true)).toJSON();
   },
   async execute(interaction) {
-    await handleModCommand(interaction, 'helper', async () => {
+    // B-19: punishment history is mod+ on the backend; verify the same level
+    // Discord-side so the denial reads clearly instead of a backend 403.
+    await handleModCommand(interaction, 'mod', async () => {
       const name = interaction.options.getString('name', true).trim();
       // History needs a uuid: resolve via the game lookup first.
-      const lookup = await adminPlayerLookup(name);
+      const lookup = await adminPlayerLookup(name, 'mod');
       if (!lookup.ok) {
         await interaction.editReply({ embeds: [errorEmbed(lookup.message)] });
         return;
@@ -144,7 +146,7 @@ export const historyCommand: BotCommand = {
         await interaction.editReply({ embeds: [errorEmbed('Could not resolve that player.')] });
         return;
       }
-      const res = await moderationHistory(uuid);
+      const res = await moderationHistory(uuid, 'mod');
       if (!res.ok) {
         await interaction.editReply({ embeds: [errorEmbed(res.message)] });
         return;

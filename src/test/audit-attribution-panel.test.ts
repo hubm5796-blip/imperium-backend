@@ -25,7 +25,7 @@ import { initEnvFromBindings } from '../env.js';
 
 
 describe('panel-service exemption', () => {
-  it('the unconfigured (panel-service) identity can punish and is named in the dispatch', async () => {
+  it('the unconfigured shared token is refused by the role gates (exemption deleted)', async () => {
     initEnvFromBindings({
       JWT_SECRET: 'test-jwt-secret-0123456789abcdef0123456789abcdef',
       WEBPANEL_HMAC_SECRET: 'test-hmac-secret-0123456789abcdef0123456789abcdef',
@@ -44,8 +44,7 @@ describe('panel-service exemption', () => {
       headers: { 'Content-Type': 'application/json', 'X-Bot-Token': 'test-bot-token' },
       body: JSON.stringify({ target: 'griefos', action: 'ban', reason: 'test' }),
     });
-    expect(res.status).toBe(200);
-    const cmd = sent.find((c) => c.type === 'PUNISH_PLAYER');
-    expect(cmd?.payload.actor).toBe('panel-service');
+    expect(res.status).toBe(403);
+    expect(sent.find((c) => c.type === 'PUNISH_PLAYER')).toBeUndefined();
   });
 });

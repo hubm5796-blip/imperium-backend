@@ -95,6 +95,7 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  staffRole?: 'helper' | 'mod' | 'admin',
 ): Promise<ApiResult<T>> {
   const { apiToken } = getBotConfig();
   try {
@@ -106,6 +107,13 @@ async function request<T>(
     // /player/profile with ?uuid= or ?discord_id=).
     if (apiToken) {
       headers['X-Bot-Token'] = apiToken;
+    }
+    // B-01(c)/X-04: staff-gated backend routes no longer exempt the bare
+    // bot token. The bot asserts the role its OWN requireStaff lookup just
+    // verified for this interaction — the header is honored because the
+    // request is bot-token authenticated (the Phase-1 staff protocol).
+    if (staffRole) {
+      headers['X-Staff-Role'] = staffRole;
     }
     // In-process via Hono (see localApp() above) — not a real network fetch.
     const res = await localApp().request(path, {
@@ -275,20 +283,25 @@ export function appendTicketNoteV2(id: string, author: 'player' | 'discord' | 's
 
 // ── V6 02-04: moderation surface ────────────────────────────────────────────
 
-/** POST /api/admin/punish — forward a punishment to the plugin over the Redis bus. */
-export function punishAdmin(body: { target: string; action: string; reason: string; duration?: string; actor?: string }) {
-  return request<{ ok: boolean; result: unknown }>('POST', '/api/admin/punish', body);
+/** POST /api/admin/punish — forward a punishment to the plugin over the Redis bus (mod+). */
+export function punishAdmin(
+  body: { target: string; action: string; reason: string; duration?: string; actor?: string },
+  staffRole: 'helper' | 'mod' | 'admin' = 'mod',
+) {
+  return request<{ ok: boolean; result: unknown }>('POST', '/api/admin/punish', body, staffRole);
 }
 
-/** GET /api/admin/player?query= — staff player lookup (balances, stats, rank). */
-export function adminPlayerLookup(query: string) {
-  return request<Record<string, unknown>>('GET', `/api/admin/player${qs({ query })}`);
+/** GET /api/admin/player?query= — staff player lookup (helper+). */
+export function adminPlayerLookup(query: string, staffRole: 'helper' | 'mod' | 'admin' = 'helper') {
+  return request<Record<string, unknown>>('GET', `/api/admin/player${qs({ query })}`, undefined, staffRole);
 }
 
-/** GET /api/v2/moderation/history?uuid= — punishment history for a player. */
-export function moderationHistory(uuid: string) {
+/** GET /api/v2/moderation/history?uuid= — punishment history for a player (mod+). */
+export function moderationHistory(uuid: string, staffRole: 'helper' | 'mod' | 'admin' = 'mod') {
   return request<{ history: Array<Record<string, unknown>> }>(
     'GET',
     `/api/v2/moderation/history${qs({ uuid })}`,
+    undefined,
+    staffRole,
   );
 }
