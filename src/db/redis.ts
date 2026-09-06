@@ -133,6 +133,25 @@ function socketConfig(): RedisSocketConfig {
 }
 
 /**
+ * B-52: atomic single-use consumption. GET-then-DEL is a race — two
+ * concurrent consumes of one correct code both GET before either DELs and
+ * two sessions walk out of one code. GETDEL (Redis >= 6.2) closes it in one
+ * command; if the server rejects the command (older Redis), fall back to
+ * the legacy two-step rather than breaking logins.
+ */
+async function atomicGetDel(key: string): Promise<string | null> {
+  try {
+    const raw = await redisCommand(socketConfig(), ['GETDEL', key]);
+    return typeof raw === 'string' ? raw : null;
+  } catch {
+    const raw = await redisCommand(socketConfig(), ['GET', key]);
+    if (raw === null || typeof raw !== 'string') return null;
+    await redisCommand(socketConfig(), ['DEL', key]);
+    return raw;
+  }
+}
+
+/**
  * Canonical JSON for signing: recursively key-sorted, compact. Both sides
  * (Node here, Gson in the plugin) must produce byte-identical output.
  */
@@ -349,10 +368,8 @@ export async function createLinkCode(
  */
 export async function consumeLinkCode(code: string): Promise<LinkCodeRecord | null> {
   const key = `${LINK_CODE_PREFIX}${code.toUpperCase()}`;
-  const raw = await redisCommand(socketConfig(), ['GET', key]);
-  if (raw === null || typeof raw !== 'string') return null;
-  // Delete immediately so the code is single-use.
-  await redisCommand(socketConfig(), ['DEL', key]);
+  const raw = await atomicGetDel(key);
+  if (raw === null) return null;
   try {
     return JSON.parse(raw) as LinkCodeRecord;
   } catch (err) {
@@ -373,9 +390,8 @@ export async function consumeLoginCode(
   code: string,
 ): Promise<{ uuid: string; username?: string } | null> {
   const key = `${LOGIN_CODE_PREFIX}${code.trim()}`;
-  const raw = await redisCommand(socketConfig(), ['GET', key]);
-  if (raw === null || typeof raw !== 'string') return null;
-  await redisCommand(socketConfig(), ['DEL', key]);
+  const raw = await atomicGetDel(key);
+  if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as { uuid?: string; username?: string };
     if (!parsed.uuid) return null;
@@ -436,9 +452,8 @@ export async function createSessionCode(
  */
 export async function consumeSessionCode(code: string): Promise<SessionHandoff | null> {
   const key = `${SESSION_CODE_PREFIX}${code.trim()}`;
-  const raw = await redisCommand(socketConfig(), ['GET', key]);
-  if (raw === null || typeof raw !== 'string') return null;
-  await redisCommand(socketConfig(), ['DEL', key]);
+  const raw = await atomicGetDel(key);
+  if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<SessionHandoff>;
     if (!parsed.discordId) return null;
