@@ -1733,6 +1733,19 @@ async function resolvePaynowCustomerId(uuid: string): Promise<string> {
 }
 
 /**
+ * B-21 status-code mapping: upstream PayNow failures answer 502 with PayNow's
+ * own message, but the client's own 8s deadline surfaces as status 504 — the
+ * honest "gateway timed out, safe to retry" answer, not a generic 500/502.
+ * Returns [body, status].
+ */
+function paynowErrorReply(err: PaynowApiError): [{ error: string }, 502 | 504] {
+  if (err.status === 504) {
+    return [{ error: 'PayNow did not respond in time. Please try again shortly.' }, 504];
+  }
+  return [{ error: err.message }, 502];
+}
+
+/**
  * GET /api/store/subscription — the caller's current donor subscription, if any.
  * Reads from our webhook-fed cache first (fast, no PayNow round trip); falls
  * back to a live Storefront API call if we've never seen a webhook for this
@@ -1744,7 +1757,12 @@ api.get('/store/subscription', storeAuth, async (c) => {
   const uuid = c.var.mcUuid!;
 
   const cached = await dbReadOrNull('getCachedSubscription', () => getCachedSubscription(uuid));
-  if (cached && !isSubscriptionCacheStale(cached.updated_at)) {
+  // B-21: allowlist on the CACHED READ too — the webhook previously cached
+  // any product_id verbatim, so a foreign/test product could be served here
+  // as the player's active tier while the live path (isDonorSubscriptionProduct
+  // filter below) said the opposite. An off-catalog cached row is treated as
+  // stale: fall through to PayNow, which both filters and knows the truth.
+  if (cached && isDonorSubscriptionProduct(cached.product_id) && !isSubscriptionCacheStale(cached.updated_at)) {
     return c.json({
       subscriptionId: cached.subscription_id,
       productId: cached.product_id,
@@ -1823,6 +1841,9 @@ api.post('/store/subscription/cancel', storeAuth, async (c) => {
     if (err instanceof PaynowApiError && err.status === 404) {
       return c.json({ error: 'No active subscription found' }, 404);
     }
+    if (err instanceof PaynowApiError && err.status === 504) {
+      return c.json({ error: 'Could not verify your subscription with PayNow. Please try again shortly.' }, 504);
+    }
     logger.error({ err, uuid, subscriptionId }, 'Failed to verify subscription ownership before cancel');
     return c.json({ error: 'Could not verify your subscription with PayNow. Please try again shortly.' }, 502);
   }
@@ -1832,7 +1853,8 @@ api.post('/store/subscription/cancel', storeAuth, async (c) => {
   } catch (err) {
     if (err instanceof PaynowApiError) {
       logger.warn({ err: err.body, status: err.status, uuid, subscriptionId }, 'PayNow subscription cancel failed');
-      return c.json({ error: err.message }, 502);
+      const [body, status] = paynowErrorReply(err);
+      return c.json(body, status);
     }
     logger.error({ err, uuid, subscriptionId }, 'Subscription cancel failed');
     return c.json({ error: 'Cancellation service unavailable. Please try again.' }, 500);
@@ -1935,7 +1957,8 @@ api.post('/store/checkout', storeAuth, async (c) => {
   } catch (err) {
     if (err instanceof PaynowApiError) {
       logger.warn({ err: err.body, status: err.status, uuid }, 'PayNow checkout creation failed');
-      return c.json({ error: err.message }, 502);
+      const [body, status] = paynowErrorReply(err);
+      return c.json(body, status);
     }
     logger.error({ err: err instanceof Error ? err.message : String(err), uuid }, 'Checkout creation failed');
     return c.json({ error: 'Checkout service unavailable. Please try again.' }, 500);
@@ -1966,7 +1989,8 @@ api.post('/store/subscription/preview-change', storeAuth, async (c) => {
     return c.json(result);
   } catch (err) {
     if (err instanceof PaynowApiError) {
-      return c.json({ error: err.message }, 502);
+      const [body, status] = paynowErrorReply(err);
+      return c.json(body, status);
     }
     logger.error({ err, uuid }, 'Tier change preview failed');
     return c.json({ error: 'Failed to preview tier change' }, 500);
@@ -1997,7 +2021,8 @@ api.post('/store/subscription/change', storeAuth, async (c) => {
     return c.json(result);
   } catch (err) {
     if (err instanceof PaynowApiError) {
-      return c.json({ error: err.message }, 502);
+      const [body, status] = paynowErrorReply(err);
+      return c.json(body, status);
     }
     logger.error({ err, uuid }, 'Tier change failed');
     return c.json({ error: 'Failed to change tier' }, 500);
@@ -2070,14 +2095,16 @@ api.post('/store/gift-checkout', storeAuth, async (c) => {
   } catch (err) {
     if (err instanceof PaynowApiError) {
       logger.warn({ err: err.body, status: err.status, buyerUuid, recipientUuid, recipientUsername, productId: body.productId }, 'PayNow gift checkout creation failed');
-      const userFriendly = err.status === 400
+      const userFriendly = err.status === 504
+        ? 'PayNow did not respond in time. Please try again shortly.'
+        : err.status === 400
         ? 'PayNow rejected the checkout request. The product ID may be invalid.'
         : err.status === 401 || err.status === 403
         ? 'PayNow authentication failed. Please contact an administrator.'
         : err.status === 404
         ? 'Product or customer not found in PayNow.'
         : `PayNow error (${err.status}). Please try again or contact support.`;
-      return c.json({ error: userFriendly }, 502);
+      return c.json({ error: userFriendly }, err.status === 504 ? 504 : 502);
     }
     logger.error({ err: err instanceof Error ? { message: err.message, stack: err.stack } : err, buyerUuid, recipientUuid, recipientUsername, productId: body.productId }, 'Gift checkout creation failed (unexpected)');
     return c.json({ error: 'Failed to create gift checkout session. Please try again or contact support with this info.' }, 500);
@@ -2163,7 +2190,8 @@ api.post('/store/cart-checkout', storeAuth, async (c) => {
   } catch (err) {
     if (err instanceof PaynowApiError) {
       logger.warn({ err: err.body, status: err.status, buyerUuid, lineCount: lines.length }, 'PayNow cart checkout creation failed');
-      return c.json({ error: err.message }, 502);
+      const [body, status] = paynowErrorReply(err);
+      return c.json(body, status);
     }
     logger.error({ err, buyerUuid, lineCount: lines.length }, 'Cart checkout creation failed');
     return c.json({ error: 'Failed to create cart checkout session' }, 500);
@@ -2230,6 +2258,14 @@ api.post('/webhooks/paynow', async (c) => {
         const subscriptionId = String(data['id'] ?? '');
         const productId = String(data['product_id'] ?? (data['product'] as { id?: string })?.id ?? '');
         const status = String(data['status'] ?? 'active');
+        // B-21: allowlist at INGEST — the cache previously stored any
+        // product_id verbatim, so a foreign/test product could later be
+        // served as the player's active donor tier. Unknown products are
+        // logged (they indicate a PayNow dashboard drift) and not cached.
+        if (productId && !isDonorSubscriptionProduct(productId)) {
+          logger.warn({ customerId, subscriptionId, productId, eventType }, 'PayNow webhook: product_id outside the donor catalog — subscription NOT cached');
+          break;
+        }
         // B-C28: resolve through fulfillment's helper so a cache miss falls
         // back to PayNow's Management API and caches the link — a raw
         // paynow_customers lookup strands every customer our cache never had.
