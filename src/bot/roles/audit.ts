@@ -79,10 +79,12 @@ export async function runRoleAuditTick(config: CronConfig, now: Date): Promise<A
       changed += 1;
       console.log(
         `[role-audit] ${link.uuid}: +${report.added.length} -${report.removed.length}` +
-          (report.failed.length > 0 ? ` (${report.failed.length} ops failed)` : ''),
+          (report.failed.length > 0 ? ` (${report.failed.length} ops failed)` : '') +
+          // B-41: rate limits are counted, never read as failures ("member left").
+          (report.rateLimited.length > 0 ? ` (${report.rateLimited.length} rate-limited — next night heals)` : ''),
       );
     }
-    if (report && report.failed.length > 0) failed += 1;
+    if (report && (report.failed.length > 0 || report.rateLimited.length > 0)) failed += 1;
   }
 
   await setState('role_audit_cursor', { day: today, lastDiscordId: lastId, done: false });
