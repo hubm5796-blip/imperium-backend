@@ -64,8 +64,20 @@ function kdr(kills = 0, deaths = 0): string {
   return (kills / deaths).toFixed(2);
 }
 
+/**
+ * Premium currencies are PRIVATE for non-self targets (B-44) — the web
+ * contract (publicProfiles) excludes exactly these two; the bot must not
+ * leak them channel-wide via /profile @someone.
+ */
+export const PREMIUM_CURRENCY_KEYS = new Set(['aureus', 'auctoritas']);
+
+export interface EmbedPrivacyOptions {
+  /** false = non-self target: strip Aureus/Auctoritas. Defaults to true. */
+  includePremium?: boolean;
+}
+
 /** Build the rich player profile card (V6 02-02: rank-tinted + avatar + progress bar). */
-export function profileEmbed(data: PlayerProfile): EmbedBuilder {
+export function profileEmbed(data: PlayerProfile, opts: EmbedPrivacyOptions = {}): EmbedBuilder {
   const rank = toRoman(data.rank ?? 0);
   const prestige = data.prestigeLevel ?? 0;
   const rankNum = data.rank ?? 0;
@@ -126,6 +138,12 @@ export function profileEmbed(data: PlayerProfile): EmbedBuilder {
   const color = rankColor(rankNum, prestige);
   const avatar = avatarUrl(data.uuid || data.username);
 
+  // B-44: premium currency fields are stripped for non-self targets.
+  const visible =
+    opts.includePremium === false
+      ? fields.filter((f) => !f.name.includes('Aureus') && !f.name.includes('Auctoritas'))
+      : fields;
+
   return branded(
     new EmbedBuilder()
       .setAuthor({ name: data.username, iconURL: avatar })
@@ -135,19 +153,22 @@ export function profileEmbed(data: PlayerProfile): EmbedBuilder {
           ? `Prestige **${toRoman(prestige)}** citizen of ${BRANDING.serverName}.`
           : `Citizen of ${BRANDING.serverName}.`,
       )
-      .addFields(fields),
+      .addFields(visible),
     color,
   );
 }
 
-/** Compact 4-currency balance card. */
-export function balanceEmbed(data: PlayerProfile): EmbedBuilder {
-  const lines = Object.values(CURRENCIES).map((c) => {
-    const key = c.name.toLowerCase() as keyof typeof CURRENCIES;
-    // PlayerProfile uses the same lowercase keys.
-    const value = (data as unknown as Record<string, number | undefined>)[key] ?? 0;
-    return `${c.emoji} **${c.name}:** ${formatNumber(value)}  *(${c.blurb})*`;
-  });
+/** Compact 4-currency balance card. Premium lines are stripped for
+ * non-self targets (B-44). */
+export function balanceEmbed(data: PlayerProfile, opts: EmbedPrivacyOptions = {}): EmbedBuilder {
+  const lines = Object.values(CURRENCIES)
+    .filter((c) => opts.includePremium !== false || !PREMIUM_CURRENCY_KEYS.has(c.name.toLowerCase()))
+    .map((c) => {
+      const key = c.name.toLowerCase() as keyof typeof CURRENCIES;
+      // PlayerProfile uses the same lowercase keys.
+      const value = (data as unknown as Record<string, number | undefined>)[key] ?? 0;
+      return `${c.emoji} **${c.name}:** ${formatNumber(value)}  *(${c.blurb})*`;
+    });
 
   return chrome(
     new EmbedBuilder()
