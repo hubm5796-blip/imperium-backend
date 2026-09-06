@@ -10,21 +10,27 @@
 // added in a later migration stage) using Discord's HTTP Interactions
 // Endpoint instead.
 
-// CRASH GUARD (2026-08-25): workerd fails a request with a raw 1101 the moment ANY
-// promise rejection goes unhandled — detached Promise.race losers, socket teardown
-// races, anything outside an await chain. preventDefault marks the rejection handled
-// and lets the invocation finish; the individual callers already degrade to their
-// own error JSON, so this only removes the crash class, never hides a real failure.
-addEventListener('unhandledrejection', (event) => {
-  event.preventDefault();
-});
-
 import { initEnvFromBindings } from './env.js';
 import { initPool, initD1 } from './db/pool.js';
 import { initGamePool } from './db/gameMysql.js';
 import { createApp } from './app.js';
 import { setCronBindings } from './bot/cronConfig.js';
 import { runBotCron } from './bot/cron.js';
+import { handleUnhandledRejection } from './utils/unhandledRejection.js';
+
+// CRASH GUARD (2026-08-25): workerd fails a request with a raw 1101 the moment ANY
+// promise rejection goes unhandled — detached Promise.race losers, socket teardown
+// races, anything outside an await chain. preventDefault marks the rejection handled
+// and lets the invocation finish; the individual callers already degrade to their
+// own error JSON, so this only removes the crash class, never hides a real failure.
+//
+// GLM-5: the guard used to do that in TOTAL SILENCE — a rejection was swallowed
+// with no log and no alert, making background failures invisible. The handler now
+// logs structured console.error (wrangler tail / dashboard Logs) and reports
+// through the rate-capped staff-alert pipeline BEFORE marking the event handled.
+addEventListener('unhandledrejection', (event) => {
+  handleUnhandledRejection(event.reason, () => event.preventDefault());
+});
 
 /**
  * The exact set of bindings this Worker needs, wired in wrangler.jsonc

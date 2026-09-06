@@ -23,6 +23,13 @@
 // code paths that never call a Redis function. Deferring to call time means
 // local Node dev still boots — it just can't reach Redis (only `wrangler
 // dev`, running on the real Workers runtime, can).
+import { readWithDeadline } from './readDeadline.js';
+
+/** GLM-4: hard per-read deadline for RESP2 reads — AUTH/SUBSCRIBE confirmations
+ *  and reply bodies used to hang forever on a silently-dropped TLS connection;
+ *  only the subscribe-wait loop had any bound. */
+const SOCKET_READ_TIMEOUT_MS = 5_000;
+
 async function getConnect(): Promise<typeof import('cloudflare:sockets').connect> {
   const mod = await import('cloudflare:sockets');
   return mod.connect;
@@ -79,7 +86,11 @@ class ChunkReader {
   }
 
   private async fill(): Promise<boolean> {
-    const { value, done } = await this.reader.read();
+    const { value, done } = await readWithDeadline(
+      this.reader.read(),
+      SOCKET_READ_TIMEOUT_MS,
+      'redis-socket',
+    );
     if (done || !value) return false;
     const merged = new Uint8Array(this.buffer.length + value.length);
     merged.set(this.buffer, 0);

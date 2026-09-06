@@ -23,6 +23,13 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { readWithDeadline } from './readDeadline.js';
+
+/** GLM-4: hard per-read deadline for the wire protocol — a stalled birdflop
+ *  read fails fast (and the caller degrades) instead of hanging the
+ *  invocation until workerd kills it. Generous vs the finding's 5s because
+ *  leaderboard JOINs can legitimately be slow; still bounded. */
+const SOCKET_READ_TIMEOUT_MS = 8_000;
 
 export interface WireConfig {
   host: string;
@@ -41,7 +48,11 @@ class WireStream {
     this.reader = socket.readable.getReader();
   }
   private async fill(): Promise<boolean> {
-    const { done, value } = await this.reader.read();
+    const { done, value } = await readWithDeadline(
+      this.reader.read(),
+      SOCKET_READ_TIMEOUT_MS,
+      'mysql-wire',
+    );
     if (done || !value) return false;
     const merged = new Uint8Array(this.buf.length + value.length);
     merged.set(this.buf);
