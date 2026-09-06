@@ -446,3 +446,67 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
      return c.redirect(`${frontendUrl()}/login?error=state_mismatch`, 302);
      ```
 
+---
+
+### COMPLAINT 22: Unhandled RangeError in Bridge TimingSafeEqual Crashes `/bridge/send`
+* **Severity:** HIGH
+* **Category:** API Stability / Discord Bridge / Crash Vector
+* **Location:** `src/bot/bridge.ts:169-174`
+* **The Problem:**
+   1. In `src/bot/bridge.ts:169-174`:
+      ```typescript
+      bridgeApi.post('/send', async (c) => {
+        const secret = env.bridgeSecret;
+        const bearer = (c.req.header('authorization') ?? '').replace(/^Bearer\s+/i, '');
+        if (!secret || !bearer || !timingSafeEqual(Buffer.from(bearer), Buffer.from(secret))) {
+          return c.json({ error: 'Unauthorized' }, 401);
+        }
+      ```
+   2. In Node.js, `crypto.timingSafeEqual(a, b)` requires that `a.length === b.length`. If the buffer lengths differ, it throws:
+      `RangeError: Input buffers must have the same byte length`.
+   3. Because there is no length check and no try/catch block, any request where the Authorization header length does not match `env.bridgeSecret` length throws an uncaught exception, resulting in an unhandled 500 Internal Server Error rather than returning 401 Unauthorized.
+   4. This breaks automated health checkers, monitoring tools, or probes that send generic test tokens.
+* **Remediation Action:**
+   1. Implement a timing-safe comparison helper with length equality validation (mirroring `voteKeyMatches` in `webshop.ts`):
+      ```typescript
+      const a = Buffer.from(bearer);
+      const b = Buffer.from(secret);
+      if (a.length !== b.length || !timingSafeEqual(a, b)) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      ```
+
+---
+
+### COMPLAINT 23: PayNow Webhook Customer Desync & Missing API Lookup Fallback
+* **Severity:** HIGH
+* **Category:** Payment Fulfillment / Webhook Reliability / Data Desynchronization
+* **Location:** `src/api/routes.ts:2129-2136`, `src/db/pool.ts:265-279`
+* **The Problem:**
+   1. When PayNow receives a subscription renewal or activation event (`OnSubscriptionActivated`, `OnSubscriptionRenewed`), it invokes the webhook `POST /api/webhooks/paynow`.
+   2. The webhook looks up the player UUID using:
+      ```typescript
+      const uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
+      ```
+   3. `getUuidByPaynowCustomerId` only checks local tables (`paynow_customers` and `discord_links`).
+   4. If a user purchased directly on PayNow's web storefront, or if a previous cache write failed (`dbWriteBestEffort`), `getUuidByPaynowCustomerId(customerId)` returns `null`.
+   5. The code logs `PayNow webhook: customer could not be resolved to a uuid — subscription cache NOT updated` and permanently aborts without retrying or fetching the customer details.
+   6. PayNow's Management API (`GET /v1/stores/${env.paynow.storeId}/customers/${customerId}`) returns the customer record containing `minecraft_uuid` (which PayNow stores for every customer). The backend fails to use this available fallback!
+   7. As a result, the player's paid subscription status is never recorded, their in-game perks are not granted, and their web dashboard shows no active rank.
+* **Remediation Action:**
+   1. In `src/api/routes.ts`, if `getUuidByPaynowCustomerId(customerId)` returns null, perform an API lookup to PayNow:
+      ```typescript
+      let uuid = customerId ? await getUuidByPaynowCustomerId(customerId) : null;
+      if (!uuid && customerId) {
+        try {
+          const customer = await managementRequest<{ minecraft_uuid?: string }>(`/v1/stores/${env.paynow.storeId}/customers/${customerId}`);
+          if (customer?.minecraft_uuid) {
+            uuid = customer.minecraft_uuid;
+            await setPaynowCustomerId(uuid, customerId);
+          }
+        } catch (e) {
+          logger.warn({ err: e, customerId }, 'Failed to resolve customer from PayNow API');
+        }
+      }
+      ```
+   2. Proceed with `upsertCachedSubscription(uuid, subscriptionId, productId, status)` once resolved.
