@@ -24,7 +24,7 @@ import {
   resolveStaffActor,
   staffActorHasRole,
 } from '../middleware/gates.js';
-import { authRateLimit, globalRateLimit, rateLimit } from '../middleware/rateLimit.js';
+import { authRateLimit, globalRateLimit, rateLimit, writeRateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
   deleteDiscordLinkByUuid,
@@ -2872,8 +2872,11 @@ api.post('/refcode/custom', requireMcIdentity, async (c) => {
  * shared X-Bot-Token OR an HMAC-SHA256 signature over the raw body using the same
  * webpanel secret the plugin and backend already share — no new secret to provision.
  * Every accepted report fans out through alertError (staff webhook + owner DM).
+ * B-38 route half (2026-09-06): writeRateLimit caps the fan-out trigger itself — the sink-side
+ * sanitization/ceilings landed with the alertAlerts hardening; this stops a flood of accepted
+ * reports before the staff-ping path is ever reached.
  */
-api.post('/errors/report', async (c) => {
+api.post('/errors/report', writeRateLimit, async (c) => {
   const raw = await c.req.text();
 
   const token = c.req.header('X-Bot-Token');
