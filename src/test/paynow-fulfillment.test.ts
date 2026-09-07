@@ -381,6 +381,87 @@ describe('fulfillPaynowOrder', () => {
     expect(result.dispatched).toBe(1);
     expect(result.skippedUnknownProduct).toBe(1);
   });
+
+  /* B-57: the claim key was productId:quantity:targetUuid with no line index,
+   * so two identical cart lines collided — the second claim saw changes=0,
+   * reported skippedDuplicate, and the paid line was NEVER dispatched. Both
+   * halves must hold: each identical line claims its own key AND carries a
+   * distinct transaction_id (the plugin's PurchaseRegistry dedupes on
+   * transaction_id alone and would swallow the second line otherwise). */
+  it('B-57: an order with TWO IDENTICAL lines dispatches BOTH, with the quantity each paid for', async () => {
+    sendCommandWithResponseMock.mockResolvedValue(okResponse());
+    const result = await fulfillPaynowOrder(aureusOrder({
+      lines: [
+        { id: 'l1', product_id: AUREUS_50, quantity: 2 },
+        { id: 'l2', product_id: AUREUS_50, quantity: 2 },
+      ],
+    }));
+    expect(result.status).toBe('ok');
+    expect(result.dispatched).toBe(2);
+    expect(result.skippedDuplicate).toBe(0);
+    expect(sendCommandWithResponseMock).toHaveBeenCalledTimes(2);
+
+    const first = sendCommandWithResponseMock.mock.calls[0]!;
+    const second = sendCommandWithResponseMock.mock.calls[1]!;
+    expect(first[1]).toMatchObject({ amount: 11200, transaction_id: 'ord_test' });          // 2x 5,600
+    expect(second[1]).toMatchObject({ amount: 11200, transaction_id: 'ord_test:L1' });      // distinct tx id
+    expect(second[1]!.order_id).toBe('ord_test');
+  });
+
+  it('B-57: line 0 keeps the bare order id as transaction_id (registry-compat with already-dispatched single-line orders)', async () => {
+    sendCommandWithResponseMock.mockResolvedValue(okResponse());
+    await fulfillPaynowOrder(aureusOrder({
+      lines: [
+        { product_id: AUREUS_50, quantity: 1 },
+        { product_id: LIFETIME_PEREGRINUS, quantity: 1 },
+        { product_id: AUREUS_50, quantity: 1 },
+      ],
+    }));
+    const txIds = sendCommandWithResponseMock.mock.calls.map(([, payload]) => (payload as { transaction_id: string }).transaction_id);
+    expect(txIds).toEqual(['ord_test', 'ord_test:L1', 'ord_test:L2']);
+  });
+
+  it('B-57: a RETRY of a duplicate-line order does not re-dispatch either line', async () => {
+    sendCommandWithResponseMock.mockResolvedValue(okResponse());
+    const body = aureusOrder({
+      lines: [
+        { product_id: AUREUS_50, quantity: 1 },
+        { product_id: AUREUS_50, quantity: 1 },
+      ],
+    });
+    await fulfillPaynowOrder(body);
+    const retry = await fulfillPaynowOrder(body);
+    expect(retry.status).toBe('ok');
+    expect(retry.dispatched).toBe(0);
+    expect(retry.skippedDuplicate).toBe(2);
+    expect(sendCommandWithResponseMock).toHaveBeenCalledTimes(2); // only the first delivery dispatched
+  });
+
+  it('B-57: a dispatch failure on one of two identical lines releases ONLY that line\'s claim', async () => {
+    // First line delivers, second fails — the retry must re-attempt the failed
+    // line only (index-keyed claims make the two lines independent).
+    sendCommandWithResponseMock
+      .mockResolvedValueOnce(okResponse())
+      .mockRejectedValueOnce(new Error('plugin hiccup'));
+    const failed = await fulfillPaynowOrder(aureusOrder({
+      lines: [
+        { product_id: AUREUS_50, quantity: 1 },
+        { product_id: AUREUS_50, quantity: 1 },
+      ],
+    }));
+    expect(failed.status).toBe('error');
+
+    sendCommandWithResponseMock.mockResolvedValue(okResponse());
+    const retry = await fulfillPaynowOrder(aureusOrder({
+      lines: [
+        { product_id: AUREUS_50, quantity: 1 },
+        { product_id: AUREUS_50, quantity: 1 },
+      ],
+    }));
+    expect(retry.status).toBe('ok');
+    expect(retry.dispatched).toBe(1);          // only the failed line re-dispatches
+    expect(retry.skippedDuplicate).toBe(1);    // the delivered line stays claimed
+  });
 });
 
 /* ── layer 3: the signed webhook route end-to-end ─────────────────────────── */
