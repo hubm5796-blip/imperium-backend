@@ -136,17 +136,68 @@ export const RANK_UPGRADES: readonly RankUpgradeProduct[] = Object.freeze([
 const AUREUS_PACK_PRODUCT_IDS = new Set(AUREUS_PACKS.map((p) => p.paynowProductId));
 const RANK_UPGRADE_PRODUCT_IDS = new Set(RANK_UPGRADES.map((u) => u.paynowProductId));
 
+/* ── B-C30/B-C33: consumable catalogs (crate keys, boosters) ──────────────
+ * The dispatch MECHANISM for both is live end-to-end (fulfillment.ts maps
+ * them to STORE_PURCHASE_CRATE_KEY / STORE_PURCHASE_BOOSTER and this file's
+ * ids feed isOneTimeStoreProduct, so checkout accepts them the moment they
+ * exist). The PayNow product ids themselves are OWNER DATA: no crate-key or
+ * booster products have been created in the PayNow dashboard yet, so both
+ * catalogs ship EMPTY. Populating them is one entry per product — created in
+ * PayNow first, then the id pasted here (same discipline as AUREUS_PACKS,
+ * which must also stay in sync with the frontend's gamedata.ts). */
+
+/** A real-money crate-key bundle (one-time). */
+export interface CrateKeyPackProduct {
+  paynowProductId: string;
+  priceUsd: number;
+  /** In-game crate id the keys open (e.g. 'vote', 'plebeia'). */
+  crateId: string;
+  /** Keys in one bundle (multiplied by the order-line quantity at dispatch). */
+  keyAmount: number;
+}
+
+/** OWNER DATA (B-C30): empty until crate-key products exist in PayNow. */
+export const CRATE_KEY_PACKS: readonly CrateKeyPackProduct[] = Object.freeze([
+  // e.g. { paynowProductId: '<id-from-paynow-dashboard>', priceUsd: 5, crateId: 'vote', keyAmount: 5 },
+]);
+
+/** A real-money booster pack (one-time). */
+export interface BoosterPackProduct {
+  paynowProductId: string;
+  priceUsd: number;
+  /**
+   * In-game booster id. Must be a BoosterType enum name from the plugin's
+   * economy/BoosterTypes.kt (SELL_MULTIPLIER, XP_MULTIPLIER, TOKEN_MULTIPLIER,
+   * MINE_SPEED, LUCK, MONEY_RAIN) — the plugin parses case-insensitively and
+   * rejects unknown values.
+   */
+  boosterId: string;
+  /** Booster units in one pack (multiplied by the order-line quantity at dispatch). */
+  boosterAmount: number;
+}
+
+/** OWNER DATA (B-C33): empty until booster products exist in PayNow. */
+export const BOOSTER_PACKS: readonly BoosterPackProduct[] = Object.freeze([
+  // e.g. { paynowProductId: '<id-from-paynow-dashboard>', priceUsd: 3, boosterId: 'SELL_MULTIPLIER', boosterAmount: 1 },
+]);
+
+const CRATE_KEY_PACK_PRODUCT_IDS = new Set(CRATE_KEY_PACKS.map((p) => p.paynowProductId));
+const BOOSTER_PACK_PRODUCT_IDS = new Set(BOOSTER_PACKS.map((p) => p.paynowProductId));
+
 /**
  * True for ANY product that can appear as a non-subscription line in a checkout:
- * lifetime donor ranks, rank upgrades, or Aureus packs. This is the cart's
- * one-time validation set — `isLifetimeProduct` deliberately stays narrower
- * because gifting is restricted to lifetime rank products only.
+ * lifetime donor ranks, rank upgrades, Aureus packs, crate-key bundles (B-C30),
+ * or booster packs (B-C33). This is the cart's one-time validation set —
+ * `isLifetimeProduct` deliberately stays narrower because gifting is
+ * restricted to lifetime rank products only.
  */
 export function isOneTimeStoreProduct(productId: string): boolean {
   return (
     LIFETIME_PRODUCT_IDS.has(productId) ||
     AUREUS_PACK_PRODUCT_IDS.has(productId) ||
-    RANK_UPGRADE_PRODUCT_IDS.has(productId)
+    RANK_UPGRADE_PRODUCT_IDS.has(productId) ||
+    CRATE_KEY_PACK_PRODUCT_IDS.has(productId) ||
+    BOOSTER_PACK_PRODUCT_IDS.has(productId)
   );
 }
 
@@ -158,4 +209,14 @@ export function findAureusPack(productId: string): AureusPackProduct | null {
 /** Look up a rank upgrade's metadata by its PayNow product id. */
 export function findRankUpgrade(productId: string): RankUpgradeProduct | null {
   return RANK_UPGRADES.find((u) => u.paynowProductId === productId) ?? null;
+}
+
+/** Look up a crate-key bundle's metadata by its PayNow product id (B-C30). */
+export function findCrateKeyPack(productId: string): CrateKeyPackProduct | null {
+  return CRATE_KEY_PACKS.find((p) => p.paynowProductId === productId) ?? null;
+}
+
+/** Look up a booster pack's metadata by its PayNow product id (B-C33). */
+export function findBoosterPack(productId: string): BoosterPackProduct | null {
+  return BOOSTER_PACKS.find((p) => p.paynowProductId === productId) ?? null;
 }

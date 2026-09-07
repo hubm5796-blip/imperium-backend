@@ -11,6 +11,7 @@
  *   Lifetime rank          → STORE_PURCHASE_RANK     { player_uuid, tier, subscription: 'PERMANENT', order_id, transaction_id }
  *   Rank upgrade           → STORE_PURCHASE_RANK     (same shape; tier = upgrade target)
  *   Crate-key bundle       → STORE_PURCHASE_CRATE_KEY{ player_uuid, crate_id, quantity, order_id, transaction_id }
+ *   Booster pack (B-C33)   → STORE_PURCHASE_BOOSTER  { player_uuid, booster_id, quantity, order_id, transaction_id }
  *
  * Reliability model (each layer makes the next one cheap):
  *   1. D1 insert-or-ignore per (order_id, line_key) — webhook retries (and our
@@ -26,15 +27,19 @@
  *      retries until the plugin is reachable — a fire-and-forget PUBLISH would
  *      silently lose the order whenever the game server is down.
  *
- * The crate-key branch is fully implemented but has no PayNow products mapped
- * yet (crate keys are currently sold for Denarius in-game); adding a bundle is
- * one entry in CRATE_KEY_PRODUCTS.
+ * The crate-key and booster branches are fully implemented end-to-end but
+ * their PayNow catalogs are OWNER DATA and ship empty (B-C30/B-C33): the
+ * products must be created in the PayNow dashboard first, then one entry per
+ * product in CRATE_KEY_PACKS / BOOSTER_PACKS (constants.ts) lights up
+ * checkout validation AND this dispatch with no further code.
  */
 import { getD1, getUuidByPaynowCustomerId, setPaynowCustomerId } from '../db/pool.js';
 import { sendCommandWithResponse } from '../db/redis.js';
 import { getPaynowCustomer } from './client.js';
 import {
   findAureusPack,
+  findBoosterPack,
+  findCrateKeyPack,
   findRankUpgrade,
   findTierByLifetimeProductId,
 } from './constants.js';
@@ -118,13 +123,11 @@ export function parsePaynowOrder(body: Record<string, unknown>): ParsedOrder | n
 
 /* ── product → dispatch mapping ───────────────────────────────────────────── */
 
-/** Crate-key bundles sold via PayNow. None exist yet — one entry adds one product. */
-export const CRATE_KEY_PRODUCTS: ReadonlyMap<string, { crateId: string; keyAmount: number }> = new Map([]);
-
 export type ResolvedStoreDispatch =
   | { kind: 'aureus'; amount: number; packName: string }
   | { kind: 'rank'; tier: string }
-  | { kind: 'crate_key'; crateId: string; keyAmount: number };
+  | { kind: 'crate_key'; crateId: string; keyAmount: number }
+  | { kind: 'booster'; boosterId: string; boosterAmount: number };
 
 /** Map a PayNow product id to the in-game delivery it must trigger, or null if unknown. */
 export function resolveStoreDispatch(productId: string): ResolvedStoreDispatch | null {
@@ -137,8 +140,11 @@ export function resolveStoreDispatch(productId: string): ResolvedStoreDispatch |
   const lifetimeTier = findTierByLifetimeProductId(productId);
   if (lifetimeTier) return { kind: 'rank', tier: lifetimeTier.id.toUpperCase() };
 
-  const crate = CRATE_KEY_PRODUCTS.get(productId);
+  const crate = findCrateKeyPack(productId);
   if (crate) return { kind: 'crate_key', crateId: crate.crateId, keyAmount: crate.keyAmount };
+
+  const booster = findBoosterPack(productId);
+  if (booster) return { kind: 'booster', boosterId: booster.boosterId, boosterAmount: booster.boosterAmount };
 
   return null;
 }
@@ -148,8 +154,9 @@ export function resolveStoreDispatch(productId: string): ResolvedStoreDispatch |
  * WebPanelCommandHandler contract.
  *
  * B-C26: `quantity` is the ORDER LINE quantity and multiplies stackable goods
- * — Aureus packs credit `amount * quantity` and crate-key bundles deliver
- * `keyAmount * quantity` keys. Rank grants are NOT stackable (rank 3x is still
+ * — Aureus packs credit `amount * quantity`, crate-key bundles deliver
+ * `keyAmount * quantity` keys, and booster packs deliver `boosterAmount *
+ * quantity` units (B-C33). Rank grants are NOT stackable (rank 3x is still
  * one rank), so the rank branch deliberately ignores it. Default 1 keeps direct
  * callers (single-unit paths) unchanged.
  *
@@ -187,6 +194,15 @@ export function buildStoreDispatchCommand(
       return {
         type: 'STORE_PURCHASE_CRATE_KEY',
         payload: { player_uuid: playerUuid, crate_id: resolved.crateId, quantity: resolved.keyAmount * qty, order_id: orderId, transaction_id },
+      };
+    case 'booster':
+      // B-C33: same stackable-goods semantics as crate keys — one pack carries
+      // boosterAmount units and the order-line quantity multiplies them. The
+      // plugin's handler validates booster_id against its BoosterType enum
+      // (case-insensitive) and queues via PendingGrantService for offline buyers.
+      return {
+        type: 'STORE_PURCHASE_BOOSTER',
+        payload: { player_uuid: playerUuid, booster_id: resolved.boosterId, quantity: resolved.boosterAmount * qty, order_id: orderId, transaction_id },
       };
   }
 }
