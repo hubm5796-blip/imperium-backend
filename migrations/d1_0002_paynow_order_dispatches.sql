@@ -4,7 +4,9 @@
 -- same as paynow_subscriptions.
 --
 -- One row per (order_id, line_key) where line_key is
--- '<productId>:<quantity>:<recipientUuid>' -- stable across webhook retries.
+-- '<lineIndex>:<productId>:<quantity>:<recipientUuid>' -- the line INDEX keeps
+-- two identical cart lines from colliding on one key (B-57). Stable across
+-- webhook retries (the payload's line order is stable per delivery).
 -- ON CONFLICT DO NOTHING + meta.changes is the insert-or-ignore claim: the
 -- first delivery of a line inserts (changes=1, dispatch proceeds); PayNow
 -- webhook retries hit the conflict (changes=0, dispatch skipped).

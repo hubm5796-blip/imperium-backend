@@ -257,6 +257,52 @@ export interface PaynowSubscription {
   [key: string]: unknown;
 }
 
+/** A single line of an order, per the Management API's list-orders response. */
+export interface PaynowOrderLineDto {
+  product_id?: string;
+  product_name?: string | null;
+  quantity?: number;
+  [key: string]: unknown;
+}
+
+/** An order, as returned by the Management API's list-orders endpoint. */
+export interface PaynowOrderDto {
+  id: string;
+  /** Human-facing "pn-…" identifier. */
+  pretty_id?: string | null;
+  /** created | completed | canceled | refunded | chargeback. */
+  status?: string;
+  /** one_time | subscription_initial | subscription_renewal | subscription_proration | mixed. */
+  type?: string;
+  created_at?: string | null;
+  completed_at?: string | null;
+  /** Integer in the smallest currency unit. */
+  total_amount?: number | null;
+  lines?: PaynowOrderLineDto[] | null;
+  [key: string]: unknown;
+}
+
+/**
+ * List one customer's orders, newest first (Management API). bC10: the order-
+ * history surfaces call this so real-money purchases appear next to web-shop
+ * ones instead of vanishing after checkout. Deadline-bounded (4s) like
+ * getPaynowCustomer — a stalled PayNow must not hang a dashboard page render.
+ */
+export async function listCustomerOrders(
+  customerId: string,
+  limit: number = 20,
+): Promise<PaynowOrderDto[]> {
+  const params = new URLSearchParams({
+    customer_id: customerId,
+    limit: String(Math.min(100, Math.max(1, Math.floor(limit) || 1))),
+    asc: 'false',
+  });
+  return managementRequest<PaynowOrderDto[]>(
+    `/v1/stores/${env.paynow.storeId}/orders?${params.toString()}`,
+    { signal: AbortSignal.timeout(4000) },
+  );
+}
+
 /**
  * Cancel a subscription. PayNow's customer-token self-cancel endpoint exists
  * on the Storefront API but is Steam-only per their docs — not available for

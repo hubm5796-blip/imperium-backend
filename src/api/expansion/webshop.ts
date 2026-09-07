@@ -16,6 +16,7 @@ import { botTokenMatches, requireAuth, requireLinked } from '../../middleware/au
 import { readRateLimit, shopWriteRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
 import { getNameByUuid, query } from '../../db/pool.js';
 import { logger } from '../../utils/logger.js';
+import { getPaynowOrdersForUuid } from '../../paynow/history.js';
 import { swrJson } from './cache.js';
 import { SHOP_CATALOG, findShopItem } from './shopCatalog.js';
 import { enqueueWebQueue } from './webqueue.js';
@@ -154,11 +155,17 @@ webshopApi.post('/shop/order', requireAuth, requireLinked, shopWriteRateLimit, z
 });
 
 /**
- * GET /api/shop/orders?uuid=&limit= — order history for one player: their
- * web_queue rows with kind='shop_order', newest first (12b companion read;
- * the queue id doubles as the receipt). Auth: a linked session may read its
- * OWN orders (uuid omitted or matching); the bot token may target any uuid
- * (the frontend's server-side proxy path). No cache — personal data.
+ * GET /api/shop/orders?uuid=&limit= — order history for one player, newest
+* first (12b companion read; the queue id doubles as the receipt). Auth: a
+ * linked session may read its OWN orders (uuid omitted or matching); the bot
+ * token may target any uuid (the frontend's server-side proxy path). No
+ * cache — personal data.
+ *
+ * bC10: the history is UNIFIED — web_queue rows (Denarius web shop) are
+ * merged with the player's PayNow order history (Management API list +
+ * dispatch-ledger delivery evidence, see paynow/history.ts) so real-money
+ * purchases stop vanishing after checkout. PayNow enrichment degrades to
+ * "web rows only" on any upstream failure; it can never fail the page.
  */
 webshopApi.get('/shop/orders', readRateLimit, async (c) => {
   const queryUuid = c.req.query('uuid') ?? '';
@@ -205,7 +212,7 @@ webshopApi.get('/shop/orders', readRateLimit, async (c) => {
       [uuid, limit],
     );
 
-    const orders = result.rows.map((row) => {
+    const webOrders = result.rows.map((row) => {
       // totalPrice lives in the (unsigned) payload; the catalog is the
       // signed source of truth, so re-derive when the payload is absent.
       const payloadTotal = Number(row.payload?.totalPrice);
@@ -215,6 +222,7 @@ webshopApi.get('/shop/orders', readRateLimit, async (c) => {
           ? payloadTotal
           : (catalogItem ? catalogItem.price * row.quantity : 0);
       return {
+        kind: 'web_shop' as const,
         id: String(row.id),
         requestId: row.request_id,
         sku: row.sku ?? '',
@@ -222,10 +230,18 @@ webshopApi.get('/shop/orders', readRateLimit, async (c) => {
         totalPrice,
         currency: 'denarius',
         status: row.status,
-        createdAt: row.created_at,
-        processedAt: row.processed_at,
+        createdAt: new Date(row.created_at).toISOString(),
+        processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : null,
       };
     });
+
+    // bC10: PayNow history in parallel with nothing else to wait on; the
+    // helper never throws and logs its own degradation.
+    const paynowOrders = await getPaynowOrdersForUuid(uuid, limit).catch(() => []);
+
+    const orders = [...webOrders, ...paynowOrders]
+      .sort((a, b) => Date.parse(b.createdAt ?? '') - Date.parse(a.createdAt ?? ''))
+      .slice(0, limit);
 
     return c.json({ uuid, orders }, 200, { 'Cache-Control': 'private, no-store' });
   } catch (err) {
