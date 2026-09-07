@@ -14,9 +14,14 @@
  *
  * Reliability model (each layer makes the next one cheap):
  *   1. D1 insert-or-ignore per (order_id, line_key) — webhook retries (and our
- *      own re-deliveries) never re-dispatch a line that already went out.
+ *      own re-deliveries) never re-dispatch a line that already went out. The
+ *      line_key carries the LINE INDEX (B-57) so two identical cart lines each
+ *      claim their own key instead of colliding.
  *   2. The plugin's PurchaseRegistry dedupes on transaction_id — even a row
- *      lost before dispatch can't double-credit when it retries.
+ *      lost before dispatch can't double-credit when it retries. Because that
+ *      registry keys on transaction_id ALONE, every line beyond the first also
+ *      carries a per-line suffix ("orderId:L1", …) so identical lines aren't
+ *      swallowed as duplicates plugin-side (the other half of B-57).
  *   3. Dispatch failures surface as HTTP 500 from the webhook so PayNow
  *      retries until the plugin is reachable — a fire-and-forget PUBLISH would
  *      silently lose the order whenever the game server is down.
@@ -147,20 +152,26 @@ export function resolveStoreDispatch(productId: string): ResolvedStoreDispatch |
  * `keyAmount * quantity` keys. Rank grants are NOT stackable (rank 3x is still
  * one rank), so the rank branch deliberately ignores it. Default 1 keeps direct
  * callers (single-unit paths) unchanged.
+ *
+ * B-57: `transactionId` defaults to the order id (PayNow's order webhook has
+ * no separate payment id, and it is unique per purchase which is what the
+ * plugin's registry dedupe needs). Callers dispatching a MULTI-line order must
+ * pass a per-line id ("orderId:L1", …): the plugin's PurchaseRegistry dedupes
+ * on transaction_id ALONE, so two identical lines sharing the order id would
+ * have the second swallowed as a duplicate. Line 0 keeps the bare order id so
+ * retries of already-dispatched single-line orders stay dedupe-compatible.
  */
 export function buildStoreDispatchCommand(
   resolved: ResolvedStoreDispatch,
   playerUuid: string,
   orderId: string,
   quantity: number = 1,
+  transactionId?: string,
 ): { type: string; payload: Record<string, unknown> } {
-  // The order id doubles as the transaction id — PayNow's order webhook has no
-  // separate payment id, and it is unique per purchase which is what the
-  // plugin's registry dedupe needs.
-  const transaction_id = orderId;
   // parsePaynowOrder clamps line quantity to 1..99; clamp again so direct
   // callers can't zero-out or inflate a delivery.
   const qty = Math.max(1, Math.min(99, Math.floor(quantity)));
+  const transaction_id = transactionId ?? orderId;
   switch (resolved.kind) {
     case 'aureus':
       return {
@@ -304,7 +315,7 @@ export async function fulfillPaynowOrder(body: Record<string, unknown>): Promise
   const failures: string[] = [];
 
   await Promise.all(
-    order.lines.map(async (line) => {
+    order.lines.map(async (line, lineIndex) => {
       const resolved = resolveStoreDispatch(line.productId);
       if (!resolved) {
         // Unknown product: never block the rest of the order — log and move on.
@@ -326,8 +337,17 @@ export async function fulfillPaynowOrder(body: Record<string, unknown>): Promise
 
       // B-C26: pass the line quantity so multi-pack/multi-bundle buyers get
       // amount/keys multiplied by what they paid for.
-      const command = buildStoreDispatchCommand(resolved, targetUuid, order.orderId, line.quantity);
-      const lineKey = `${line.productId}:${line.quantity}:${targetUuid}`;
+      //
+      // B-57: the claim key carries the line INDEX — two identical cart lines
+      // (same product, quantity, target) used to collide on one key, so the
+      // second was skippedDuplicate and never dispatched. And because the
+      // plugin's PurchaseRegistry dedupes on transaction_id alone, lines past
+      // the first get a ":L<index>" transaction id so they aren't swallowed
+      // plugin-side either. Line 0 keeps the bare order id so retries of
+      // already-dispatched single-line orders stay registry-compatible.
+      const transactionId = lineIndex === 0 ? order.orderId : `${order.orderId}:L${lineIndex}`;
+      const command = buildStoreDispatchCommand(resolved, targetUuid, order.orderId, line.quantity, transactionId);
+      const lineKey = `${lineIndex}:${line.productId}:${line.quantity}:${targetUuid}`;
       if (!(await claimOrderLine(order.orderId, lineKey, command.type))) {
         skippedDuplicate++;
         return;
