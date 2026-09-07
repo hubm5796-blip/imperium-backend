@@ -2280,6 +2280,16 @@ api.post('/webhooks/paynow', async (c) => {
         if (result.status === 'error') {
           return c.json({ error: 'Order fulfillment failed', detail: result.error }, 500);
         }
+        if (result.status === 'empty_order') {
+          // B-59: an order with no lines is a test ping or a malformed
+          // OrderDTO. Still 200 — a genuinely-empty test ping must not start
+          // a PayNow retry storm over a payload that will never change — but
+          // the body is explicitly NOT dispatched-ok and staff are alerted,
+          // so a real order whose lines we failed to parse surfaces instead
+          // of silently passing as delivered.
+          alertError('paynow-empty-order', result.error ?? 'PayNow order with no lines');
+          return c.json({ ok: false, flagged: 'empty_order', detail: result.error }, 200);
+        }
         break;
       }
       case 'subscription_activated':
