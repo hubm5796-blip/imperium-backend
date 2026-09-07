@@ -1441,6 +1441,10 @@ api.get('/server/features', (c) => {
 
 /* -------------------------------------------------------------- Linking */
 
+/** B-C31: bounded wait for the plugin's CONFIRM_DISCORD_LINK ack — a dead
+ * plugin must not hang the bot's /link confirm (the link still succeeds). */
+const DISCORD_LINK_REWARD_TIMEOUT_MS = 5_000;
+
 /** POST /api/link/initiate — generate a 6-char code stored in Redis (10 min TTL). */
 api.post('/link/initiate', requireAuth, async (c) => {
   const user = c.var.user!;
@@ -1538,7 +1542,39 @@ api.post('/link/confirm', async (c) => {
   }
 
   try {
-    await upsertDiscordLink(record.uuid, discordId);
+    // B-C31: the upsert's inserted-vs-updated signal (RETURNING xmax = 0) is
+    // the FIRST-link test. Only a fresh row dispatches CONFIRM_DISCORD_LINK —
+    // the plugin's handler grants the first-link reward (25,000 Denarius +
+    // 1 Crate Key) and is expected to keep its own once-per-player grant
+    // ledger. Re-links (same Discord re-confirmed, or a re-link after unlink)
+    // never re-trigger the reward from this route.
+    const firstLink = await upsertDiscordLink(record.uuid, discordId);
+    let rewardDispatched = false;
+    if (firstLink) {
+      try {
+        const response = await sendCommandWithResponse(
+          'CONFIRM_DISCORD_LINK',
+          { player_uuid: record.uuid, discord_id: discordId },
+          DISCORD_LINK_REWARD_TIMEOUT_MS,
+        );
+        rewardDispatched = response.ok;
+        if (!response.ok) {
+          logger.warn(
+            { uuid: record.uuid, status: response.status, error: response.error },
+            'CONFIRM_DISCORD_LINK rejected by plugin — link persisted, first-link reward NOT granted',
+          );
+        }
+      } catch (err) {
+        // The link itself is already persisted — a dispatch failure (plugin
+        // down / handler not yet deployed) must NOT fail the confirm: the code
+        // was single-use-consumed, so a bot retry would 404 and the player
+        // would be told an error for a link that actually succeeded.
+        logger.warn(
+          { uuid: record.uuid, err: String(err) },
+          'CONFIRM_DISCORD_LINK dispatch failed — link persisted, first-link reward NOT granted',
+        );
+      }
+    }
     // Resolve the Minecraft username so the bot can show "linked to <name>"
     // instead of "linked to undefined". Falls back to the UUID if the player
     // hasn't joined since the player_names registry was introduced.
@@ -1548,7 +1584,14 @@ api.post('/link/confirm', async (c) => {
     } catch {
       // player_names table missing or PG hiccup — degrade to the uuid.
     }
-    return c.json({ ok: true, linked: true, discordId, uuid: record.uuid, username: username ?? record.uuid });
+    return c.json({
+      ok: true,
+      linked: true,
+      discordId,
+      uuid: record.uuid,
+      username: username ?? record.uuid,
+      rewardDispatched,
+    });
   } catch (err) {
     logger.error({ uuid: record.uuid, discordId, err: String(err) }, 'failed to persist Discord link');
     return c.json({ error: 'Failed to persist link' }, 500);
