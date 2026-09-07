@@ -6,10 +6,11 @@
  * Two kinds interleaved, newest-first:
  *  - web_shop: web_queue rows the game consumes (sku, quantity, queue status,
  *    delivered/rejected timestamps — the delivery tracker's data source).
- *  - paynow: subscription cache rows (paynow_customers holds the durable
- *    per-player record the PayNow webhook maintains). PayNow events that never
- *    reached our webhook are simply absent — the page says so rather than
- *    inventing rows.
+ *  - paynow: the player's REAL PayNow order history (bC10) — the Management
+ *    API order list merged with the local dispatch ledger's delivery
+ *    evidence (paynow/history.ts). 'delivered' means the ledger proves the
+ *    lines went out in-game; a paid order without ledger evidence is
+ *    'complete', not a fabricated delivery claim.
  *
  * Auth: the caller's own data — session (linked) or delegated proxy.
  */
@@ -17,6 +18,7 @@ import { Hono } from 'hono';
 import { query } from '../../db/pool.js';
 import { standardReadLimit } from '../../middleware/rateLimitV2-presets.js';
 import { requireSelfOrDelegated } from '../../middleware/gates.js';
+import { getPaynowOrdersForUuid } from '../../paynow/history.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
 
@@ -39,9 +41,14 @@ type UnifiedOrder =
     }
   | {
       kind: 'paynow';
-      customerId: string;
+      id: string;
+      prettyId: string | null;
+      sku: string;
+      quantity: number;
       status: string;
-      createdAt: string;
+      createdAt: string | null;
+      processedAt: string | null;
+      deliveredAt: string | null;
     };
 
 storeOrdersV2.get('/store/orders', async (c) => {
@@ -54,7 +61,7 @@ storeOrdersV2.get('/store/orders', async (c) => {
        FROM web_queue WHERE uuid = $1 AND kind = 'shop_order' ORDER BY created_at DESC LIMIT $2`,
       [uuid, limit],
     );
-    const orders: UnifiedOrder[] = web.rows.map((r) => {
+    const webOrders: UnifiedOrder[] = web.rows.map((r) => {
       let failReason: string | null = null;
       try {
         const payload = typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload;
@@ -73,6 +80,17 @@ storeOrdersV2.get('/store/orders', async (c) => {
         failReason,
       };
     });
+
+    // bC10: the paynow half of the "unified" history — previously promised in
+    // the docstring, never actually queried. Degrades to web-only on failure
+    // (the helper never throws); unknown products and pre-ledger orders show
+    // 'complete' rather than invented delivery evidence.
+    const paynowOrders = await getPaynowOrdersForUuid(uuid, limit).catch(() => []);
+
+    const orders: UnifiedOrder[] = [...webOrders, ...paynowOrders]
+      .sort((a, b) => Date.parse(b.createdAt ?? '') - Date.parse(a.createdAt ?? ''))
+      .slice(0, limit);
+
     return c.json({ orders });
   } catch (err) {
     logger.error({ err: String(err) }, 'v2 store orders failed');
