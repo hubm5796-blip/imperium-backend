@@ -25,6 +25,8 @@ const {
   getPaynowCustomerMock,
   upsertCachedSubscriptionMock,
   getCachedSubscriptionMock,
+  findCrateKeyPackMock,
+  findBoosterPackMock,
   fakeD1,
 } = vi.hoisted(() => {
   /** Minimal D1 fake: tracks (order_id, line_key) claims, reports changes, honors DELETE. */
@@ -65,7 +67,23 @@ const {
     getPaynowCustomerMock: vi.fn(),
     upsertCachedSubscriptionMock: vi.fn(),
     getCachedSubscriptionMock: vi.fn(),
+    findCrateKeyPackMock: vi.fn(),
+    findBoosterPackMock: vi.fn(),
     fakeD1: makeFakeD1(),
+  };
+});
+
+/* B-C30/B-C33: the crate-key and booster catalogs ship EMPTY (PayNow product
+ * ids are owner data), so these tests mock the two find* lookups to simulate
+ * a populated catalog. That proves the WHOLE pipe — resolveStoreDispatch →
+ * buildStoreDispatchCommand → fulfillPaynowOrder dispatch — is ready, and the
+ * first real id pasted into CRATE_KEY_PACKS/BOOSTER_PACKS needs no code. */
+vi.mock('../paynow/constants.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../paynow/constants.js')>();
+  return {
+    ...actual,
+    findCrateKeyPack: findCrateKeyPackMock,
+    findBoosterPack: findBoosterPackMock,
   };
 });
 
@@ -128,6 +146,9 @@ beforeEach(() => {
   getPaynowCustomerMock.mockReset();
   upsertCachedSubscriptionMock.mockReset();
   getCachedSubscriptionMock.mockReset();
+  // Catalogs empty by default (the shipped state); individual tests populate.
+  findCrateKeyPackMock.mockReset().mockReturnValue(null);
+  findBoosterPackMock.mockReset().mockReturnValue(null);
   fakeD1.__claimed.clear();
 });
 
@@ -256,6 +277,44 @@ describe('resolveStoreDispatch + buildStoreDispatchCommand', () => {
       type: 'STORE_PURCHASE_AUREUS',
       payload: { player_uuid: BUYER, amount: 5600, pack_name: 'aureus_5600', order_id: 'ord_9', transaction_id: 'ord_9' },
     });
+  });
+
+  /* B-C33: booster packs. The catalogs ship empty (owner data — B-C30), so
+   * these simulate a populated BOOSTER_PACKS/CRATE_KEY_PACKS via the mocked
+   * find* lookups to prove the full mechanism is ready for the first real id. */
+  it('B-C33: a booster pack maps to STORE_PURCHASE_BOOSTER with booster_id and quantity', () => {
+    findBoosterPackMock.mockReturnValue({ paynowProductId: 'booster_1', priceUsd: 3, boosterId: 'SELL_MULTIPLIER', boosterAmount: 1 });
+    const resolved = resolveStoreDispatch('booster_1')!;
+    expect(resolved).toEqual({ kind: 'booster', boosterId: 'SELL_MULTIPLIER', boosterAmount: 1 });
+    expect(buildStoreDispatchCommand(resolved, BUYER, 'ord_9')).toEqual({
+      type: 'STORE_PURCHASE_BOOSTER',
+      payload: {
+        player_uuid: BUYER,
+        booster_id: 'SELL_MULTIPLIER',
+        quantity: 1,
+        order_id: 'ord_9',
+        transaction_id: 'ord_9',
+      },
+    });
+  });
+
+  it('B-C33: a 3x booster line dispatches the MULTIPLIED unit count (boosterAmount * line quantity)', () => {
+    findBoosterPackMock.mockReturnValue({ paynowProductId: 'booster_2', priceUsd: 5, boosterId: 'XP_MULTIPLIER', boosterAmount: 2 });
+    const resolved = resolveStoreDispatch('booster_2')!;
+    expect(buildStoreDispatchCommand(resolved, BUYER, 'ord_9', 3)).toEqual({
+      type: 'STORE_PURCHASE_BOOSTER',
+      payload: { player_uuid: BUYER, booster_id: 'XP_MULTIPLIER', quantity: 6, order_id: 'ord_9', transaction_id: 'ord_9' },
+    });
+  });
+
+  it('B-C30: a catalogued crate-key bundle resolves through the constants lookup (moved off the old in-file Map)', () => {
+    findCrateKeyPackMock.mockReturnValue({ paynowProductId: 'crate_1', priceUsd: 5, crateId: 'vote', keyAmount: 5 });
+    expect(resolveStoreDispatch('crate_1')).toEqual({ kind: 'crate_key', crateId: 'vote', keyAmount: 5 });
+  });
+
+  it('B-C30/B-C33: with the catalogs empty (shipped state) consumable ids stay unknown products', () => {
+    expect(resolveStoreDispatch('some-future-crate-product')).toBeNull();
+    expect(resolveStoreDispatch('some-future-booster-product')).toBeNull();
   });
 });
 
@@ -485,6 +544,62 @@ describe('fulfillPaynowOrder', () => {
     expect(retry.status).toBe('ok');
     expect(retry.dispatched).toBe(1);          // only the failed line re-dispatches
     expect(retry.skippedDuplicate).toBe(1);    // the delivered line stays claimed
+  });
+
+  /* B-C33 end-to-end: a populated booster catalog flows the whole pipe —
+   * order line → resolve → claim → signed dispatch with the exact payload the
+   * plugin's STORE_PURCHASE_BOOSTER handler consumes. Mixed carts dispatch one
+   * command per line with per-line transaction ids (B-57 semantics hold for
+   * the new kind too). */
+  it('B-C33: a booster order line dispatches STORE_PURCHASE_BOOSTER end-to-end', async () => {
+    findBoosterPackMock.mockReturnValue({ paynowProductId: 'booster_xp', priceUsd: 3, boosterId: 'XP_MULTIPLIER', boosterAmount: 2 });
+    sendCommandWithResponseMock.mockResolvedValue(okResponse());
+    const result = await fulfillPaynowOrder(aureusOrder({
+      lines: [{ product_id: 'booster_xp', quantity: 3 }],
+    }));
+    expect(result.status).toBe('ok');
+    expect(result.dispatched).toBe(1);
+    expect(sendCommandWithResponseMock).toHaveBeenCalledTimes(1);
+    const [type, payload, timeout] = sendCommandWithResponseMock.mock.calls[0]!;
+    expect(type).toBe('STORE_PURCHASE_BOOSTER');
+    expect(payload).toEqual({
+      player_uuid: BUYER,
+      booster_id: 'XP_MULTIPLIER',
+      quantity: 6, // 2 per pack x 3-line quantity
+      order_id: 'ord_test',
+      transaction_id: 'ord_test',
+    });
+    expect(timeout).toBeLessThanOrEqual(10_000); // bounded — never hangs the webhook
+  });
+
+  it('B-C33: a mixed cart (aureus + booster + crate keys) dispatches all three kinds with per-line tx ids', async () => {
+    // Keyed implementations, not mockReturnValue — a blanket return value would
+    // match EVERY product id and (crate being checked before booster in
+    // resolveStoreDispatch) turn the booster line into a crate dispatch.
+    findBoosterPackMock.mockImplementation((id: string) =>
+      id === 'booster_sell' ? { paynowProductId: id, priceUsd: 3, boosterId: 'SELL_MULTIPLIER', boosterAmount: 1 } : null);
+    findCrateKeyPackMock.mockImplementation((id: string) =>
+      id === 'crate_vote' ? { paynowProductId: id, priceUsd: 5, crateId: 'vote', keyAmount: 5 } : null);
+    sendCommandWithResponseMock.mockResolvedValue(okResponse());
+    const result = await fulfillPaynowOrder(aureusOrder({
+      lines: [
+        { product_id: AUREUS_50, quantity: 1 },
+        { product_id: 'booster_sell', quantity: 1 },
+        { product_id: 'crate_vote', quantity: 2 },
+      ],
+    }));
+    expect(result.status).toBe('ok');
+    expect(result.dispatched).toBe(3);
+    // Lines dispatch in parallel (Promise.all) — assert per-kind, not order.
+    const byType = new Map(sendCommandWithResponseMock.mock.calls.map(([type, payload]) => [type as string, payload as Record<string, unknown>]));
+    expect([...byType.keys()].sort()).toEqual([
+      'STORE_PURCHASE_AUREUS',
+      'STORE_PURCHASE_BOOSTER',
+      'STORE_PURCHASE_CRATE_KEY',
+    ]);
+    expect(byType.get('STORE_PURCHASE_AUREUS')).toMatchObject({ transaction_id: 'ord_test' });
+    expect(byType.get('STORE_PURCHASE_BOOSTER')).toMatchObject({ booster_id: 'SELL_MULTIPLIER', transaction_id: 'ord_test:L1' });
+    expect(byType.get('STORE_PURCHASE_CRATE_KEY')).toMatchObject({ crate_id: 'vote', quantity: 10, transaction_id: 'ord_test:L2' });
   });
 });
 
