@@ -146,19 +146,34 @@ export async function isAlreadyLinked(uuid: string): Promise<string | null> {
   return result.rows[0]?.discord_id ?? null;
 }
 
-/** Insert (or upsert) a Discord <-> Minecraft link. Called by the bot. */
-export async function upsertDiscordLink(uuid: string, discordId: string): Promise<void> {
-  await query(
+/**
+ * Insert (or upsert) a Discord <-> Minecraft link. Called by the bot.
+ *
+ * B-C31: returns TRUE when this call INSERTED a fresh row (the account's FIRST
+ * link) and FALSE when it updated an existing one (a re-link). That signal is
+ * what gates the CONFIRM_DISCORD_LINK reward dispatch in /api/link/confirm —
+ * re-confirming the same Discord must not re-trigger the first-link reward.
+ * `RETURNING (xmax = 0)` is the standard Postgres inserted-vs-updated idiom:
+ * on an INSERT xmax is 0; on ON CONFLICT DO UPDATE it is the updating xact id.
+ */
+export async function upsertDiscordLink(uuid: string, discordId: string): Promise<boolean> {
+  const result = await query<{ inserted: boolean }>(
     `INSERT INTO discord_links (uuid, discord_id, linked_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (uuid) DO UPDATE
        SET discord_id = EXCLUDED.discord_id,
-           linked_at = EXCLUDED.linked_at`,
+           linked_at = EXCLUDED.linked_at
+     RETURNING (xmax = 0) AS inserted`,
     [uuid, discordId],
   );
+  // RETURNING always yields exactly one row on this statement; if a driver
+  // quirk ever returned none, fail toward "not a first link" — a missed bonus
+  // is recoverable by support, a double-granted 25k Denarius reward is not.
+  const inserted = result.rows[0]?.inserted === true;
   // Warm the Redis fallback immediately rather than waiting for the first
   // getUuidByDiscordId read — see its docs for why this cache exists.
   void setCachedJson(`discord_uuid:${discordId}`, uuid, DISCORD_UUID_CACHE_TTL_SECONDS);
+  return inserted;
 }
 
 /** Remove a Discord <-> Minecraft link by Discord id. Returns true if a row was deleted. */
