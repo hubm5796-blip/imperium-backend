@@ -354,6 +354,30 @@ describe('fulfillPaynowOrder', () => {
     expect(payload).toMatchObject({ player_uuid: BUYER, amount: 16800, order_id: 'ord_test' });
   });
 
+  it('B-59: an order with NO lines is empty_order — never ok — and spends no buyer-resolution lookup', async () => {
+    const result = await fulfillPaynowOrder({
+      id: 'ord_empty',
+      customer_id: 'cus_buyer', // no embedded minecraft identity…
+      lines: [],
+    });
+    expect(result.status).toBe('empty_order'); // not 'ok' — not dispatched-ok
+    expect(result.dispatched).toBe(0);
+    expect(result.error).toMatch(/no lines/i);
+    // …so had the guard been missing, resolveCustomerUuid would have hit the
+    // Management API fallback. An empty order must not spend that call.
+    expect(getPaynowCustomerMock).not.toHaveBeenCalled();
+    expect(sendCommandWithResponseMock).not.toHaveBeenCalled();
+  });
+
+  it('B-59: an order whose lines sit under a key we do not parse is also empty_order (not a silent ok)', async () => {
+    const result = await fulfillPaynowOrder({
+      id: 'ord_oddshape',
+      customer: { id: 'cus_buyer', minecraft: { id: BUYER } },
+      order_lines: [{ product_id: AUREUS_50, quantity: 1 }], // unrecognized key
+    });
+    expect(result.status).toBe('empty_order');
+  });
+
   it('gift lines deliver to the recipient, not the buyer', async () => {
     getUuidByPaynowCustomerIdMock.mockImplementation(async (customerId: string) =>
       customerId === 'cus_recipient' ? RECIPIENT : BUYER);
@@ -491,6 +515,27 @@ describe('POST /api/webhooks/paynow (order_completed)', () => {
     expect(res.status).toBe(200);
     expect(sendCommandWithResponseMock).toHaveBeenCalledTimes(1);
     expect(sendCommandWithResponseMock.mock.calls[0]![0]).toBe('STORE_PURCHASE_AUREUS');
+  });
+
+  it('B-59: an empty order still 200s (test ping — no retry storm) but is explicitly NOT dispatched-ok', async () => {
+    const res = await postWebhook('ON_ORDER_COMPLETED', {
+      id: 'ord_empty',
+      customer: { id: 'cus_buyer', minecraft: { id: BUYER } },
+      lines: [],
+    });
+    expect(res.status).toBe(200); // genuinely-empty test pings must not 500/4xx
+    const body = (await res.json()) as { ok?: boolean; flagged?: string };
+    expect(body.ok).toBe(false); // …but never marked dispatched-ok
+    expect(body.flagged).toBe('empty_order');
+    expect(sendCommandWithResponseMock).not.toHaveBeenCalled();
+  });
+
+  it('B-59: a real fulfillment error still 500s — the empty-order carve-out does not weaken the retry contract', async () => {
+    sendCommandWithResponseMock.mockRejectedValue(new Error('plugin offline'));
+    const res = await postWebhook('ON_ORDER_COMPLETED', aureusOrder());
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe('Order fulfillment failed');
   });
 
   it('a delivery failure returns 500 so PayNow retries; the retry re-dispatches (claim rolled back), then dedupes', async () => {

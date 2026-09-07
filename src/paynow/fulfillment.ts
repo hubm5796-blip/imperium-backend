@@ -281,7 +281,16 @@ async function releaseOrderLine(orderId: string, lineKey: string): Promise<void>
 /* ── orchestration ────────────────────────────────────────────────────────── */
 
 export interface FulfillmentResult {
-  status: 'ok' | 'error';
+  /**
+   * 'ok' — lines dispatched (or safely skipped) and the order is settled.
+   * 'error' — delivery failed; the webhook MUST 500 so PayNow retries.
+   * 'empty_order' (B-59) — the order parsed but had NO lines. Not 'ok': an
+   *   empty body is either a PayNow test ping or a malformed OrderDTO, and
+   *   answering ok would let PayNow treat a possibly-malformed order as
+   *   delivered. The webhook still answers 200 (a test ping must not trigger
+   *   a retry storm) but flags the order as explicitly not-dispatched.
+   */
+  status: 'ok' | 'error' | 'empty_order';
   dispatched: number;
   skippedDuplicate: number;
   skippedUnknownProduct: number;
@@ -302,6 +311,18 @@ export async function fulfillPaynowOrder(body: Record<string, unknown>): Promise
   const order = parsePaynowOrder(body);
   if (!order) {
     return { status: 'error', dispatched: 0, skippedDuplicate: 0, skippedUnknownProduct: 0, error: 'order body missing id/customer' };
+  }
+
+  // B-59: an order that parses but carries NO lines is not a delivery. It is
+  // either a PayNow test ping or a malformed OrderDTO (lines under a key we
+  // don't parse) — pre-fix this fell through to {ok, dispatched:0} and the
+  // webhook's 200 told PayNow a possibly-malformed order was delivered. Return
+  // a distinct not-ok status BEFORE any buyer resolution (an empty order must
+  // not spend a Management API lookup); the webhook answers 200 but flags it.
+  if (order.lines.length === 0) {
+    const error = `order ${order.orderId}: no lines to dispatch (test ping or malformed OrderDTO)`;
+    logger.error({ orderId: order.orderId, customerId: order.customerId }, `PayNow order fulfillment: ${error}`);
+    return { status: 'empty_order', dispatched: 0, skippedDuplicate: 0, skippedUnknownProduct: 0, error };
   }
 
   const buyerUuid = await resolveCustomerUuid(order.customerId, order.customerMinecraftUuid);
