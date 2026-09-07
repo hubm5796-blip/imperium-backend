@@ -2945,32 +2945,38 @@ api.post('/refcode/redeem', requireMcIdentity, async (c) => {
     return c.json({ error: 'You cannot redeem your own code.' }, 400);
   }
 
-  // B-C18: ONE referral redemption per account, per LIFETIME — not one per code.
-  // The old `AND code_used = $2` check let a single alt account redeem every
-  // code on the server (one reward each), an unbounded Sybil economy dupe.
+  // B-C18/B-58: ONE referral redemption per account, per LIFETIME — not one
+  // per code. The old `AND code_used = $2` check let a single alt account
+  // redeem every code on the server (one reward each), an unbounded Sybil
+  // economy dupe. B-58 closes the race: the pre-fix SELECT-then-INSERT let two
+  // concurrent redeems both observe zero rows and both insert, and the
+  // UNIQUE(redeemer_uuid) backstop could not land on farmed legacy dupes. The
+  // INSERT is now the guard itself — ON CONFLICT (redeemer_uuid) DO NOTHING
+  // arbitrates in the database, the loser reads inserted=0 and gets the 400,
+  // and the counter bump is gated on the insert (a losing racer cannot
+  // inflate the owner's total_redemptions either).
   // (IP guard is meaningless here: the caller is the game server, not the
   // player. Account-age/playtime guards need the live game DB or an AltGraph
   // hook — noted as follow-up, not smuggled into this bot-auth route.)
-  const already = await query('SELECT 1 FROM referral_redemptions WHERE redeemer_uuid = $1', [mcUuid]);
-  if (already.rows.length > 0) {
-    return c.json({ error: 'You have already redeemed a referral code.' }, 400);
-  }
-
-  // Record the redemption AND bump the owner's counter. Single CTE statement =
-  // atomic: the pre-fix pair of separate queries could record a redemption as
-  // paid while the counter update failed (or vice versa), and a plugin crash
-  // between them left the ledger lying about a paid reward.
-  const redeemed = await query(
+  const redeemed = await query<{ inserted: string | number; bumped: string | number }>(
     `WITH ins AS (
        INSERT INTO referral_redemptions (redeemer_uuid, code_used, referrer_uuid, reward_paid)
        VALUES ($1, $2, $3, TRUE)
+       ON CONFLICT (redeemer_uuid) DO NOTHING
+       RETURNING 1
+     ), bump AS (
+       UPDATE referral_codes SET total_redemptions = total_redemptions + 1
+        WHERE code = $2 AND EXISTS (SELECT 1 FROM ins)
        RETURNING 1
      )
-     UPDATE referral_codes SET total_redemptions = total_redemptions + 1
-      WHERE code = $2 RETURNING total_redemptions`,
+     SELECT (SELECT COUNT(*) FROM ins) AS inserted, (SELECT COUNT(*) FROM bump) AS bumped`,
     [mcUuid, code, ownerUuid]
   );
-  if (redeemed.rows.length === 0) {
+  const inserted = Number(redeemed.rows[0]?.inserted ?? 0);
+  if (inserted === 0) {
+    return c.json({ error: 'You have already redeemed a referral code.' }, 400);
+  }
+  if (Number(redeemed.rows[0]?.bumped ?? 0) === 0) {
     logger.error({ code, mcUuid }, 'refcode redeem: counter update matched no rows — redemption recorded but owner count not incremented');
   }
 
