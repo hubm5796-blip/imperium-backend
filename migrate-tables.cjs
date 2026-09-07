@@ -159,11 +159,17 @@ const STATEMENTS = [
   // all existing rows), multiple NULLs treated as distinct.
   ['referral_redemptions UNIQUE (redeemer,code)', `CREATE UNIQUE INDEX IF NOT EXISTS uniq_referral_redemptions_redeemer_code ON referral_redemptions(redeemer_uuid, code_used)`],
   ['referral_redemptions idx redeemer',    `CREATE INDEX IF NOT EXISTS idx_referral_redemptions_redeemer ON referral_redemptions(redeemer_uuid)`],
-  // B-C18 backstop: one redemption per LIFETIME per account. This CAN fail on
-  // legacy data if the per-code loophole was already farmed (same redeemer on
-  // multiple codes) — guarded per-statement, so a failure is logged and the
-  // app-level check in routes.ts still holds. Clean the dupes (keep the
-  // earliest row per redeemer), then re-run to land the index.
+  // B-C18 backstop: one redemption per LIFETIME per account. This USED to fail
+  // on legacy data when the per-code loophole had already been farmed (same
+  // redeemer on multiple codes) — an IF-NOT-EXISTS no-op hid the failure and
+  // the guard stayed app-level-only (B-58: check-then-insert raced). Now the
+  // same dedupe-then-index pattern as referrals above: delete the later rows
+  // per redeemer (keep the EARLIEST redemption), then the partial unique index
+  // makes the race structurally impossible and routes.ts can rely on
+  // ON CONFLICT (redeemer_uuid) DO NOTHING as the actual guard.
+  ['referral_redemptions dedupe redeemer', `DELETE FROM referral_redemptions a USING referral_redemptions b
+      WHERE a.redeemer_uuid = b.redeemer_uuid
+        AND (a.redeemed_at, a.id) > (b.redeemed_at, b.id)`],
   ['referral_redemptions UNIQUE redeemer', `CREATE UNIQUE INDEX IF NOT EXISTS uniq_referral_redemptions_redeemer ON referral_redemptions(redeemer_uuid)`],
 
   // ===================== paynow_customers =====================
