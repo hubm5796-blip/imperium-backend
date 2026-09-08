@@ -3,16 +3,27 @@
 The API is served at `https://api.imperiummc.net` (Hono on Cloudflare Workers,
 source `src/api/routes.ts` + `src/api/expansion/`). All bodies are JSON.
 
-Auth model (existing, unchanged):
+Auth model (updated 2026-09-07 — the B-01/X-04 trust-boundary fixes changed this
+surface; see `src/middleware/gates.ts` for the authoritative implementation):
 
-- **Session cookie** (`imperium_session`, JWT): established by Discord OAuth or
-  the in-game `/webcode` flow. `requireAuth` = valid session;
-  `requireLinked` = session with a linked Minecraft account.
-- **Bot token** (`X-Bot-Token` == `BOT_API_TOKEN`): trusted-server auth used by
-  the Discord bot and the frontend's edge proxy, sometimes combined with
-  `X-Mc-Uuid` for targeted player reads.
+- **Session cookie** (`imperium_session`, JWT, capped at 7 days with `iss`/`aud`
+  checks): established by Discord OAuth or the in-game `/webcode` flow.
+  `requireAuth` = valid session; `requireLinked` = session with a linked
+  Minecraft account.
+- **Bot token** (`X-Bot-Token` == `BOT_API_TOKEN`): trusted-server auth. There is
+  NO blanket exemption any more — unmapped/unknown principals resolve to
+  deny-by-default `anonymous` (the old `panel-service` bypass is deleted, B-01).
+  `X-Staff-Role` is honored **only on requests already authenticated another
+  way** (session cookie or a mapped service token) — a bare header cannot raise
+  privilege.
+- **Service token** (`X-Service-Token` == internal service token): REQUIRED to
+  combine `X-Bot-Token` with `X-Mc-Uuid` — a shared bot token alone can no
+  longer assert a player identity (403 `IDENTITY_NEEDS_SERVICE_TOKEN`).
 - **Per-site key** (`X-Vote-Key` == per-site value from `VOTE_CALLBACK_KEYS`):
-  vote-site callbacks (new, see below).
+  vote-site callbacks.
+
+All token comparisons are timing-safe; UUIDs are canonicalized and
+format-validated at every accepting boundary.
 
 Rate limits (per client IP, sliding window — `X-RateLimit-Limit` /
 `X-RateLimit-Remaining` / `Retry-After` headers): global 60/min on everything;
@@ -62,9 +73,11 @@ shop orders 5/min (`shop`).
 | GET | `/api/admin/player-tools?uuid=` | bot token | read 60/min | none | `economy_transactions` (LIVE), `dungeon_lockouts`, `pity_counters` (specced) |
 
 The bot-token rows are consumed by the Discord worker (`imperium-discord`) and
-the frontend's server-side admin proxies (which enforce Discord role gates
-before forwarding); the backend treats `X-Bot-Token` == `BOT_API_TOKEN` as the
-trust anchor for those, same as the pre-existing `/api/admin/server/status`.
+the frontend's server-side admin proxies (which forward a server-verified
+`X-Staff-Role` after their own LuckPerms/permission check — since the B-01 fix
+the backend no longer trusts role headers on otherwise-unauthenticated
+requests); the backend treats the service-token paths above as the trust
+anchor for those, same as the pre-existing `/api/admin/server/status`.
 
 SWR-cached responses carry `Cache-Control: public, max-age=60,
 stale-while-revalidate=300` plus an `X-Cache` diagnostic header
@@ -516,6 +529,22 @@ Flow-log reasons: `web:vote` (votes), `web:shop` (shop orders).
 | `WEBPANEL_HMAC_SECRET` | existing Workers secret | Now also signs `web_queue` rows (same value as the command bus). |
 
 ## Consolidated plugin-side contract
+
+> **Plugin-side status — 2026-09-07** (verified against the plugin source tree):
+> the `web_queue` consumer is LIVE (plugin `web/` package; signature verification,
+> tri-state registry, crate-key/AUREUS/booster grants, PayNow purchase dispatch),
+> and these specced producers/tables have landed in the plugin:
+> `web_events` (`WebFeedService`), `lfg_posts` (same), `dungeon_lockouts`
+> (`DungeonStores` — pk is `(uuid, dungeon_id, mode, bucket)`, wider than
+> specced), `economy_flow_hourly` (`EconomyFlowMonitor` — columns
+> `hour_bucket/currency/direction/reason_prefix/total/tx_count`, different from
+> the specced shape below), and `legion_war_records` (`LegionWarService` — adds
+> `season_id` and `mvp_awards` to the specced shape). Still NOT shipped by the
+> plugin: `player_dungeon_stats`, `season_hall` (the plugin instead writes
+> `season_hall_players` / `season_hall_legions` from `SeasonResetService`),
+> `contraband_sweeps`, `economy_drift_alerts`, `pity_counters`. The endpoints
+> degrade gracefully for the missing ones; where a landed schema differs from
+> the spec below, the plugin source is authoritative.
 
 Everything the PLUGIN must implement for the web ecosystem (backend + panel +
 Discord worker) to finish wiring. Items 1–3 are the web_queue consumer and the
