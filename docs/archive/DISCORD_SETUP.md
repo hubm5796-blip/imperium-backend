@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-09-12** — superseded by README.md ("Discord: HTTP-based interactions — the bot does NOT run a gateway client"). This guide describes a gateway bot architecture that no longer runs. Kept for history.
+
 # Discord Bot Setup Guide
 
 ## Step 1: Create the Application
