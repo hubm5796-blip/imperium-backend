@@ -1,4 +1,4 @@
-import { Pool, type QueryResult, type QueryResultRow } from 'pg';
+import { Client, Pool, type QueryResult, type QueryResultRow } from 'pg';
 import { deleteCachedJson, getCachedJson, setCachedJson } from './redis.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -30,8 +30,18 @@ const IS_CLOUDFLARE_WORKERS =
   typeof navigator !== 'undefined' && /Cloudflare-Workers/i.test(navigator.userAgent ?? '');
 
 let pool: Pool | null = null;
+let workersConnectionString: string | null = null;
 
 export function initPool(connectionString: string): void {
+  // Workers forbids a socket opened by one request being used by another. A
+  // module-scoped Pool hands request B the idle client request A opened; B's
+  // I/O on it hangs until the acquire/probe timeout and the client is never
+  // freed, so the pool drains to fully stuck (/health 200/503 alternation that
+  // decays to all-503). Hyperdrive already pools at the edge — connect per query.
+  if (IS_CLOUDFLARE_WORKERS) {
+    workersConnectionString = connectionString;
+    return;
+  }
   if (pool) return;
   // max: 5, not 10 -- Cloudflare Workers hard-caps a single invocation to 6
   // concurrent connections total. A pool sized above that cap doesn't error
@@ -83,10 +93,30 @@ export async function closePool(): Promise<void> {
   if (pool) await pool.end();
 }
 
+// No module-level concurrency counter: a request cancelled mid-query may never
+// reach `finally`, leaking the slot for the isolate's lifetime. workerd itself
+// queues sockets past its per-invocation cap.
+async function workerQuery<T extends QueryResultRow>(
+  connectionString: string,
+  text: string,
+  params: ReadonlyArray<unknown>,
+): Promise<QueryResult<T>> {
+  const client = new Client({ connectionString, connectionTimeoutMillis: 5_000 });
+  try {
+    await client.connect();
+    return await client.query<T>(text, params as unknown[]);
+  } finally {
+    void client.end().catch(() => {});
+  }
+}
+
 export async function query<T extends QueryResultRow>(
   text: string,
   params: ReadonlyArray<unknown>,
 ): Promise<QueryResult<T>> {
+  if (workersConnectionString !== null) {
+    return workerQuery<T>(workersConnectionString, text, params);
+  }
   const client = await getPool().connect();
   try {
     return await client.query<T>(text, params as unknown[]);
