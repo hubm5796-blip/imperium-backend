@@ -2,7 +2,7 @@
 import { SlashCommandBuilder } from '@discordjs/builders';
 import { getProfile } from '../apiClient.js';
 import { balanceEmbed, errorEmbed, notLinkedEmbed } from '../embeds.js';
-import { type BotCommand, getTargetUserOption } from './_shared.js';
+import { type BotCommand, getTargetKwargs, addTargetOptions } from './_shared.js';
 
 export const balanceCommand: BotCommand = {
   name: 'balance',
@@ -10,19 +10,15 @@ export const balanceCommand: BotCommand = {
     return new SlashCommandBuilder()
       .setName('balance')
       .setDescription('View your Denarius, Auctoritas, Civitas, and Aureus')
-      .addUserOption((o) =>
-        o.setName('user').setDescription('A Discord user (defaults to you)'),
-      )
+      .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
       .toJSON();
   },
   async execute(interaction) {
-    const targetId = getTargetUserOption(interaction) ?? interaction.user.id;
-    // B-44: premium balances are self-scope — a non-self target renders
-    // without Aureus/Auctoritas (the web privacy contract).
-    const self = targetId === interaction.user.id;
+    const targetKwargs = getTargetKwargs(interaction);
+    const self = Object.keys(targetKwargs).length === 0 || targetKwargs.discordId === interaction.user.id;
 
     await interaction.deferReply();
-    const result = await getProfile({ discordId: targetId });
+    const result = await getProfile(targetKwargs.discordId ? { discordId: targetKwargs.discordId } : targetKwargs.username ? { username: targetKwargs.username } : {});
 
     if (!result.ok) {
       const embed = result.status === 404 ? notLinkedEmbed() : errorEmbed(result.message);

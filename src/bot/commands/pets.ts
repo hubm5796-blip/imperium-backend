@@ -8,6 +8,7 @@ export const petsCommand: BotCommand = {
     return new SlashCommandBuilder()
       .setName('pets')
       .setDescription('View all available ImperiumMC pets')
+      .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
       .toJSON();
   },
   async execute(interaction) {

@@ -9,6 +9,7 @@ export const factionsCommand: BotCommand = {
     return new SlashCommandBuilder()
       .setName('factions')
       .setDescription('View the eight ImperiumMC factions and reputation perks')
+      .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
       .toJSON();
   },
   async execute(interaction) {

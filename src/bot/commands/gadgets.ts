@@ -9,6 +9,7 @@ export const gadgetsCommand: BotCommand = {
     return new SlashCommandBuilder()
       .setName('gadgets')
       .setDescription('View the ten ImperiumMC cosmetic gadgets')
+      .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
       .toJSON();
   },
   async execute(interaction) {

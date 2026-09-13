@@ -8,6 +8,7 @@ export const dungeonsCommand: BotCommand = {
     return new SlashCommandBuilder()
       .setName('dungeons')
       .setDescription('View all ImperiumMC dungeons and their requirements')
+      .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
       .toJSON();
   },
   async execute(interaction) {

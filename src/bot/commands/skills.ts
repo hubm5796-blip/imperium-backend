@@ -9,6 +9,7 @@ export const skillsCommand: BotCommand = {
     return new SlashCommandBuilder()
       .setName('skills')
       .setDescription('View the ImperiumMC skill tree (Virtus, Mercatura, Divinitas)')
+      .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
       .toJSON();
   },
   async execute(interaction) {

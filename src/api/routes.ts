@@ -412,11 +412,12 @@ api.post('/auth/logout', (c) => {
 api.get('/player/profile', async (c) => {
   const queryDiscordId = c.req.query('discord_id');
   const queryUuid = c.req.query('uuid');
+  const queryUsername = c.req.query('username');
 
-  // Targeted lookups (?uuid= / ?discord_id=) are bot-only. Without a valid
+  // Targeted lookups (?uuid= / ?discord_id= / ?username=) are bot-only. Without a valid
   // bot token, anyone could read any player's data, so fall through to the
   // cookie-based "self" path (which is the only thing a browser may do).
-  if ((queryUuid || queryDiscordId) && !botTokenMatches(c)) {
+  if ((queryUuid || queryDiscordId || queryUsername) && !botTokenMatches(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
@@ -427,6 +428,20 @@ api.get('/player/profile', async (c) => {
     uuid = parseMcUuid(queryUuid);
     if (!uuid) {
       return c.json({ error: 'Invalid uuid parameter' }, 400);
+    }
+  } else if (queryUsername) {
+    // 2026-09-13: username lookups — the bot commands accept Minecraft names.
+    // getUuidByUsername reads the plugin-maintained player_names registry.
+    if (!/^[A-Za-z0-9_.]{3,16}$/.test(queryUsername)) {
+      return c.json({ error: 'Invalid username' }, 400);
+    }
+    try {
+      uuid = await getUuidByUsername(queryUsername);
+    } catch {
+      uuid = null;
+    }
+    if (!uuid) {
+      return c.json({ error: 'Player not found' }, 404);
     }
   } else if (queryDiscordId) {
     // Try PostgreSQL first, then SQLite fallback

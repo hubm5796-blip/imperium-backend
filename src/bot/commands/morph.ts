@@ -9,6 +9,7 @@ export const morphCommand: BotCommand = {
     return new SlashCommandBuilder()
       .setName('morph')
       .setDescription('View the six Roman beast morphs and how to unlock them')
+      .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
       .toJSON();
   },
   async execute(interaction) {
