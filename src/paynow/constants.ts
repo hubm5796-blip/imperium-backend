@@ -140,11 +140,10 @@ const RANK_UPGRADE_PRODUCT_IDS = new Set(RANK_UPGRADES.map((u) => u.paynowProduc
  * The dispatch MECHANISM for both is live end-to-end (fulfillment.ts maps
  * them to STORE_PURCHASE_CRATE_KEY / STORE_PURCHASE_BOOSTER and this file's
  * ids feed isOneTimeStoreProduct, so checkout accepts them the moment they
- * exist). The PayNow product ids themselves are OWNER DATA: no crate-key or
- * booster products have been created in the PayNow dashboard yet, so both
- * catalogs ship EMPTY. Populating them is one entry per product — created in
- * PayNow first, then the id pasted here (same discipline as AUREUS_PACKS,
- * which must also stay in sync with the frontend's gamedata.ts). */
+ * exist). Crate-key products exist (2026-09-13); booster products do not yet,
+ * so BOOSTER_PACKS ships empty. Each entry is created in PayNow first, then the
+ * id pasted here (same discipline as AUREUS_PACKS, which must also stay in
+ * sync with the frontend's gamedata.ts). */
 
 /** A real-money crate-key bundle (one-time). */
 export interface CrateKeyPackProduct {
@@ -156,9 +155,17 @@ export interface CrateKeyPackProduct {
   keyAmount: number;
 }
 
-/** OWNER DATA (B-C30): empty until crate-key products exist in PayNow. */
+/** Mirrors the frontend's CRATE_KEY_BUNDLES. Live delivery today is the PayNow
+ * product's own `crate give` command (online_only); the store has no
+ * order_completed webhook subscribed. Subscribing one would ALSO dispatch these
+ * (and every Aureus/rank product) — strip the PayNow commands in the same change. */
 export const CRATE_KEY_PACKS: readonly CrateKeyPackProduct[] = Object.freeze([
-  // e.g. { paynowProductId: '<id-from-paynow-dashboard>', priceUsd: 5, crateId: 'vote', keyAmount: 5 },
+  { paynowProductId: '602731267938590720', priceUsd: 2.49, crateId: 'basic', keyAmount: 5 },
+  { paynowProductId: '602731440542584832', priceUsd: 5.99, crateId: 'uncommon', keyAmount: 5 },
+  { paynowProductId: '602731454740307968', priceUsd: 12.99, crateId: 'rare', keyAmount: 5 },
+  { paynowProductId: '602731470078877696', priceUsd: 14.99, crateId: 'epic', keyAmount: 3 },
+  { paynowProductId: '602731483005722624', priceUsd: 29.99, crateId: 'legendary', keyAmount: 3 },
+  { paynowProductId: '602731496293269504', priceUsd: 24.99, crateId: 'mythic', keyAmount: 1 },
 ]);
 
 /** A real-money booster pack (one-time). */
