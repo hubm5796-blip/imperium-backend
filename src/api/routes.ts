@@ -2591,6 +2591,99 @@ api.get('/player/crates', requireMcIdentity, async (c) => {
   return c.json({ keys });
 });
 
+/* ---------------------------------------------------------- Dashboard preferences */
+
+/**
+ * Dashboard preferences (settings page): notification toggles, accessibility
+ * flags, language. Persisted per MC account in Postgres — before this the
+ * frontend proxy intentionally faked success (`persisted: false`) because no
+ * backend surface existed, so every "Save" silently reverted on reload.
+ *
+ * Lazy CREATE TABLE IF NOT EXISTS matches the gallery/dms/apiKeys pattern
+ * (idempotent, one-time) — no out-of-band migration needed.
+ */
+const PREFERENCES_MAX_JSON_BYTES = 8 * 1024;
+
+let preferencesTableReady: Promise<void> | null = null;
+function ensurePreferencesTable(): Promise<void> {
+  preferencesTableReady ??= (async () => {
+    await query(
+      `CREATE TABLE IF NOT EXISTS player_preferences (
+         uuid TEXT PRIMARY KEY,
+         preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+       )`,
+      [],
+    );
+  })().catch((err) => {
+    preferencesTableReady = null; // retry on the next request
+    throw err;
+  });
+  return preferencesTableReady;
+}
+
+/** POST /api/player/preferences — { uuid, preferences } from the site proxy. */
+api.post('/player/preferences', async (c) => {
+  if (!botTokenMatches(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  let body: { uuid?: unknown; preferences?: unknown };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+  const uuid = parseMcUuid(typeof body.uuid === 'string' ? body.uuid : '');
+  if (!uuid) return c.json({ error: 'Invalid uuid' }, 400);
+
+  // Shape guard: preferences must be a small flat-ish JSON object. The settings
+  // page sends { notifications: {...}, accessibility: {...}, language: "en" } —
+  // allow one nesting level of booleans/strings, cap the serialized size.
+  const prefs = body.preferences;
+  if (prefs === null || prefs === undefined) {
+    return c.json({ success: true, persisted: false });
+  }
+  if (typeof prefs !== 'object' || Array.isArray(prefs)) {
+    return c.json({ error: 'preferences must be an object' }, 400);
+  }
+  const serialized = JSON.stringify(prefs);
+  if (serialized.length > PREFERENCES_MAX_JSON_BYTES) {
+    return c.json({ error: 'preferences too large' }, 413);
+  }
+  for (const [k, v] of Object.entries(prefs as Record<string, unknown>)) {
+    if (k.length > 64) return c.json({ error: 'Invalid preferences key' }, 400);
+    if (v !== null && typeof v === 'object') {
+      for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) {
+        if (k2.length > 64 || !(typeof v2 === 'boolean' || typeof v2 === 'string' || typeof v2 === 'number')) {
+          return c.json({ error: 'Invalid preferences value' }, 400);
+        }
+      }
+    } else if (!(typeof v === 'boolean' || typeof v === 'string' || typeof v === 'number')) {
+      return c.json({ error: 'Invalid preferences value' }, 400);
+    }
+  }
+
+  await ensurePreferencesTable();
+  await query(
+    `INSERT INTO player_preferences (uuid, preferences, updated_at)
+     VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (uuid) DO UPDATE SET preferences = $2::jsonb, updated_at = now()`,
+    [uuid, serialized],
+  );
+  return c.json({ success: true, persisted: true });
+});
+
+/** GET /api/player/preferences?uuid= — the stored preferences ({} when absent). */
+api.get('/player/preferences', async (c) => {
+  if (!botTokenMatches(c)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const uuid = parseMcUuid(c.req.query('uuid') ?? '');
+  if (!uuid) return c.json({ error: 'Invalid uuid' }, 400);
+  await ensurePreferencesTable();
+  const result = await query<{ preferences: unknown }>(
+    'SELECT preferences FROM player_preferences WHERE uuid = $1',
+    [uuid],
+  );
+  return c.json({ preferences: result.rows[0]?.preferences ?? {} });
+});
+
 /* ---------------------------------------------------------- Referrals */
 
 /**
