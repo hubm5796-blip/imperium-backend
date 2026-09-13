@@ -10,8 +10,10 @@ import { __resetEnvForTests, initEnvFromBindings } from '../env.js';
  * 6 rank upgrades — before the fix, cart-checkout rejected every currency-pack
  * and rank-upgrade line with HTTP 400.
  */
+import { resolveStoreDispatch } from '../paynow/fulfillment.js';
 import {
   AUREUS_PACKS,
+  CRATE_KEY_PACKS,
   RANK_UPGRADES,
   findAureusPack,
   findRankUpgrade,
@@ -57,6 +59,32 @@ describe('PayNow product validation', () => {
     expect(isLifetimeProduct('586713857251082240')).toBe(false);
     // Peregrinus lifetime should NOT be a valid subscription product
     expect(isDonorSubscriptionProduct('587751069837164544')).toBe(false);
+  });
+});
+
+describe('B-C30: crate-key bundles are live one-time store products', () => {
+  const EXPECTED: Array<[string, string, number]> = [
+    ['602731267938590720', 'basic', 5],
+    ['602731440542584832', 'uncommon', 5],
+    ['602731454740307968', 'rare', 5],
+    ['602731470078877696', 'epic', 3],
+    ['602731483005722624', 'legendary', 3],
+    ['602731496293269504', 'mythic', 1],
+  ];
+
+  it('the 6 PayNow crate-key products pass cart/single-item checkout validation', () => {
+    expect(CRATE_KEY_PACKS.map((p) => p.paynowProductId)).toEqual(EXPECTED.map(([id]) => id));
+    for (const [id] of EXPECTED) {
+      expect(isOneTimeStoreProduct(id), id).toBe(true);
+      expect(isLifetimeProduct(id), id).toBe(false);
+      expect(isDonorSubscriptionProduct(id), id).toBe(false);
+    }
+  });
+
+  it('each bundle resolves to the crate id and key count its PayNow `crate give` command grants', () => {
+    for (const [id, crateId, keyAmount] of EXPECTED) {
+      expect(resolveStoreDispatch(id)).toEqual({ kind: 'crate_key', crateId, keyAmount });
+    }
   });
 });
 
