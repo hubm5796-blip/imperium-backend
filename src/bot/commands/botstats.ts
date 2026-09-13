@@ -27,6 +27,10 @@ export const botstatsCommand: BotCommand = {
     return {
       name: 'botstats',
       description: 'Bot usage stats (staff only)',
+      // Visibility gate only — the real gate is the LuckPerms helper+ resolve
+      // at execute time (see moderation.ts). ModerateMembers = 1<<40, granted
+      // to the guild's helper-and-above staff roles.
+      default_member_permissions: '1099511627776',
       options: [
         {
           name: 'days',

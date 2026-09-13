@@ -13,12 +13,26 @@
  * cosmetic). Ledger: bot_mod_log before dispatch, outcome updated after.
  */
 import { SlashCommandBuilder, EmbedBuilder } from '@discordjs/builders';
+import { PermissionFlagsBits } from 'discord-api-types/v10';
 import { adminPlayerLookup, moderationHistory } from '../apiClient.js';
 import { errorEmbed } from '../embeds.js';
 import { COLORS, formatNumber } from '../config.js';
 import { handleModCommand, dispatchPunishment, moderationEmbed, requireStaff, type StaffLevel } from '../moderation.js';
 import { type BotCommand } from './_shared.js';
 import type { InteractionShim } from '../interactionShim.js';
+
+/* ── Discord-side visibility gates (defense in depth) ──────────────────────
+ * The AUTHORITATIVE gate stays requireStaff() — backend LuckPerms resolve on
+ * the linked MC account. The default_member_permissions below only control
+ * who can even see/run the command in the Discord client, so non-staff don't
+ * get dead commands in their picker. One bit per tier:
+ *   helper tier → ModerateMembers · mod tier → KickMembers · ban → BanMembers
+ * The matching bits are granted to the guild's staff roles by
+ * scripts/grant-staff-perms.mts. Server admins may tighten further in
+ * Settings → Integrations; the runtime gate still applies regardless. */
+const HELPER_BIT = PermissionFlagsBits.ModerateMembers; // lookup/warn/botstats
+const MOD_BIT = PermissionFlagsBits.KickMembers; // history/mute/kick/tempban
+const ADMIN_BIT = PermissionFlagsBits.BanMembers; // ban
 
 // ── single-use confirmations (customId: modconfirm:<nonce>) ────────────────
 interface PendingConfirm {
@@ -121,6 +135,7 @@ export const lookupCommand: BotCommand = {
   name: 'lookup',
   toJSON() {
     return new SlashCommandBuilder().setName('lookup').setDescription('Player lookup (staff)')
+      .setDefaultMemberPermissions(HELPER_BIT)
       .addStringOption((o) => o.setName('name').setDescription('Player name').setRequired(true)).toJSON();
   },
   async execute(interaction) {
@@ -154,6 +169,7 @@ export const historyCommand: BotCommand = {
   name: 'history',
   toJSON() {
     return new SlashCommandBuilder().setName('history').setDescription('Punishment history (staff)')
+      .setDefaultMemberPermissions(MOD_BIT)
       .addStringOption((o) => o.setName('name').setDescription('Player name').setRequired(true)).toJSON();
   },
   async execute(interaction) {
@@ -201,6 +217,7 @@ function simplePunishCommand(
     name,
     toJSON() {
       const b = new SlashCommandBuilder().setName(name).setDescription(`${name} a player (staff)`)
+        .setDefaultMemberPermissions(level === 'helper' ? HELPER_BIT : MOD_BIT)
         .addStringOption((o) => o.setName('name').setDescription('Player name').setRequired(true));
       if (needsDuration) b.addStringOption((o) => o.setName('duration').setDescription('e.g. 30m, 2h, 1d').setRequired(true));
       b.addStringOption((o) => o.setName('reason').setDescription('Reason').setRequired(true));
@@ -235,6 +252,7 @@ function confirmPunishCommand(name: 'tempban' | 'ban', level: 'mod' | 'admin', n
     name,
     toJSON() {
       const b = new SlashCommandBuilder().setName(name).setDescription(`${name} a player (staff, with confirmation)`)
+        .setDefaultMemberPermissions(level === 'admin' ? ADMIN_BIT : MOD_BIT)
         .addStringOption((o) => o.setName('name').setDescription('Player name').setRequired(true));
       if (needsDuration) b.addStringOption((o) => o.setName('duration').setDescription('e.g. 1d, 7d').setRequired(true));
       b.addStringOption((o) => o.setName('reason').setDescription('Reason').setRequired(true));

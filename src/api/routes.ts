@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler, type Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import { gameQuery, getGamePlayerBalances, getGamePlayerProfile, getGamePlayerStats, getGamePlayerAchievements, getGamePlayerSkills, getGamePlayerRankAndPrestige, getGamePlayerFactions, getGameParkourRecords, getGamePlayerLegionId, getGameLegionInfo, getGameLegionMembers, getGamePlayerCosmetics, getGamePlayerDailyQuests } from '../db/gameMysql.js';
+import { gameQuery, getGamePlayerBalances, getGamePlayerProfile, getGamePlayerFirstSeen, getGamePlayerStats, getGamePlayerAchievements, getGamePlayerSkills, getGamePlayerRankAndPrestige, getGamePlayerFactions, getGameParkourRecords, getGamePlayerLegionId, getGameLegionInfo, getGameLegionMembers, getGamePlayerCosmetics, getGamePlayerDailyQuests, getGameCrateKeys, getGameCrateOpenings, getGamePlayerRewards, getGamePrivacyExport } from '../db/gameMysql.js';
 import {
   AUTH_COOKIE_NAME,
   authCookieOptions,
@@ -507,6 +507,7 @@ api.get('/player/profile', async (c) => {
           progress: Number(game.rank_progress ?? 0),
         },
         prestige: { level: Number(game.prestige_level ?? 0) },
+        first_seen: (await getGamePlayerFirstSeen(uuid).catch(() => null)) ?? undefined,
         stats: {
           blocksMined: Number(game.blocks_mined ?? 0),
           playTime: Number(game.play_time ?? 0),
@@ -668,7 +669,7 @@ api.get('/player/profile', async (c) => {
 });
 
 /** GET /api/player/balances — real-time from game MySQL; Postgres fallback. */
-api.get('/player/balances', requireAuth, requireLinked, async (c) => {
+api.get('/player/balances', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   // GAME MYSQL FIRST (2026-08-30): the Postgres copy is stale since WebSync went no-op.
   // Same shape as getPlayerBalances — the frontend just reads the `balances` map.
@@ -688,7 +689,7 @@ api.get('/player/balances', requireAuth, requireLinked, async (c) => {
 });
 
 /** GET /api/player/stats — real-time from game MySQL; Postgres fallback. */
-api.get('/player/stats', requireAuth, requireLinked, async (c) => {
+api.get('/player/stats', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   try {
     const rows = await gameQuery<{ blocks_mined: number; play_time: number; pvp_kills: number; pvp_deaths: number; pvp_trophies: number }>(
@@ -713,7 +714,7 @@ api.get('/player/stats', requireAuth, requireLinked, async (c) => {
 });
 
 /** GET /api/player/transactions?page=1 — real-time from game MySQL; Postgres fallback. */
-api.get('/player/transactions', requireAuth, requireLinked, async (c) => {
+api.get('/player/transactions', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   const pageSize = 25;
   const rawPage = Number.parseInt(c.req.query('page') ?? '1', 10);
@@ -757,7 +758,7 @@ api.get('/player/transactions', requireAuth, requireLinked, async (c) => {
 });
 
 /** GET /api/player/skills — game MySQL first; Postgres fallback. */
-api.get('/player/skills', requireAuth, requireLinked, async (c) => {
+api.get('/player/skills', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   try {
     const nodes = await getGamePlayerSkills(uuid);
@@ -782,7 +783,7 @@ api.get('/player/skills', requireAuth, requireLinked, async (c) => {
 });
 
 /** GET /api/player/factions — game MySQL first; Postgres fallback. */
-api.get('/player/factions', requireAuth, requireLinked, async (c) => {
+api.get('/player/factions', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   try {
     const rows = await getGamePlayerFactions(uuid);
@@ -795,7 +796,7 @@ api.get('/player/factions', requireAuth, requireLinked, async (c) => {
 });
 
 /** GET /api/player/parkour — game MySQL first; Postgres fallback. */
-api.get('/player/parkour', requireAuth, requireLinked, async (c) => {
+api.get('/player/parkour', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   try {
     const rows = await getGameParkourRecords(uuid);
@@ -808,7 +809,7 @@ api.get('/player/parkour', requireAuth, requireLinked, async (c) => {
 });
 
 /** GET /api/player/achievements — game MySQL first; Postgres fallback. */
-api.get('/player/achievements', requireAuth, requireLinked, async (c) => {
+api.get('/player/achievements', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   try {
     const data = await getGamePlayerAchievements(uuid);
@@ -821,20 +822,65 @@ api.get('/player/achievements', requireAuth, requireLinked, async (c) => {
 });
 
 /** GET /api/player/cosmetics — game MySQL first; Postgres fallback. */
-api.get('/player/cosmetics', requireAuth, requireLinked, async (c) => {
-  const uuid = c.var.mcUuid!;
+/** Shape contract: { unlocked, activeTrail, activeHat, activeKillEffect,
+ *  activeMineEffect } — the dashboard reads exactly these names. */
+function cosmeticsPayload(row: Record<string, unknown> | undefined) {
+  let unlocked: string[] = [];
+  const raw = row?.unlocked_cosmetics;
+  if (typeof raw === 'string' && raw.trim().startsWith('[')) {
+    try { unlocked = JSON.parse(raw); } catch { /* keep [] */ }
+  }
+  return {
+    unlocked,
+    activeTrail: (row?.active_trail as string) ?? null,
+    activeHat: (row?.active_hat as string) ?? null,
+    activeKillEffect: (row?.active_kill_effect as string) ?? null,
+    activeMineEffect: (row?.active_mine_effect as string) ?? null,
+  };
+}
+
+api.get('/player/cosmetics', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
   try {
-    const data = await getGamePlayerCosmetics(uuid);
-    return c.json(data);
+    const rows = await getGamePlayerCosmetics(mcUuid);
+    return c.json(cosmeticsPayload(rows[0]));
   } catch (err) {
     logger.warn({ err: String(err) }, '[player/cosmetics] game MySQL failed');
   }
-  const data = await getPlayerCosmetics(uuid);
+  const data = await getPlayerCosmetics(mcUuid);
   return c.json(data);
 });
 
+/** POST /api/player/cosmetics/equip — { action: 'equip', cosmetic } or
+ *  { action: 'unequip', type }. Applies on the live player via the bus, so
+ *  the player must be online (the UI says so). */
+api.post('/player/cosmetics/equip', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  let body: { action?: string; cosmetic?: string; type?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+  const action = body.action === 'unequip' ? 'unequip' : 'equip';
+  try {
+    const response = await sendCommandWithResponse(
+      'COSMETIC_SET',
+      { uuid: mcUuid, action, cosmetic: (body.cosmetic ?? '').slice(0, 64), type: (body.type ?? '').slice(0, 32) },
+      8_000,
+    );
+    if (response.status === 'OK') {
+      return c.json((response.data ?? {}) as Record<string, unknown>);
+    }
+    return c.json({ error: response.error ?? 'Equip refused' }, 409);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/cosmetics/equip] dispatch failed');
+    return c.json({ error: 'Game server did not respond' }, 501);
+  }
+});
+
 /** GET /api/player/quests — game MySQL first; Postgres fallback. */
-api.get('/player/quests', requireAuth, requireLinked, async (c) => {
+api.get('/player/quests', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   try {
     const data = await getGamePlayerDailyQuests(uuid);
@@ -850,7 +896,7 @@ api.get('/player/quests', requireAuth, requireLinked, async (c) => {
  * return the SAME shape ({legion: LegionInfo, members: LegionMemberInfo[]}):
  * the game helpers (B-11) map the plugin's legion_members/legions columns
  * (player_uuid, role — LegionRank enum names) into the LegionInfo form. */
-api.get('/player/legion', requireAuth, requireLinked, async (c) => {
+api.get('/player/legion', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   try {
     const legionId = await getGamePlayerLegionId(uuid);
@@ -2591,10 +2637,31 @@ api.post('/tickets/:id/respond', async (c) => {
 /* ---------------------------------------------------------- Crate keys */
 
 /**
- * GET /api/player/crates — the calling player's crate key counts per type.
+ * GET /api/player/crates — the calling player's crate key counts per type
+ * (classic crates + store product lines) and their recent real openings.
  */
 api.get('/player/crates', requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
+  // Game MySQL first — it holds BOTH key stores (player_crate_keys for the
+  // classic crates, crate_line_keys for the store product lines) plus the
+  // real opening history (crate_open_log). The Postgres mirror only carries
+  // the classic table, so it stays as the fallback for key counts.
+  try {
+    const [keys, openings] = await Promise.all([
+      getGameCrateKeys(mcUuid),
+      getGameCrateOpenings(mcUuid, 25),
+    ]);
+    return c.json({
+      keys,
+      recentOpens: openings.map((r) => ({
+        crate: String(r.crate_id ?? ''),
+        reward: String(r.reward_display ?? ''),
+        at: r.opened_at instanceof Date ? r.opened_at.toISOString() : String(r.opened_at ?? ''),
+      })),
+    });
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/crates] game MySQL failed — falling back to Postgres');
+  }
   const result = await query<{ crate_type: string; key_count: string }>(
     'SELECT crate_type, key_count FROM player_crate_keys WHERE uuid = $1 AND key_count > 0',
     [mcUuid],
@@ -2603,7 +2670,162 @@ api.get('/player/crates', requireMcIdentity, async (c) => {
   for (const row of result.rows) {
     keys[row.crate_type] = parseInt(row.key_count, 10);
   }
-  return c.json({ keys });
+  return c.json({ keys, recentOpens: [] });
+});
+
+/* ── Tags (dashboard wardrobe) — owned/active ids come from the game's
+ * TagsService over the bus (tags live in a flat YAML, not SQL). */
+api.get('/player/tags', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  try {
+    const response = await sendCommandWithResponse('GET_TAGS_STATUS', { uuid: mcUuid }, 8_000);
+    if (response.status === 'OK') {
+      return c.json((response.data ?? {}) as Record<string, unknown>, 200, { 'Cache-Control': 'no-store' });
+    }
+    return c.json({ error: response.error ?? 'Plugin refused the tags read' }, 502);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/tags] dispatch failed');
+    return c.json({ error: 'Game server did not respond' }, 501);
+  }
+});
+
+/** POST /api/player/tags/equip — { tag: id } ("" to unequip). Requires the
+ *  player to be ONLINE (the plugin equips on the live Player object). */
+api.post('/player/tags/equip', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  let body: { tag?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+  const tag = (body.tag ?? '').slice(0, 64);
+  try {
+    const response = await sendCommandWithResponse('TAG_SET_ACTIVE', { uuid: mcUuid, tag }, 8_000);
+    if (response.status === 'OK') {
+      return c.json((response.data ?? {}) as Record<string, unknown>);
+    }
+    return c.json({ error: response.error ?? 'Equip refused' }, 409);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/tags/equip] dispatch failed');
+    return c.json({ error: 'Game server did not respond' }, 501);
+  }
+});
+
+/* ── Data rights (privacy) — the dashboard drives the plugin's /privacy pipeline
+ * over the Redis bus. Identity always comes from the resolved principal
+ * (c.var.mcUuid): a session reads its own account, the site proxy asserts the
+ * linked uuid under the service token. The full-record export and the staged
+ * download file live in the game MySQL privacy_export_files table. */
+
+api.get('/player/privacy', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  try {
+    const response = await sendCommandWithResponse('PRIVACY_STATUS', { uuid: mcUuid }, 8_000);
+    if (response.status === 'OK') {
+      return c.json((response.data ?? {}) as Record<string, unknown>, 200, { 'Cache-Control': 'no-store' });
+    }
+    return c.json({ error: response.error ?? 'Plugin refused the status request' }, 502);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/privacy] status dispatch failed');
+    return c.json({ error: 'Game server did not respond' }, 501);
+  }
+});
+
+/** POST /api/player/privacy/export — run the full-record export (rate-limited
+ *  in-game to one per exportRateDays). Stages a downloadable JSON. */
+api.post('/player/privacy/export', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  const username = c.req.query('username') ?? c.req.header('X-Mc-Name') ?? mcUuid;
+  try {
+    // The export reads every player table — allow it time.
+    const response = await sendCommandWithResponse('PRIVACY_EXPORT', { uuid: mcUuid, name: username }, 90_000);
+    if (response.status === 'OK') {
+      return c.json((response.data ?? {}) as Record<string, unknown>);
+    }
+    return c.json({ error: response.error ?? 'Export refused' }, 409);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/privacy/export] dispatch failed');
+    return c.json({ error: 'Game server did not respond — try again shortly' }, 501);
+  }
+});
+
+/** GET /api/player/privacy/export/download — serve the latest unexpired staged
+ *  export as a file download. 404 until one exists. */
+api.get('/player/privacy/export/download', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  try {
+    const staged = await getGamePrivacyExport(mcUuid);
+    if (!staged) return c.json({ error: 'No export available — request one first' }, 404);
+    return c.body(staged.data, 200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="imperiummc-data-export-${mcUuid.slice(0, 8)}-${staged.date}.json"`,
+      'Cache-Control': 'no-store',
+    });
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/privacy/export/download] read failed');
+    return c.json({ error: 'Export store unavailable' }, 503);
+  }
+});
+
+/** POST /api/player/privacy/delete — schedule erasure after the cooling
+ *  window. The UI runs a multi-step confirmation before this call; the body
+ *  must still carry the literal typed confirmation to be accepted here. */
+api.post('/player/privacy/delete', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  let body: { confirm?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+  if (body.confirm !== 'DELETE') {
+    return c.json({ error: 'Typed confirmation required' }, 400);
+  }
+  try {
+    const response = await sendCommandWithResponse('PRIVACY_ERASURE_REQUEST', { uuid: mcUuid }, 8_000);
+    if (response.status === 'OK') {
+      return c.json((response.data ?? {}) as Record<string, unknown>);
+    }
+    return c.json({ error: response.error ?? 'Erasure request refused' }, 502);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/privacy/delete] dispatch failed');
+    return c.json({ error: 'Game server did not respond' }, 501);
+  }
+});
+
+/** POST /api/player/privacy/delete/cancel — cancel a pending erasure inside
+ *  the cooling window. */
+api.post('/player/privacy/delete/cancel', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  try {
+    const response = await sendCommandWithResponse('PRIVACY_ERASURE_CANCEL', { uuid: mcUuid }, 8_000);
+    if (response.status === 'OK') {
+      return c.json((response.data ?? {}) as Record<string, unknown>);
+    }
+    return c.json({ error: response.error ?? 'Cancel refused' }, 502);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/privacy/delete/cancel] dispatch failed');
+    return c.json({ error: 'Game server did not respond' }, 501);
+  }
+});
+
+/* ---------------------------------------------------------- Vote + daily reward streaks */
+
+/**
+ * GET /api/player/rewards — the caller's vote streak (player_votes) and
+ * daily-reward streak (daily_rewards), straight from the game database.
+ * Powers the dashboard home cards; read-only.
+ */
+api.get('/player/rewards', requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  try {
+    const rewards = await getGamePlayerRewards(mcUuid);
+    return c.json(rewards);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/rewards] game MySQL failed');
+    return c.json({ votes: null, daily: null });
+  }
 });
 
 /* ---------------------------------------------------------- Dashboard preferences */
@@ -2878,7 +3100,7 @@ api.get('/marketplace/mine', requireMcIdentity, async (c) => {
  * the shared LEGION_NAME_SCHEMA (the plugin's own gate) so no extra tokens
  * can ride the dispatch. Length-only checks let 'IX Legio leave' through.
  */
-api.post('/legion/create', requireAuth, requireLinked, async (c) => {
+api.post('/legion/create', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   let body: { name?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
@@ -2901,7 +3123,7 @@ api.post('/legion/create', requireAuth, requireLinked, async (c) => {
 /**
  * POST /api/legion/leave — leave current legion.
  */
-api.post('/legion/leave', requireAuth, requireLinked, async (c) => {
+api.post('/legion/leave', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   try {
     const response = await sendCommandWithResponse('DISPATCH_COMMAND', {
@@ -2915,7 +3137,7 @@ api.post('/legion/leave', requireAuth, requireLinked, async (c) => {
 /**
  * POST /api/legion/invite — invite a player to your legion.
  */
-api.post('/legion/invite', requireAuth, requireLinked, async (c) => {
+api.post('/legion/invite', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   let body: { username?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'Invalid JSON' }, 400); }
