@@ -1,69 +1,70 @@
 /**
  * Guild setup — ImperiumMC Discord (guild 1350930327861727262).
- *
- * Creates the full channel structure with topics, posts the welcome/rules/
- * changelog/announcement content, and configures the categories. Idempotent:
- * every step checks for an existing channel by name first.
- *
- * Usage: DISCORD_BOT_TOKEN=... npx tsx scripts/setup-guild.mts
- *
- * Every piece of player-facing text below is written the way a server owner
- * would actually type it — short sentences, contractions, no corporate voice.
+ * Idempotent: creates channels/categories if missing, posts content once.
+ * Usage: npx tsx scripts/setup-guild.mts
  */
-import { REST } from '@discordjs/rest';
-import { Routes, ChannelType, PermissionFlagsBits, type RESTPostAPIGuildChannelJSONBody } from 'discord-api-types/v10';
-
-const GUILD_ID = '1350930327861727262';
-const TOKEN = process.env.DISCORD_BOT_TOKEN;
+const TOKEN = process.env.DISCORD_BOT_TOKEN!;
 if (!TOKEN) throw new Error('Set DISCORD_BOT_TOKEN');
-const rest = new REST({ version: '10' }).setToken(TOKEN);
+const GUILD_ID = '1350930327861727262';
+const BASE = 'https://discord.com/api/v10';
 
-// ── helpers ─────────────────────────────────────────────────────────────────
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-async function guildChannels(): Promise<Array<{ id: string; name: string; type: number; parent_id?: string }>> {
-  return (await rest.get(Routes.guildChannels(GUILD_ID))) as never;
+async function dapi(method: string, path: string, body?: unknown): Promise<any> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: { Authorization: `Bot ${TOKEN}`, 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 429) {
+    const retry = (JSON.parse(await res.text()).retry_after ?? 5) * 1000 + 500;
+    console.log(`  rate-limited, waiting ${Math.ceil(retry / 1000)}s...`);
+    await sleep(retry);
+    return dapi(method, path, body);
+  }
+  if (!res.ok && res.status !== 204) {
+    const text = await res.text();
+    throw new Error(`${method} ${path}: ${res.status} ${text.slice(0, 200)}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+async function channels(): Promise<any[]> {
+  return dapi('GET', `/guilds/${GUILD_ID}/channels`);
 }
 
 async function ensureCategory(name: string): Promise<string> {
-  const existing = (await guildChannels()).find((c) => c.name === name && c.type === ChannelType.GuildCategory);
+  const existing = (await channels()).find((c: any) => c.name === name && c.type === 4);
   if (existing) return existing.id;
-  const created = (await rest.post(Routes.guildChannels(GUILD_ID), {
-    body: { name, type: ChannelType.GuildCategory },
-  })) as { id: string };
-  console.log(`+ category #${name}`);
+  const created = await dapi('POST', `/guilds/${GUILD_ID}/channels`, { name, type: 4 });
+  console.log(`+ category ${name}`);
   return created.id;
 }
 
 async function ensureText(name: string, categoryId: string, topic: string, slowmode = 0): Promise<string> {
-  const existing = (await guildChannels()).find((c) => c.name === name && c.type === ChannelType.GuildText);
+  const existing = (await channels()).find((c: any) => c.name === name && c.type === 0);
   if (existing) {
-    await rest.patch(Routes.channel(existing.id), { body: { topic } }).catch(() => {});
+    await dapi('PATCH', `/channels/${existing.id}`, { topic }).catch(() => {});
     return existing.id;
   }
-  const created = (await rest.post(Routes.guildChannels(GUILD_ID), {
-    body: {
-      name,
-      type: ChannelType.GuildText,
-      parent_id: categoryId,
-      topic,
-      rate_limit_per_user: slowmode,
-    } satisfies RESTPostAPIGuildChannelJSONBody,
-  })) as { id: string };
+  const created = await dapi('POST', `/guilds/${GUILD_ID}/channels`, {
+    name, type: 0, parent_id: categoryId, topic, rate_limit_per_user: slowmode,
+  });
   console.log(`+ channel #${name}`);
   return created.id;
 }
 
 async function postOnce(channelId: string, content: string, marker: string): Promise<void> {
-  const msgs = (await rest.get(Routes.channelMessages(channelId), { query: new URLSearchParams({ limit: '20' }) })) as Array<{ content: string; id: string }>;
-  if (msgs.some((m) => m.content.includes(marker))) {
-    console.log(`  (already posted: ${marker})`);
+  const msgs = await dapi('GET', `/channels/${channelId}/messages?limit=20`);
+  if (msgs.some((m: any) => (m.content || '').includes(marker))) {
+    console.log(`  (already: ${marker})`);
     return;
   }
-  await rest.post(Routes.channelMessages(channelId), { body: { content } });
+  await dapi('POST', `/channels/${channelId}/messages`, { content });
   console.log(`  posted: ${marker}`);
 }
 
-// ── content (written like a person, not a marketing department) ────────────
+// ── content ─────────────────────────────────────────────────────────────────
 
 const WELCOME = `# Welcome to ImperiumMC
 
@@ -119,7 +120,7 @@ Everything we change on the server, posted here. Newest at the top.
 - Rank L unlocks /fly
 - Fly-time vouchers added to vote crates
 
-Want something changed? Post in <#suggestions>.`;
+Want something changed? Post in suggestions.`;
 
 const ANNOUNCE = `# Announcements
 
@@ -144,7 +145,7 @@ const LINK_INFO = `# Account Linking
 
 **To unlink:** \`/unlink\` — works here or in-game.
 
-Having trouble? Open a ticket in <#support>.`;
+Having trouble? Open a ticket in support.`;
 
 const SUGGESTIONS = `Got an idea for the server? Post it here.
 
@@ -158,42 +159,31 @@ We read everything. Stuff that gets implemented tends to come from this channel.
 async function main(): Promise<void> {
   console.log('Setting up ImperiumMC guild...');
 
-  // Info category
   const info = await ensureCategory('IMPERIUMMC');
   const welcomeId = await ensureText('welcome', info, 'Start here — IP, basics, linking guide');
   const rulesId = await ensureText('rules', info, 'Read before playing. Breaking these = punishment.');
-  await ensureText('announcements', info, 'Server news, events, downtime. Rare @everyone pings.', 3600);
-  await ensureText('changelog', info, 'Every change we ship, newest first.');
+  const announceId = await ensureText('announcements', info, 'Server news, events, downtime. Rare @everyone pings.', 3600);
+  const changelogId = await ensureText('changelog', info, 'Every change we ship, newest first.');
   const linkId = await ensureText('link-your-account', info, 'How to link Minecraft ↔ Discord');
 
-  // Community
   const community = await ensureCategory('COMMUNITY');
-  await ensureText('general', community, 'Talk about anything. Keep it civil.');
-  await ensureText('suggestions', community, 'Server improvement ideas — specific ones get implemented.', 300);
+  const generalId = await ensureText('general', community, 'Talk about anything. Keep it civil.');
+  const suggestId = await ensureText('suggestions', community, 'Server improvement ideas — specific ones get implemented.', 300);
   await ensureText('showcase', community, 'Your builds, your rank-ups, your lucky crate pulls.');
   await ensureText('media', community, 'Clips and screenshots.');
 
-  // Support
   const support = await ensureCategory('SUPPORT');
   await ensureText('support', support, 'Use /ticket to open a support ticket. Staff respond fast.', 60);
   await ensureText('bug-reports', support, 'Found something broken? Describe it + how to reproduce.', 120);
 
-  // Post the pinned content (idempotent — checks for markers)
   await postOnce(welcomeId, WELCOME, 'Welcome to ImperiumMC');
   await postOnce(rulesId, RULES, 'Server Rules');
   await postOnce(linkId, LINK_INFO, 'Account Linking');
-  const channels = await guildChannels();
-  const announceCh = channels.find((c) => c.name === 'announcements');
-  const changelogCh = channels.find((c) => c.name === 'changelog');
-  const suggestCh = channels.find((c) => c.name === 'suggestions');
-  if (announceCh) await postOnce(announceCh.id, ANNOUNCE, 'Announcements');
-  if (changelogCh) await postOnce(changelogCh.id, CHANGELOG, 'Changelog');
-  if (suggestCh) await postOnce(suggestCh.id, SUGGESTIONS, 'Got an idea');
+  await postOnce(announceId, ANNOUNCE, 'Announcements');
+  await postOnce(changelogId, CHANGELOG, 'Changelog');
+  await postOnce(suggestId, SUGGESTIONS, 'Got an idea');
 
   console.log('Done.');
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main().catch((err) => { console.error(err); process.exit(1); });
