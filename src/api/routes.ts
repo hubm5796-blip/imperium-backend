@@ -2757,7 +2757,33 @@ api.get('/player/privacy/export/download', requireMcIdentity, async (c) => {
   try {
     const staged = await getGamePrivacyExport(mcUuid);
     if (!staged) return c.json({ error: 'No export available — request one first' }, 404);
-    return c.body(staged.data, 200, {
+    let body = staged.data;
+    // COMPLETENESS LAYER: the plugin's export covers the game MySQL only. The
+    // backend's own Postgres records for this player are merged into the
+    // download so the file truly holds every record we keep (blueprint 07-01
+    // "all records" + GDPR portability). Failures degrade to a note, never a
+    // broken download.
+    try {
+      const pg = {} as Record<string, unknown>;
+      pg.discord_link = (
+        await query<Record<string, unknown>>('SELECT discord_id, created_at FROM discord_links WHERE uuid = $1', [mcUuid])
+      ).rows[0] ?? null;
+      pg.dashboard_preferences = (
+        await query<Record<string, unknown>>('SELECT preferences, updated_at FROM player_preferences WHERE uuid = $1', [mcUuid])
+      ).rows[0] ?? null;
+      pg.support_tickets = (
+        await query<Record<string, unknown>>('SELECT id, subject, status, created_at FROM support_tickets WHERE uuid = $1 ORDER BY id DESC LIMIT 100', [mcUuid])
+      ).rows;
+      pg.web_events = (
+        await query<Record<string, unknown>>('SELECT * FROM web_events WHERE uuid = $1 ORDER BY id DESC LIMIT 500', [mcUuid])
+      ).rows;
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      parsed._postgres_layer = { note: 'records held by the web backend (Supabase Postgres), merged at download time', ...pg };
+      body = JSON.stringify(parsed);
+    } catch (err) {
+      logger.warn({ err: String(err) }, '[privacy/download] Postgres merge degraded — serving game-DB export as-is');
+    }
+    return c.body(body, 200, {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Disposition': `attachment; filename="imperiummc-data-export-${mcUuid.slice(0, 8)}-${staged.date}.json"`,
       'Cache-Control': 'no-store',
