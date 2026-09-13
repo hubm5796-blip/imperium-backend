@@ -178,10 +178,10 @@ export function unlinkAccount(discordId: string) {
  * The backend looks the player up by Discord id when `discord_id` is passed,
  * or by uuid/username otherwise.
  */
-export function getProfile(opts: { discordId?: string; uuid?: string }) {
+export function getProfile(opts: { discordId?: string; uuid?: string; username?: string }) {
   return request<PlayerProfile>(
     'GET',
-    `/api/player/profile${qs({ discord_id: opts.discordId, uuid: opts.uuid })}`,
+    `/api/player/profile${qs({ discord_id: opts.discordId, uuid: opts.uuid, username: opts.username })}`,
   );
 }
 

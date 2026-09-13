@@ -8,6 +8,7 @@ export const cratesCommand: BotCommand = {
     return new SlashCommandBuilder()
       .setName('crates')
       .setDescription('View all available ImperiumMC crate types')
+      .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
       .toJSON();
   },
   async execute(interaction) {

@@ -65,3 +65,33 @@ export async function getAuthorMember(interaction: InteractionShim): Promise<Dis
 export function getTargetUserOption(interaction: InteractionShim): string | undefined {
   return interaction.options.getUser('user', false)?.id ?? undefined;
 }
+
+/**
+ * Resolves the lookup target for stat commands. Accepts BOTH:
+ *  - `player` (string): a Minecraft username, passed straight through
+ *  - `user` (Discord user): a linked Discord account
+ *
+ * Returns getProfile() kwargs — whichever was provided wins, `player` first
+ * (an explicit MC name is more specific than a Discord lookup).
+ */
+export function getTargetKwargs(
+  interaction: InteractionShim,
+): { discordId?: string; username?: string } {
+  const mcName = interaction.options.getString('player', false);
+  if (mcName && mcName.trim()) return { username: mcName.trim() };
+  const discordId = getTargetUserOption(interaction);
+  if (discordId && discordId !== interaction.user.id) return { discordId };
+  if (discordId === interaction.user.id) return { discordId };
+  return {}; // self — getProfile with no kwargs reads the linked self
+}
+
+/** Standard option builders for stat commands (player OR user). */
+export function addTargetOptions(builder: SlashCommandBuilder): SlashCommandBuilder {
+  return builder
+    .addStringOption((o) =>
+      o.setName('player').setDescription('Minecraft username to look up'),
+    )
+    .addUserOption((o) =>
+      o.setName('user').setDescription('A Discord user (linked account)'),
+    ) as SlashCommandBuilder;
+}
