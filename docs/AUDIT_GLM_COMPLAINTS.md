@@ -24,9 +24,9 @@ While the migration from standalone Node to Cloudflare Workers resolved many mem
 * **Category:** Security / Secret Exposure
 * **Location:** `wrangler.jsonc:24`
   ```json
-  "localConnectionString": "postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC%26@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
+  "localConnectionString": "postgresql://postgres.rgqgaiwcuqmidbxggayk:[REDACTED-2026-09-13-rotate-me]@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
   ```
-* **The Problem:** The production Supabase pooler password (`KCxtU9fjBMkZDRC%26`) is committed directly in plaintext inside `wrangler.jsonc`. Anyone with read access to the repository has full administrative access to the primary Postgres database containing player data, balances, and links.
+* **The Problem:** The production Supabase pooler password (`[REDACTED-2026-09-13-rotate-me]`) is committed directly in plaintext inside `wrangler.jsonc`. Anyone with read access to the repository has full administrative access to the primary Postgres database containing player data, balances, and links.
 * **Remediation Action:**
   1. Immediately rotate the Supabase database password in the Supabase console.
   2. Remove `localConnectionString` or replace it with an environment variable placeholder / dummy string (`postgresql://postgres:REDACTED@localhost:5432/postgres`).

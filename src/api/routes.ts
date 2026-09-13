@@ -24,7 +24,7 @@ import {
   resolveStaffActor,
   staffActorHasRole,
 } from '../middleware/gates.js';
-import { authRateLimit, globalRateLimit, rateLimit, writeRateLimit } from '../middleware/rateLimit.js';
+import { authRateLimit, globalRateLimit, rateLimit, readRateLimit, writeRateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
   deleteDiscordLinkByUuid,
@@ -51,6 +51,7 @@ import {
   getWaveLeaderboard,
   isAlreadyLinked,
   isSubscriptionCacheStale,
+  playerQuery,
   query,
   setPaynowCustomerId,
   upsertCachedSubscription,
@@ -854,7 +855,7 @@ api.get('/player/cosmetics', requireMcIdentity, async (c) => {
 /** POST /api/player/cosmetics/equip — { action: 'equip', cosmetic } or
  *  { action: 'unequip', type }. Applies on the live player via the bus, so
  *  the player must be online (the UI says so). */
-api.post('/player/cosmetics/equip', requireMcIdentity, async (c) => {
+api.post('/player/cosmetics/equip', writeRateLimit, requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   let body: { action?: string; cosmetic?: string; type?: string };
   try {
@@ -2640,7 +2641,7 @@ api.post('/tickets/:id/respond', async (c) => {
  * GET /api/player/crates — the calling player's crate key counts per type
  * (classic crates + store product lines) and their recent real openings.
  */
-api.get('/player/crates', requireMcIdentity, async (c) => {
+api.get('/player/crates', readRateLimit, requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   // Game MySQL first — it holds BOTH key stores (player_crate_keys for the
   // classic crates, crate_line_keys for the store product lines) plus the
@@ -2675,7 +2676,7 @@ api.get('/player/crates', requireMcIdentity, async (c) => {
 
 /* ── Tags (dashboard wardrobe) — owned/active ids come from the game's
  * TagsService over the bus (tags live in a flat YAML, not SQL). */
-api.get('/player/tags', requireMcIdentity, async (c) => {
+api.get('/player/tags', readRateLimit, requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   try {
     const response = await sendCommandWithResponse('GET_TAGS_STATUS', { uuid: mcUuid }, 8_000);
@@ -2691,7 +2692,7 @@ api.get('/player/tags', requireMcIdentity, async (c) => {
 
 /** POST /api/player/tags/equip — { tag: id } ("" to unequip). Requires the
  *  player to be ONLINE (the plugin equips on the live Player object). */
-api.post('/player/tags/equip', requireMcIdentity, async (c) => {
+api.post('/player/tags/equip', writeRateLimit, requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   let body: { tag?: string };
   try {
@@ -2718,7 +2719,7 @@ api.post('/player/tags/equip', requireMcIdentity, async (c) => {
  * linked uuid under the service token. The full-record export and the staged
  * download file live in the game MySQL privacy_export_files table. */
 
-api.get('/player/privacy', requireMcIdentity, async (c) => {
+api.get('/player/privacy', readRateLimit, requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   try {
     const response = await sendCommandWithResponse('PRIVACY_STATUS', { uuid: mcUuid }, 8_000);
@@ -2734,7 +2735,7 @@ api.get('/player/privacy', requireMcIdentity, async (c) => {
 
 /** POST /api/player/privacy/export — run the full-record export (rate-limited
  *  in-game to one per exportRateDays). Stages a downloadable JSON. */
-api.post('/player/privacy/export', requireMcIdentity, async (c) => {
+api.post('/player/privacy/export', rateLimit(3, 60_000, 'privacy-export'), requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   const username = c.req.query('username') ?? c.req.header('X-Mc-Name') ?? mcUuid;
   try {
@@ -2752,7 +2753,7 @@ api.post('/player/privacy/export', requireMcIdentity, async (c) => {
 
 /** GET /api/player/privacy/export/download — serve the latest unexpired staged
  *  export as a file download. 404 until one exists. */
-api.get('/player/privacy/export/download', requireMcIdentity, async (c) => {
+api.get('/player/privacy/export/download', readRateLimit, requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   try {
     const staged = await getGamePrivacyExport(mcUuid);
@@ -2766,16 +2767,16 @@ api.get('/player/privacy/export/download', requireMcIdentity, async (c) => {
     try {
       const pg = {} as Record<string, unknown>;
       pg.discord_link = (
-        await query<Record<string, unknown>>('SELECT discord_id, created_at FROM discord_links WHERE uuid = $1', [mcUuid])
+        await playerQuery<Record<string, unknown>>(mcUuid, 'SELECT discord_id, created_at FROM discord_links WHERE uuid = $1', [mcUuid])
       ).rows[0] ?? null;
       pg.dashboard_preferences = (
-        await query<Record<string, unknown>>('SELECT preferences, updated_at FROM player_preferences WHERE uuid = $1', [mcUuid])
+        await playerQuery<Record<string, unknown>>(mcUuid, 'SELECT preferences, updated_at FROM web_dashboard_prefs WHERE uuid = $1', [mcUuid])
       ).rows[0] ?? null;
       pg.support_tickets = (
-        await query<Record<string, unknown>>('SELECT id, subject, status, created_at FROM support_tickets WHERE uuid = $1 ORDER BY id DESC LIMIT 100', [mcUuid])
+        await playerQuery<Record<string, unknown>>(mcUuid, 'SELECT id, subject, status, created_at FROM support_tickets WHERE uuid = $1 ORDER BY id DESC LIMIT 100', [mcUuid])
       ).rows;
       pg.web_events = (
-        await query<Record<string, unknown>>('SELECT * FROM web_events WHERE uuid = $1 ORDER BY id DESC LIMIT 500', [mcUuid])
+        await playerQuery<Record<string, unknown>>(mcUuid, 'SELECT * FROM web_events WHERE uuid = $1 ORDER BY id DESC LIMIT 500', [mcUuid])
       ).rows;
       const parsed = JSON.parse(body) as Record<string, unknown>;
       parsed._postgres_layer = { note: 'records held by the web backend (Supabase Postgres), merged at download time', ...pg };
@@ -2797,7 +2798,7 @@ api.get('/player/privacy/export/download', requireMcIdentity, async (c) => {
 /** POST /api/player/privacy/delete — schedule erasure after the cooling
  *  window. The UI runs a multi-step confirmation before this call; the body
  *  must still carry the literal typed confirmation to be accepted here. */
-api.post('/player/privacy/delete', requireMcIdentity, async (c) => {
+api.post('/player/privacy/delete', rateLimit(3, 60_000, 'privacy-delete'), requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   let body: { confirm?: string };
   try {
@@ -2822,7 +2823,7 @@ api.post('/player/privacy/delete', requireMcIdentity, async (c) => {
 
 /** POST /api/player/privacy/delete/cancel — cancel a pending erasure inside
  *  the cooling window. */
-api.post('/player/privacy/delete/cancel', requireMcIdentity, async (c) => {
+api.post('/player/privacy/delete/cancel', rateLimit(5, 60_000, 'privacy-delete-cancel'), requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   try {
     const response = await sendCommandWithResponse('PRIVACY_ERASURE_CANCEL', { uuid: mcUuid }, 8_000);
@@ -2843,7 +2844,7 @@ api.post('/player/privacy/delete/cancel', requireMcIdentity, async (c) => {
  * daily-reward streak (daily_rewards), straight from the game database.
  * Powers the dashboard home cards; read-only.
  */
-api.get('/player/rewards', requireMcIdentity, async (c) => {
+api.get('/player/rewards', readRateLimit, requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   try {
     const rewards = await getGamePlayerRewards(mcUuid);
@@ -2871,7 +2872,7 @@ let preferencesTableReady: Promise<void> | null = null;
 function ensurePreferencesTable(): Promise<void> {
   preferencesTableReady ??= (async () => {
     await query(
-      `CREATE TABLE IF NOT EXISTS player_preferences (
+      `CREATE TABLE IF NOT EXISTS web_dashboard_prefs (
          uuid TEXT PRIMARY KEY,
          preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -2923,8 +2924,8 @@ api.post('/player/preferences', async (c) => {
   }
 
   await ensurePreferencesTable();
-  await query(
-    `INSERT INTO player_preferences (uuid, preferences, updated_at)
+  await playerQuery(uuid,
+    `INSERT INTO web_dashboard_prefs (uuid, preferences, updated_at)
      VALUES ($1, $2::jsonb, now())
      ON CONFLICT (uuid) DO UPDATE SET preferences = $2::jsonb, updated_at = now()`,
     [uuid, serialized],
@@ -2941,7 +2942,7 @@ api.get('/player/preferences', async (c) => {
   if (!uuid) return c.json({ error: 'Invalid uuid' }, 400);
   await ensurePreferencesTable();
   const result = await query<{ preferences: unknown }>(
-    'SELECT preferences FROM player_preferences WHERE uuid = $1',
+    'SELECT preferences FROM web_dashboard_prefs WHERE uuid = $1',
     [uuid],
   );
   return c.json({ preferences: result.rows[0]?.preferences ?? {} });

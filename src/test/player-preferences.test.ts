@@ -6,7 +6,9 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../db/pool.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../db/pool.js')>();
   const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
-  return { ...actual, query };
+  // Self-scoped wrapper: delegate to the same canned rows as query().
+  const playerQuery = vi.fn(async (_uuid: string, sql: string, params: unknown[]) => query(sql, params));
+  return { ...actual, query, playerQuery };
 });
 
 vi.mock('../db/redis.js', async (importOriginal) => {
@@ -21,7 +23,7 @@ vi.mock('../db/redis.js', async (importOriginal) => {
 
 import { createApp } from '../app.js';
 import { initEnvFromBindings } from '../env.js';
-import { query as queryMock } from '../db/pool.js';
+import { query as queryMock, playerQuery as playerQueryMock } from '../db/pool.js';
 
 const TEST_UUID = '11111111-2222-4333-8444-555555555555';
 const BOT_HEADERS = { 'X-Bot-Token': 'test-bot-token', 'Content-Type': 'application/json' };
@@ -61,7 +63,7 @@ describe('GET/POST /api/player/preferences', () => {
 
   it('GET returns the stored preferences, {} when absent', async () => {
     vi.mocked(queryMock).mockImplementation(async (sql: string) => {
-      if (String(sql).includes('FROM player_preferences')) {
+      if (String(sql).includes('FROM web_dashboard_prefs')) {
         return { rows: [{ preferences: { language: 'en', notifications: { events: true } } }], rowCount: 1 } as never;
       }
       return { rows: [], rowCount: 0 } as never; // CREATE TABLE IF NOT EXISTS + anything else

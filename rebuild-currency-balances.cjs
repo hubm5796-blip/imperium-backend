@@ -55,7 +55,7 @@ const SUPABASE_CFG = {
   port: 6543,
   database: 'postgres',
   user: 'postgres.rgqgaiwcuqmidbxggayk',
-  password: process.env.SUPABASE_PASSWORD ?? 'KCxtU9fjBMkZDRC&',
+  password: (process.env.SUPABASE_PASSWORD ?? (() => { throw new Error('set SUPABASE_PASSWORD env — credentials no longer live in scripts'); })()),
   ssl: { rejectUnauthorized: false },
 };
 
