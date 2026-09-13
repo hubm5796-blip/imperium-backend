@@ -416,3 +416,102 @@ export async function getGamePlayerDailyQuests(uuid: string): Promise<Array<Reco
     [uuid],
   );
 }
+
+export async function getGameCrateKeys(uuid: string): Promise<Record<string, number>> {
+  // Both key stores: legacy per-crate keys (player_crate_keys) and the
+  // store product lines (crate_line_keys). Merged into one id->count map —
+  // the dashboard shows both families as one catalog.
+  const [legacy, lines] = await Promise.all([
+    gameQuery<{ crate_type: string; key_count: number }>(
+      'SELECT crate_type, key_count FROM player_crate_keys WHERE uuid = ? AND key_count > 0',
+      [uuid],
+    ),
+    gameQuery<{ line: string; amount: number }>(
+      'SELECT line, amount FROM crate_line_keys WHERE uuid = ? AND amount > 0',
+      [uuid],
+    ),
+  ]);
+  const keys: Record<string, number> = {};
+  for (const row of legacy) keys[row.crate_type] = Number(row.key_count ?? 0);
+  for (const row of lines) keys[row.line] = Number(row.amount ?? 0);
+  return keys;
+}
+
+export async function getGameCrateOpenings(uuid: string, limit = 25): Promise<Array<Record<string, unknown>>> {
+  return gameQuery(
+    'SELECT crate_id, reward_display, timestamp AS opened_at FROM crate_open_log WHERE uuid = ? ORDER BY opened_at DESC LIMIT ?',
+    [uuid, limit],
+  );
+}
+
+export interface GamePlayerRewards {
+  votes: { currentStreak: number; totalVotes: number; lastVoteDay: string | null } | null;
+  daily: { currentStreak: number; bestStreak: number; totalClaimed: number; lastClaim: string | null } | null;
+}
+
+export async function getGamePlayerRewards(uuid: string): Promise<GamePlayerRewards> {
+  const [votes, daily] = await Promise.all([
+    gameQuery<{ current_streak: number; total_votes: number; last_vote_day: string | null }>(
+      'SELECT current_streak, total_votes, last_vote_day FROM player_votes WHERE uuid = ? LIMIT 1',
+      [uuid],
+    ),
+    gameQuery<{ current_streak: number; best_streak: number; total_claimed: number; last_claim: string | null }>(
+      'SELECT current_streak, best_streak, total_claimed, last_claim FROM daily_rewards WHERE uuid = ? LIMIT 1',
+      [uuid],
+    ),
+  ]);
+  return {
+    votes: votes[0]
+      ? {
+          currentStreak: Number(votes[0].current_streak ?? 0),
+          totalVotes: Number(votes[0].total_votes ?? 0),
+          lastVoteDay: votes[0].last_vote_day ?? null,
+        }
+      : null,
+    daily: daily[0]
+      ? {
+          currentStreak: Number(daily[0].current_streak ?? 0),
+          bestStreak: Number(daily[0].best_streak ?? 0),
+          totalClaimed: Number(daily[0].total_claimed ?? 0),
+          lastClaim: daily[0].last_claim ?? null,
+        }
+      : null,
+  };
+}
+
+export async function getGamePrivacyExport(
+  uuid: string,
+): Promise<{ data: string; createdAtMs: number; date: string } | null> {
+  const rows = await gameQuery<{ data: string; created_at_ms: number }>(
+    'SELECT data, created_at_ms FROM privacy_export_files WHERE uuid = ? AND expires_at_ms > ? ORDER BY id DESC LIMIT 1',
+    [uuid, Date.now()],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const created = Number(row.created_at_ms ?? 0);
+  return {
+    data: String(row.data ?? ''),
+    createdAtMs: created,
+    date: new Date(created).toISOString().slice(0, 10),
+  };
+}
+
+export async function getGamePlayerFirstSeen(uuid: string): Promise<string | null> {
+  // onboarding_state.first_seen is the closest thing to a join record; fall
+  // back to the earliest economy log row (every player earns their first
+  // denarius within minutes of joining).
+  const [onboard, econ] = await Promise.all([
+    gameQuery<{ first_seen: string | null }>(
+      'SELECT first_seen FROM onboarding_state WHERE player_uuid = ? LIMIT 1',
+      [uuid],
+    ),
+    gameQuery<{ timestamp: string }>(
+      'SELECT timestamp FROM economy_logs WHERE uuid = ? ORDER BY timestamp ASC LIMIT 1',
+      [uuid],
+    ),
+  ]);
+  const fromOnboard = onboard[0]?.first_seen ?? null;
+  if (fromOnboard) return String(fromOnboard);
+  const fromEcon = econ[0]?.timestamp ?? null;
+  return fromEcon ? String(fromEcon) : null;
+}
