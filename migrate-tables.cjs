@@ -20,7 +20,7 @@ const { Pool } = require('pg');
 // rejects the Supabase pooler cert. The explicit ssl Pool option below applies.
 const pool = new Pool({
   connectionString:
-    'postgresql://postgres.rgqgaiwcuqmidbxggayk:KCxtU9fjBMkZDRC%26@aws-0-us-east-1.pooler.supabase.com:6543/postgres',
+    'postgresql://postgres.rgqgaiwcuqmidbxggayk:[REDACTED-2026-09-13-rotate-me]@aws-0-us-east-1.pooler.supabase.com:6543/postgres',
   ssl: { rejectUnauthorized: false },
   connectionTimeoutMillis: 15000,
   max: 3,

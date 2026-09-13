@@ -126,6 +126,45 @@ export async function query<T extends QueryResultRow>(
 }
 
 /**
+ * SELF-SCOPED query: sets the `imperium.uuid` session context for the
+ * duration of one statement so the Supabase ROW LEVEL SECURITY policies
+ * (player_self on web_dashboard_prefs / discord_links / support_tickets /
+ * web_events / web_queue) can restrict rows to exactly this player —
+ * defense-in-depth behind the route's own WHERE clause. Policies were
+ * verified live (2026-09-13): a connection without the setting sees 0 rows,
+ * a wrong-uuid setting sees 0 rows. The current production role (postgres,
+ * via Hyperdrive) bypasses RLS until the owner points a Hyperdrive at the
+ * restricted imperium_app role — the code path is identical either way, so
+ * flipping the role activates enforcement with no further deploys.
+ */
+export async function playerQuery<T extends QueryResultRow>(
+  uuid: string,
+  text: string,
+  params: ReadonlyArray<unknown>,
+): Promise<QueryResult<T>> {
+  if (workersConnectionString !== null) {
+    // Workers path: one connection per statement. Set the context first —
+    // non-transactional set_config persists for the connection's life, and
+    // the connection is discarded after this statement anyway.
+    await workerQuery(workersConnectionString, "SELECT set_config('imperium.uuid', $1, false)", [uuid]);
+    return workerQuery<T>(workersConnectionString, text, params);
+  }
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT set_config('imperium.uuid', $1, true)", [uuid]);
+    const result = await client.query<T>(text, params as unknown[]);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* connection already broken */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Look up the Minecraft UUID associated with a Discord account, if linked.
  * This is the identity-resolution step for every Discord login — if it can't
  * run, nobody who signed in with Discord can do anything on the site,

@@ -26,7 +26,7 @@ This file: **B-35…B-42**.
 
 **Evidence:** `rebuild-currency-balances.cjs:20-35` —
 `process.env.MYSQL_PASSWORD ?? 'xnimJLk2mllZ9LmcYYFvrq.C'`,
-`process.env.SUPABASE_PASSWORD ?? 'KCxtU9fjBMkZDRC&'`. C1 + rounds flagged
+`process.env.SUPABASE_PASSWORD ?? '[REDACTED-2026-09-13-rotate-me]'`. C1 + rounds flagged
 `wrangler.jsonc:24` and `migrate-tables.cjs:22-24`; this is a **third copy**
 plus a MySQL password nowhere else flagged. Halves any C1 rotation; history
 retains both forever.
