@@ -5,9 +5,12 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../db/pool.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../db/pool.js')>();
-  const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
+  const query = vi.fn(async (..._args: unknown[]) => ({ rows: [], rowCount: 0 }));
   // Self-scoped wrapper: delegate to the same canned rows as query().
-  const playerQuery = vi.fn(async (_uuid: string, sql: string, params: unknown[]) => query(sql, params));
+  const playerQuery = vi.fn(async (...args: unknown[]) => {
+    const [, sql, params] = args as [string, string, unknown[]];
+    return query(sql, params);
+  });
   return { ...actual, query, playerQuery };
 });
 

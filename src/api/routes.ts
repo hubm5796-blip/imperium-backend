@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler, type Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import { gameQuery, getGamePlayerBalances, getGamePlayerProfile, getGamePlayerFirstSeen, getGamePlayerStats, getGamePlayerAchievements, getGamePlayerSkills, getGamePlayerRankAndPrestige, getGamePlayerFactions, getGameParkourRecords, getGamePlayerLegionId, getGameLegionInfo, getGameLegionMembers, getGamePlayerCosmetics, getGamePlayerDailyQuests, getGameCrateKeys, getGameCrateOpenings, getGamePlayerRewards, getGamePrivacyExport } from '../db/gameMysql.js';
+import { gameQuery, getGamePlayerBalances, getGamePlayerProfile, getGamePlayerFirstSeen, getGamePlayerStats, getGamePlayerAchievements, getGamePlayerSkills, getGamePlayerRankAndPrestige, getGamePlayerFactions, getGameParkourRecords, getGamePlayerLegionId, getGameLegionInfo, getGameLegionMembers, getGameLegionProjects, getGamePlayerCosmetics, getGamePlayerDailyQuests, getGameCrateKeys, getGameCrateOpenings, getGamePlayerRewards, getGamePrivacyExport } from '../db/gameMysql.js';
 import {
   AUTH_COOKIE_NAME,
   authCookieOptions,
@@ -904,7 +904,15 @@ api.get('/player/legion', requireMcIdentity, async (c) => {
     if (legionId) {
       const info = await getGameLegionInfo(legionId);
       const members = await getGameLegionMembers(legionId);
-      return c.json({ legion: info, members });
+      // Projects: completed + in-flight contributions (progress card data).
+      // Best-effort — a missing table degrades to empty lists, not a failed page.
+      let projects: Awaited<ReturnType<typeof getGameLegionProjects>> = { completed: [], contributions: [] };
+      try {
+        projects = await getGameLegionProjects(legionId);
+      } catch (perr) {
+        logger.warn({ err: String(perr) }, '[player/legion] projects read failed — serving without');
+      }
+      return c.json({ legion: info, members, projects });
     }
   } catch (err) {
     // B-11: GameMySqlUnavailableError lands here — degrade explicitly to the
