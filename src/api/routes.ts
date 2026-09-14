@@ -2682,6 +2682,48 @@ api.get('/player/crates', readRateLimit, requireMcIdentity, async (c) => {
   return c.json({ keys, recentOpens: [] });
 });
 
+/* ── Web crate opening (owner directive 2026-09-14): only crates with a
+ * physical stand, only while the player is online — the plugin runs the SAME
+ * single-open pipeline as /crate open (pity, rank scaling, daily limits). */
+api.get('/player/crates/placed', readRateLimit, requireMcIdentity, async (c) => {
+  try {
+    const response = await sendCommandWithResponse('GET_PLACED_CRATES', {}, 8_000);
+    if (response.status === 'OK') {
+      return c.json((response.data ?? { placed: [] }) as Record<string, unknown>, 200, { 'Cache-Control': 'no-store' });
+    }
+    return c.json({ placed: [], error: response.error ?? 'Plugin refused' }, 502);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/crates/placed] dispatch failed');
+    return c.json({ placed: [], error: 'Game server did not respond' }, 501);
+  }
+});
+
+/** POST /api/player/crates/open — { crate }: one real open. Returns the actual
+ *  reward won. Refusals (offline, no key, not placed) are explicit strings the
+ *  UI shows verbatim. */
+api.post('/player/crates/open', rateLimit(10, 60_000, 'crate-open'), requireMcIdentity, async (c) => {
+  const mcUuid = c.var.mcUuid!;
+  let body: { crate?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+  const crate = (body.crate ?? '').slice(0, 64);
+  if (!crate) return c.json({ error: 'Missing crate' }, 400);
+  try {
+    const response = await sendCommandWithResponse('CRATE_OPEN_WEB', { uuid: mcUuid, crate }, 15_000);
+    if (response.status === 'OK') {
+      return c.json((response.data ?? {}) as Record<string, unknown>);
+    }
+    const reason = (response.data as { reason?: string } | undefined)?.reason ?? response.error ?? 'open refused';
+    return c.json({ error: reason }, 409);
+  } catch (err) {
+    logger.warn({ err: String(err) }, '[player/crates/open] dispatch failed');
+    return c.json({ error: 'Game server did not respond' }, 501);
+  }
+});
+
 /* ── Tags (dashboard wardrobe) — owned/active ids come from the game's
  * TagsService over the bus (tags live in a flat YAML, not SQL). */
 api.get('/player/tags', readRateLimit, requireMcIdentity, async (c) => {
