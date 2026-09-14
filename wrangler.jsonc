@@ -77,7 +77,18 @@
 		"NODE_ENV": "production",
 		// Staff error-alert webhook (error-visibility pipeline). Empty = alerting off;
 		// paste a Discord webhook URL (or set it as a dashboard Secret) to arm it.
-		"STAFF_ALERT_WEBHOOK_URL": ""
+		"STAFF_ALERT_WEBHOOK_URL": "",
+		// Dedicated delegated-service token (2026-09-14 web-crate-opening outage):
+		// env.ts always intended INTERNAL_SERVICE_TOKEN as the identity the site
+		// proxy presents (X-Bot-Token + X-Mc-Uuid); it only fell back to
+		// BOT_API_TOKEN "until the owner sets it", and that fallback silently
+		// 401'd every delegated dashboard call because the frontend worker never
+		// got a matching BOT_API_TOKEN secret. This var deploys with the code —
+		// no dashboard action, and no existing credential is rotated (owner
+		// directive: never swap credentials). The frontend worker carries the
+		// same value in ITS wrangler vars. A plaintext var in a private repo is
+		// the same posture this file had for REDIS/HMAC before the 08-28 scrub.
+		"INTERNAL_SERVICE_TOKEN": "svc_7b943e29d84efc2c617edfed37ef82b04c0aeaa138"
 	}
 	// True secrets (JWT_SECRET, PAYNOW_API_KEY, DISCORD_CLIENT_SECRET,
 	// DISCORD_BOT_TOKEN, BOT_API_TOKEN, PAYNOW_WEBHOOK_SECRETS,
