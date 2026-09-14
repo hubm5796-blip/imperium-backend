@@ -540,3 +540,34 @@ export async function getGameLegionProjects(
     contributions: contributing.map((r) => ({ projectId: String(r.project_id ?? ''), total: Number(r.total ?? 0) })),
   };
 }
+
+/** TCP reachability probe for the game listener (default :25565). TRUE = the
+ *  handshake completed — players can connect. This is deliberately SEPARATE
+ *  from the Redis heartbeat: the process can be alive while the host's port
+ *  forwarding is broken (live incident 2026-09-13: heartbeat green, TCP
+ *  refused worldwide), and the site must be able to say "up but not joinable".
+ *  Node path uses net.connect; Workers path uses the cloudflare:sockets
+ *  connect used by the wire client. Never throws — false on any failure. */
+export async function probeTcpPort(port = 25565, timeoutMs = 3_000): Promise<boolean> {
+  const host = poolConfig?.host;
+  if (!host) return false;
+  try {
+    const resolved = await resolveCfConnect();
+    if (resolved) {
+      const cf: CfConnect = resolved;
+      const socket = await cf({ hostname: host, port }, { secureTransport: 'off' });
+      try { await socket.opened; return true; } finally { socket.close?.(); }
+    }
+    const net = await import('node:net');
+    return await new Promise<boolean>((resolve) => {
+      const sock = net.connect({ host, port, timeout: timeoutMs });
+      const done = (ok: boolean) => { try { sock.destroy(); } catch { /* already closed */ } resolve(ok); };
+      sock.on('connect', () => done(true));
+      sock.on('error', () => done(false));
+      sock.on('timeout', () => done(false));
+      setTimeout(() => done(false), timeoutMs + 500).unref?.();
+    });
+  } catch {
+    return false;
+  }
+}

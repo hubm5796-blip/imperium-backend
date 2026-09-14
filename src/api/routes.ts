@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Hono, type Context, type MiddlewareHandler, type Next } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import { gameQuery, getGamePlayerBalances, getGamePlayerProfile, getGamePlayerFirstSeen, getGamePlayerStats, getGamePlayerAchievements, getGamePlayerSkills, getGamePlayerRankAndPrestige, getGamePlayerFactions, getGameParkourRecords, getGamePlayerLegionId, getGameLegionInfo, getGameLegionMembers, getGameLegionProjects, getGamePlayerCosmetics, getGamePlayerDailyQuests, getGameCrateKeys, getGameCrateOpenings, getGamePlayerRewards, getGamePrivacyExport } from '../db/gameMysql.js';
+import { gameQuery, getGamePlayerBalances, getGamePlayerProfile, getGamePlayerFirstSeen, getGamePlayerStats, getGamePlayerAchievements, getGamePlayerSkills, getGamePlayerRankAndPrestige, getGamePlayerFactions, getGameParkourRecords, getGamePlayerLegionId, getGameLegionInfo, getGameLegionMembers, getGameLegionProjects, getGamePlayerCosmetics, getGamePlayerDailyQuests, getGameCrateKeys, getGameCrateOpenings, getGamePlayerRewards, getGamePrivacyExport, probeTcpPort } from '../db/gameMysql.js';
 import {
   AUTH_COOKIE_NAME,
   authCookieOptions,
@@ -1358,6 +1358,7 @@ api.get('/leaderboards/:type', async (c) => {
  *      Redis outage entirely.
  */
 const statusCountMemo: { at: number; value: number | null } = { at: 0, value: null };
+const joinableMemo: { at: number; value: boolean } = { at: 0, value: true };
 const STATUS_MEMO_TTL_MS = 10_000;
 const REDIS_ATTEMPT_TIMEOUT_MS = 700;
 
@@ -1419,6 +1420,21 @@ api.get('/server/status', async (c) => {
     // with "offline" made an empty-but-live server read as Offline in Discord/the site.
     const isUp = count !== null;
 
+    // JOINABILITY (2026-09-13 incident): the heartbeat says the process is
+    // alive; this TCP probe says whether players can actually CONNECT. During
+    // the birdflop port-forwarding outage the site showed a green Online pill
+    // while every connection was refused — 'joinable' lets the UI say
+    // "degraded" honestly. Memoized briefly; the probe is cheap but pointless
+    // to repeat per request.
+    let joinable: boolean | null = null;
+    if (isUp) {
+      if (Date.now() - joinableMemo.at > 15_000) {
+        joinableMemo.at = Date.now();
+        joinableMemo.value = await probeTcpPort(25565, 3_000);
+      }
+      joinable = joinableMemo.value;
+    }
+
     // Online names for the Discord /online embed (12c: "player list + current
     // festival"). Names are public in-game (tab list), so this stays public;
     // best-effort from the online_players snapshot — a missing/empty table
@@ -1466,6 +1482,7 @@ api.get('/server/status', async (c) => {
 
     return c.json({
       online: isUp,
+      joinable,
       playerCount: count ?? 0,
       maxPlayers: 200,
       players,
@@ -1475,6 +1492,7 @@ api.get('/server/status', async (c) => {
   } catch {
     return c.json({
       online: false,
+      joinable: false,
       playerCount: 0,
       maxPlayers: 200,
       players: [],
