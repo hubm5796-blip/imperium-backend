@@ -515,3 +515,28 @@ export async function getGamePlayerFirstSeen(uuid: string): Promise<string | nul
   const fromEcon = econ[0]?.timestamp ?? null;
   return fromEcon ? String(fromEcon) : null;
 }
+
+/** Legion project progress: completed projects + in-flight Civitas contributions.
+ *  legion_projects_completed.legion_id stores the legion NAME (the legions
+ *  table is name-keyed — verified 2026-09-13). */
+export async function getGameLegionProjects(
+  legionName: string,
+): Promise<{
+  completed: Array<{ projectId: string; completedAt: string | null }>;
+  contributions: Array<{ projectId: string; total: number }>;
+}> {
+  const [done, contributing] = await Promise.all([
+    gameQuery<{ project_id: string; completed_at: string | null }>(
+      'SELECT project_id, completed_at FROM legion_projects_completed WHERE legion_id = ? ORDER BY completed_at ASC',
+      [legionName],
+    ),
+    gameQuery<{ project_id: string; total: string }>(
+      'SELECT project_id, SUM(amount) AS total FROM legion_projects_contributions WHERE legion_id = ? GROUP BY project_id',
+      [legionName],
+    ),
+  ]);
+  return {
+    completed: done.map((r) => ({ projectId: String(r.project_id ?? ''), completedAt: r.completed_at ?? null })),
+    contributions: contributing.map((r) => ({ projectId: String(r.project_id ?? ''), total: Number(r.total ?? 0) })),
+  };
+}

@@ -55,7 +55,12 @@ const SUPABASE_CFG = {
   port: 6543,
   database: 'postgres',
   user: 'postgres.rgqgaiwcuqmidbxggayk',
-  password: (process.env.SUPABASE_PASSWORD ?? (() => { throw new Error('set SUPABASE_PASSWORD env — credentials no longer live in scripts'); })()),
+  // Lazy getter: the pure helpers are unit-tested via import — the credential
+  // must only be demanded when a real connection is attempted, never at require.
+  get password() {
+    if (!process.env.SUPABASE_PASSWORD) throw new Error('set SUPABASE_PASSWORD env — credentials no longer live in scripts');
+    return process.env.SUPABASE_PASSWORD;
+  },
   ssl: { rejectUnauthorized: false },
 };
 
