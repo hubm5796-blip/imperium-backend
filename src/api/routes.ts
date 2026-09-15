@@ -2729,8 +2729,24 @@ api.post('/player/crates/open', rateLimit(10, 60_000, 'crate-open'), requireMcId
   }
   const crate = (body.crate ?? '').slice(0, 64);
   if (!crate) return c.json({ error: 'Missing crate' }, 400);
+  // Preferred display name for offline opens (the plugin prefers this over a potentially
+  // blocking Bukkit profile lookup). Best-effort: omitting it just falls back plugin-side.
+  let playerName = '';
   try {
-    const response = await sendCommandWithResponse('CRATE_OPEN_WEB', { uuid: mcUuid, crate }, 15_000);
+    const nameRow = await query<{ username: string }>(
+      'SELECT username FROM player_names WHERE uuid = $1 ORDER BY updated_at DESC LIMIT 1',
+      [mcUuid],
+    );
+    playerName = nameRow.rows[0]?.username ?? '';
+  } catch {
+    // Names table unavailable — the plugin falls back to its own caches.
+  }
+  try {
+    const response = await sendCommandWithResponse(
+      'CRATE_OPEN_WEB',
+      { uuid: mcUuid, crate, ...(playerName ? { name: playerName.slice(0, 64) } : {}) },
+      15_000,
+    );
     if (response.status === 'OK') {
       return c.json((response.data ?? {}) as Record<string, unknown>);
     }
