@@ -16,9 +16,15 @@ surface; see `src/middleware/gates.ts` for the authoritative implementation):
   `X-Staff-Role` is honored **only on requests already authenticated another
   way** (session cookie or a mapped service token) — a bare header cannot raise
   privilege.
-- **Service token** (`X-Service-Token` == internal service token): REQUIRED to
-  combine `X-Bot-Token` with `X-Mc-Uuid` — a shared bot token alone can no
-  longer assert a player identity (403 `IDENTITY_NEEDS_SERVICE_TOKEN`).
+- **Delegated service identity** (`X-Bot-Token` == `INTERNAL_SERVICE_TOKEN`, plus
+  `X-Mc-Uuid`): the shape the site's proxies use to act as a linked player. The
+  shared `BOT_API_TOKEN` alone can never assert an identity — a bot-token request
+  carrying `X-Mc-Uuid` is refused with 403 `IDENTITY_NEEDS_SERVICE_TOKEN`.
+  `INTERNAL_SERVICE_TOKEN` (2026-09-15) ships as a plaintext var in BOTH workers'
+  wrangler configs, so the pairing deploys with the code and cannot drift the way
+  the dashboard-only `BOT_API_TOKEN` once did (that drift 401'd every delegated
+  dashboard call — the web-crate-opening outage). When unset it falls back to
+  `BOT_API_TOKEN` for compat.
 - **Per-site key** (`X-Vote-Key` == per-site value from `VOTE_CALLBACK_KEYS`):
   vote-site callbacks.
 
@@ -46,6 +52,9 @@ shop orders 5/min (`shop`).
 | POST | `/api/webhooks/paynow` | PayNow HMAC signature | |
 | POST | `/api/action/sellall`, `/api/admin/*` | session / bot | Redis command bus |
 | GET/POST | `/api/tickets*`, `/api/referrals/*`, `/api/marketplace/*`, `/api/legion/{create,leave,invite}`, `/api/refcode/*` | bot / session | |
+| GET | `/api/player/crates` | delegated service (site proxy) | read 60/min | none | game MySQL: `player_crate_keys` + `crate_line_keys` + `crate_open_log` |
+| GET | `/api/player/crates/placed` | delegated service | read 60/min | none | Redis bus → `GET_PLACED_CRATES` (placed-only web opening set) |
+| POST | `/api/player/crates/open` | delegated service | 10/min (`crate-open`) | none | Redis bus → `CRATE_OPEN_WEB` — one REAL open, online **or offline** |
 
 ### 12a expansion (this doc's focus)
 
@@ -345,6 +354,52 @@ Session (no `uuid`, self) or bot token (+`?uuid=`). `private, no-store`.
 the vote callback, granted in-game moments later). `totalVotes` counts
 `vote_claims` for the player and is **absent** (not 0) until that plugin table
 exists. Degrade: `available:false, pending:[]` when the queue is unreachable.
+
+### GET /api/player/crates — the caller's keys + real opening history
+
+Delegated service identity (site proxy). `private, no-store`.
+
+```json
+{ "keys": { "vote": 42, "basic": 3 }, "recentOpens": [ { "crate": "vote", "reward": "5 Minutes of Flytime", "at": "2026-09-15T02:58:51.145Z" } ] }
+```
+
+Keys merge the classic store (`player_crate_keys`) with the web-store product
+lines (`crate_line_keys`); `recentOpens` is the last 25 rows of `crate_open_log`.
+Postgres mirror of classic keys is the fallback when game MySQL is unreachable
+(`recentOpens` then empty).
+
+### GET /api/player/crates/placed — crates with a physical stand
+
+Delegated service identity. Round-trips the Redis command bus (`GET_PLACED_CRATES`,
+8s timeout): the plugin answers from its `placed_world_blocks` restore set. Only
+these crates are openable from the web (owner directive — no opening unplaced
+catalog entries). 501 `{placed:[], error:"Game server did not respond"}` when the
+bus times out; the dashboard surfaces that as a banner instead of hiding buttons.
+
+### POST /api/player/crates/open — one REAL open, works offline
+
+Delegated service identity. Body `{ crate }` (the backend also resolves and sends
+`name` from `player_names` so the plugin never blocks on a Bukkit profile lookup).
+Rate-limited 10/min (`crate-open`). Bus command `CRATE_OPEN_WEB` (15s timeout).
+
+```json
+{ "reward": "$844,500 Denarius", "rarity": "eximius" }
+```
+
+The plugin runs the SAME pipeline as `/crate open` — pity, rank scaling, key
+consumption, opening log. **Online** players open on the main thread with sounds
+and chat exactly like standing at the crate. **Offline** players (2026-09-15)
+run the uuid-threaded offline core: currencies credit immediately through the
+economy service's offline deposits at the player's real rank multiplier,
+unlock prizes (titles/cosmetics/pets) grant through the same services' uuid
+paths, and physical/online-only prizes (items, tomes, armor, boosters, nested
+keys, console commands like the flytime vouchers) queue in the plugin's
+`crate_pending_delivery` table and hand over ~3s after the player's next join.
+Refusals are explicit strings the UI shows verbatim: `unknown crate`,
+`crate disabled`, `keys disabled`, `not a placed crate — open it in game`,
+`open this crate in game` (offline-unevaluable gates), `no key`,
+`daily limit reached — come back tomorrow`. A lost response never means a lost
+prize: opens that time out bus-side do not consume keys.
 
 ### GET /api/shop/orders?uuid=&limit= — order history
 
