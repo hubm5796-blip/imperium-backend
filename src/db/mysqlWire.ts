@@ -413,7 +413,16 @@ export async function wireQuery<T extends Record<string, unknown>>(
     packet = await readPacket(stream);
     if (isErr(packet.payload)) throw new Error('mysql-wire query ERR: ' + errText(packet.payload));
 
-    // Column count (length-encoded).
+    // Column count (length-encoded) — OR an OK packet (writes: INSERT/UPDATE/DELETE),
+    // which starts with 0x00 and carries affected_rows + insert_id. The web bus
+    // (2026-09-19) writes through this client, so writes resolve to a synthetic
+    // one-row result with the same field names mysql2's OkPacket exposes.
+    if (packet.payload[0] === 0x00) {
+      const okOff = { i: 1 };
+      const affectedRows = Number(readLenenc(packet.payload, okOff) ?? 0);
+      const insertId = Number(readLenenc(packet.payload, okOff) ?? 0);
+      return [{ affectedRows, insertId } as unknown as T];
+    }
     const colOff = { i: 0 };
     const columnCount = Number(readLenenc(packet.payload, colOff) ?? 0);
     if (columnCount === 0) throw new Error('mysql-wire: no columns');

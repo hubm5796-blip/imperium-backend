@@ -1,16 +1,16 @@
 import crypto from 'node:crypto';
+import {
+  busKvPut, busKvGet, busKvDel, busKvConsume, busKvPutOnce,
+  busSendCommand, busWaitForResponse,
+} from './busMysql.js';
+import type { CommandEnvelope, ResponseEnvelope } from '../types/index.js';
 import { nanoid } from 'nanoid';
 import { env } from '../env.js';
 import { logger } from '../utils/logger.js';
 import { redisCommand, redisCommandRetry, redisSubscribeOnce, type RedisSocketConfig } from './redisSocket.js';
-import type { CommandEnvelope, ResponseEnvelope } from '../types/index.js';
-import {
-  pgKvPut, pgKvGet, pgKvDel, pgKvConsume, pgKvPutOnce,
-  pgSendCommand, pgWaitForResponse,
-} from './busPg.js';
 
-/** BUS_TRANSPORT=postgres (default since 2026-09-19) routes every operation in this
- * module to the shared Postgres tables; 'redis' restores the old transport verbatim
+/** BUS_TRANSPORT=mysql (default since 2026-09-19) routes every operation in this
+ * module to the game-MySQL bus tables; 'redis' restores the old transport verbatim
  * (rollback path while the free-tier sleep policy settles). */
 const usePgBus = (): boolean => (process.env.BUS_TRANSPORT ?? 'postgres') !== 'redis';
 
@@ -87,7 +87,7 @@ const CACHE_CALL_TIMEOUT_MS = 1_200;
  */
 export async function getCachedJson<T>(key: string): Promise<T | null> {
   if (usePgBus()) {
-    const raw = await pgKvGet(`${RESPONSE_CACHE_PREFIX}${key}`).catch(() => null);
+    const raw = await busKvGet(`${RESPONSE_CACHE_PREFIX}${key}`).catch(() => null);
     if (raw === null) return null;
     try { return JSON.parse(raw) as T; } catch { return null; }
   }
@@ -108,7 +108,7 @@ export async function getCachedJson<T>(key: string): Promise<T | null> {
 
 /** Best-effort cache invalidation — failures/hangs are logged, never thrown or blocking. */
 export async function deleteCachedJson(key: string): Promise<void> {
-  if (usePgBus()) { await pgKvDel(`${RESPONSE_CACHE_PREFIX}${key}`).catch(() => undefined); return; }
+  if (usePgBus()) { await busKvDel(`${RESPONSE_CACHE_PREFIX}${key}`).catch(() => undefined); return; }
   await withTimeout(
     redisCommand(socketConfig(), ['DEL', `${RESPONSE_CACHE_PREFIX}${key}`]).catch((err: unknown) => {
       logger.warn({ err, key }, 'Response cache delete failed — non-fatal');
@@ -120,7 +120,7 @@ export async function deleteCachedJson(key: string): Promise<void> {
 
 /** Best-effort write to the response cache — failures/hangs are logged, never thrown or blocking. */
 export async function setCachedJson(key: string, value: unknown, ttlSeconds: number): Promise<void> {
-  if (usePgBus()) { await pgKvPut(`${RESPONSE_CACHE_PREFIX}${key}`, JSON.stringify(value), ttlSeconds).catch(() => undefined); return; }
+  if (usePgBus()) { await busKvPut(`${RESPONSE_CACHE_PREFIX}${key}`, JSON.stringify(value), ttlSeconds).catch(() => undefined); return; }
   await withTimeout(
     redisCommand(socketConfig(), [
       'SETEX',
@@ -181,7 +181,7 @@ export async function claimNonceOnce(
   ttlSeconds: number,
 ): Promise<boolean | null> {
   if (usePgBus()) {
-    try { return await pgKvPutOnce(`${namespace}${nonce}`, ttlSeconds); }
+    try { return await busKvPutOnce(`${namespace}${nonce}`, ttlSeconds); }
     catch { return null; }
   }
   try {
@@ -288,7 +288,7 @@ export async function sendCommand(
   };
 
   if (usePgBus()) {
-    await pgSendCommand(JSON.stringify(envelope));
+    await busSendCommand(JSON.stringify(envelope));
     return envelope;
   }
   await redisCommand(socketConfig(), ['PUBLISH', COMMANDS_CHANNEL, JSON.stringify(envelope)]);
@@ -330,7 +330,7 @@ export async function sendCommandWithResponse(
 ): Promise<ResponseEnvelope> {
   if (usePgBus()) {
     const envelope = await sendCommand(type, payload);
-    const message = await pgWaitForResponse(envelope.request_id, timeoutMs);
+    const message = await busWaitForResponse(envelope.request_id, timeoutMs);
     if (message === null) throw new Error(`Timed out waiting for response to ${type}`);
     const parsed = parseResponse(message);
     if (parsed === null) throw new Error(`Received unparseable response to ${type}`);
@@ -370,7 +370,7 @@ export async function waitForResponse(
   timeoutMs = 5_000,
 ): Promise<ResponseEnvelope | null> {
   if (usePgBus()) {
-    const message = await pgWaitForResponse(requestId, timeoutMs);
+    const message = await busWaitForResponse(requestId, timeoutMs);
     return message === null ? null : parseResponse(message);
   }
   const message = await redisSubscribeOnce(
@@ -388,7 +388,7 @@ export async function waitForResponse(
 /** Online player count as published by the plugin, or null if unset. */
 export async function getOnlinePlayerCount(): Promise<number | null> {
   if (usePgBus()) {
-    const raw = await pgKvGet(ONLINE_COUNT_KEY).catch(() => null);
+    const raw = await busKvGet(ONLINE_COUNT_KEY).catch(() => null);
     if (raw === null) return null;
     const parsed = Number.parseInt(raw, 10);
     return Number.isNaN(parsed) ? null : parsed;
@@ -423,7 +423,7 @@ export async function createLinkCode(
   const code = generateLinkCode();
   const record: LinkCodeRecord = { ...partial, createdAt: Date.now() };
   if (usePgBus()) {
-    await pgKvPut(`${LINK_CODE_PREFIX}${code}`, JSON.stringify(record), ttlSeconds);
+    await busKvPut(`${LINK_CODE_PREFIX}${code}`, JSON.stringify(record), ttlSeconds);
     return code;
   }
   await redisCommand(socketConfig(), [
@@ -442,7 +442,7 @@ export async function createLinkCode(
  */
 export async function consumeLinkCode(code: string): Promise<LinkCodeRecord | null> {
   const key = `${LINK_CODE_PREFIX}${code.toUpperCase()}`;
-  const raw = usePgBus() ? await pgKvConsume(key) : await atomicGetDel(key);
+  const raw = usePgBus() ? await busKvConsume(key) : await atomicGetDel(key);
   if (raw === null) return null;
   try {
     return JSON.parse(raw) as LinkCodeRecord;
@@ -464,7 +464,7 @@ export async function consumeLoginCode(
   code: string,
 ): Promise<{ uuid: string; username?: string } | null> {
   const key = `${LOGIN_CODE_PREFIX}${code.trim()}`;
-  const raw = usePgBus() ? await pgKvConsume(key) : await atomicGetDel(key);
+  const raw = usePgBus() ? await busKvConsume(key) : await atomicGetDel(key);
   if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as { uuid?: string; username?: string };
@@ -511,7 +511,7 @@ export async function createSessionCode(
   const code = nanoid(24);
   const key = `${SESSION_CODE_PREFIX}${code}`;
   if (usePgBus()) {
-    await pgKvPut(key, JSON.stringify({ ...payload, createdAt: Date.now() }), ttlSeconds);
+    await busKvPut(key, JSON.stringify({ ...payload, createdAt: Date.now() }), ttlSeconds);
     return code;
   }
   await redisCommand(socketConfig(), [
@@ -530,7 +530,7 @@ export async function createSessionCode(
  */
 export async function consumeSessionCode(code: string): Promise<SessionHandoff | null> {
   const key = `${SESSION_CODE_PREFIX}${code.trim()}`;
-  const raw = usePgBus() ? await pgKvConsume(key) : await atomicGetDel(key);
+  const raw = usePgBus() ? await busKvConsume(key) : await atomicGetDel(key);
   if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<SessionHandoff>;
