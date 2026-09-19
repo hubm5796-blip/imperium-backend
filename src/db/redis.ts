@@ -4,6 +4,15 @@ import { env } from '../env.js';
 import { logger } from '../utils/logger.js';
 import { redisCommand, redisCommandRetry, redisSubscribeOnce, type RedisSocketConfig } from './redisSocket.js';
 import type { CommandEnvelope, ResponseEnvelope } from '../types/index.js';
+import {
+  pgKvPut, pgKvGet, pgKvDel, pgKvConsume, pgKvPutOnce,
+  pgSendCommand, pgWaitForResponse,
+} from './busPg.js';
+
+/** BUS_TRANSPORT=postgres (default since 2026-09-19) routes every operation in this
+ * module to the shared Postgres tables; 'redis' restores the old transport verbatim
+ * (rollback path while the free-tier sleep policy settles). */
+const usePgBus = (): boolean => (process.env.BUS_TRANSPORT ?? 'postgres') !== 'redis';
 
 /** Redis channel used to push commands from the web panel to the plugin. */
 function safeEqualHex(a: string, b: string): boolean {
@@ -77,6 +86,11 @@ const CACHE_CALL_TIMEOUT_MS = 1_200;
  * fail-open behavior wanted here.
  */
 export async function getCachedJson<T>(key: string): Promise<T | null> {
+  if (usePgBus()) {
+    const raw = await pgKvGet(`${RESPONSE_CACHE_PREFIX}${key}`).catch(() => null);
+    if (raw === null) return null;
+    try { return JSON.parse(raw) as T; } catch { return null; }
+  }
   return withTimeout(
     (async () => {
       try {
@@ -94,6 +108,7 @@ export async function getCachedJson<T>(key: string): Promise<T | null> {
 
 /** Best-effort cache invalidation — failures/hangs are logged, never thrown or blocking. */
 export async function deleteCachedJson(key: string): Promise<void> {
+  if (usePgBus()) { await pgKvDel(`${RESPONSE_CACHE_PREFIX}${key}`).catch(() => undefined); return; }
   await withTimeout(
     redisCommand(socketConfig(), ['DEL', `${RESPONSE_CACHE_PREFIX}${key}`]).catch((err: unknown) => {
       logger.warn({ err, key }, 'Response cache delete failed — non-fatal');
@@ -105,6 +120,7 @@ export async function deleteCachedJson(key: string): Promise<void> {
 
 /** Best-effort write to the response cache — failures/hangs are logged, never thrown or blocking. */
 export async function setCachedJson(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+  if (usePgBus()) { await pgKvPut(`${RESPONSE_CACHE_PREFIX}${key}`, JSON.stringify(value), ttlSeconds).catch(() => undefined); return; }
   await withTimeout(
     redisCommand(socketConfig(), [
       'SETEX',
@@ -164,6 +180,10 @@ export async function claimNonceOnce(
   nonce: string,
   ttlSeconds: number,
 ): Promise<boolean | null> {
+  if (usePgBus()) {
+    try { return await pgKvPutOnce(`${namespace}${nonce}`, ttlSeconds); }
+    catch { return null; }
+  }
   try {
     const res = await redisCommand(socketConfig(), [
       'SET',
@@ -267,8 +287,14 @@ export async function sendCommand(
     payload,
   };
 
+  if (usePgBus()) {
+    await pgSendCommand(JSON.stringify(envelope));
+    return envelope;
+  }
   await redisCommand(socketConfig(), ['PUBLISH', COMMANDS_CHANNEL, JSON.stringify(envelope)]);
   return envelope;
+  // 2026-09-19: unreachable in pg mode — the pg branch above returned already; kept for
+  // symmetry with the rollback path. (Inserted marker only.)
 }
 
 function parseResponse(message: string): ResponseEnvelope | null {
@@ -302,6 +328,14 @@ export async function sendCommandWithResponse(
   payload: Record<string, unknown>,
   timeoutMs = 5_000,
 ): Promise<ResponseEnvelope> {
+  if (usePgBus()) {
+    const envelope = await sendCommand(type, payload);
+    const message = await pgWaitForResponse(envelope.request_id, timeoutMs);
+    if (message === null) throw new Error(`Timed out waiting for response to ${type}`);
+    const parsed = parseResponse(message);
+    if (parsed === null) throw new Error(`Received unparseable response to ${type}`);
+    return parsed;
+  }
   let requestId = '';
   const message = await redisSubscribeOnce(
     socketConfig(),
@@ -335,6 +369,10 @@ export async function waitForResponse(
   requestId: string,
   timeoutMs = 5_000,
 ): Promise<ResponseEnvelope | null> {
+  if (usePgBus()) {
+    const message = await pgWaitForResponse(requestId, timeoutMs);
+    return message === null ? null : parseResponse(message);
+  }
   const message = await redisSubscribeOnce(
     socketConfig(),
     RESPONSES_CHANNEL,
@@ -349,6 +387,12 @@ export async function waitForResponse(
 
 /** Online player count as published by the plugin, or null if unset. */
 export async function getOnlinePlayerCount(): Promise<number | null> {
+  if (usePgBus()) {
+    const raw = await pgKvGet(ONLINE_COUNT_KEY).catch(() => null);
+    if (raw === null) return null;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
   // RETRY (2026-08-25): the status endpoint's #1 data source — one retry absorbs Layerbase's
   // transient TLS accept failures instead of reporting a live server as offline.
   const raw = await redisCommandRetry(socketConfig(), ['GET', ONLINE_COUNT_KEY]);
@@ -378,6 +422,10 @@ export async function createLinkCode(
 ): Promise<string> {
   const code = generateLinkCode();
   const record: LinkCodeRecord = { ...partial, createdAt: Date.now() };
+  if (usePgBus()) {
+    await pgKvPut(`${LINK_CODE_PREFIX}${code}`, JSON.stringify(record), ttlSeconds);
+    return code;
+  }
   await redisCommand(socketConfig(), [
     'SET',
     `${LINK_CODE_PREFIX}${code}`,
@@ -394,7 +442,7 @@ export async function createLinkCode(
  */
 export async function consumeLinkCode(code: string): Promise<LinkCodeRecord | null> {
   const key = `${LINK_CODE_PREFIX}${code.toUpperCase()}`;
-  const raw = await atomicGetDel(key);
+  const raw = usePgBus() ? await pgKvConsume(key) : await atomicGetDel(key);
   if (raw === null) return null;
   try {
     return JSON.parse(raw) as LinkCodeRecord;
@@ -416,7 +464,7 @@ export async function consumeLoginCode(
   code: string,
 ): Promise<{ uuid: string; username?: string } | null> {
   const key = `${LOGIN_CODE_PREFIX}${code.trim()}`;
-  const raw = await atomicGetDel(key);
+  const raw = usePgBus() ? await pgKvConsume(key) : await atomicGetDel(key);
   if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as { uuid?: string; username?: string };
@@ -462,6 +510,10 @@ export async function createSessionCode(
 ): Promise<string> {
   const code = nanoid(24);
   const key = `${SESSION_CODE_PREFIX}${code}`;
+  if (usePgBus()) {
+    await pgKvPut(key, JSON.stringify({ ...payload, createdAt: Date.now() }), ttlSeconds);
+    return code;
+  }
   await redisCommand(socketConfig(), [
     'SET',
     key,
@@ -478,7 +530,7 @@ export async function createSessionCode(
  */
 export async function consumeSessionCode(code: string): Promise<SessionHandoff | null> {
   const key = `${SESSION_CODE_PREFIX}${code.trim()}`;
-  const raw = await atomicGetDel(key);
+  const raw = usePgBus() ? await pgKvConsume(key) : await atomicGetDel(key);
   if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<SessionHandoff>;

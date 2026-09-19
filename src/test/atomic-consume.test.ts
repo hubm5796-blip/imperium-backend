@@ -8,6 +8,9 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
  * code to two concurrent consumers and the new one cannot.
  */
 const { calls } = vi.hoisted(() => ({ calls: [] as string[][] }));
+// 2026-09-19: these tests assert the REDIS transport semantics via the socket mock.
+process.env.BUS_TRANSPORT = 'redis';
+
 vi.mock('../db/redisSocket.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../db/redisSocket.js')>();
   return {
