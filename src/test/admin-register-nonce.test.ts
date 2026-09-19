@@ -9,6 +9,9 @@ import { createHmac } from 'node:crypto';
  * open with the timestamp window still in force.
  */
 const { nonceClaims } = vi.hoisted(() => ({ nonceClaims: [] as string[] }));
+// 2026-09-19: these tests assert the REDIS transport semantics via the socket mock.
+process.env.BUS_TRANSPORT = 'redis';
+
 vi.mock('../db/redisSocket.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../db/redisSocket.js')>();
   return {
