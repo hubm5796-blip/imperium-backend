@@ -13,8 +13,11 @@ Backend API + Discord interactions for ImperiumMC.
 - **DB**: PostgreSQL (Supabase via Hyperdrive, `src/db/pool.ts`) **plus direct reads of the
   game server's MySQL DB** (`src/db/gameMysql.ts`) — the backend both reads and writes
   (donor tiers, dispatch registries, orders, votes).
-- **Redis**: Command bus to plugin (HMAC-authenticated, existing protocol) — per-call
-  connections (`src/db/redisSocket.ts`); also the rate-limit/D1 cache layer.
+- **Game MySQL (bus)**: The web command bus (2026-09-19) — signed envelopes queue in
+  `web_commands`/`web_responses`/`bus_kv` on the game MariaDB (`src/db/busMysql.ts` over
+  the mysqlWire client); the plugin polls at 500ms, this side at 400ms (~1s round-trip).
+  Redis remains a wake-on-demand fallback transport (`BUS_TRANSPORT=redis`) — zero
+  connections while unused, so the free host sleeps.
 
 ## Setup
 
@@ -61,5 +64,5 @@ is used for followups and cron notifications.)
 
 1. Player runs `/discord link` in-game → gets 6-char code
 2. Player visits website dashboard → enters code, or types `/link <code>` in Discord
-3. Backend validates code against plugin via Redis command bus
+3. Backend validates code against plugin via the game-MySQL command bus (Redis wake-on-demand fallback)
 4. On success: `discord_links` table updated, player gets full dashboard access

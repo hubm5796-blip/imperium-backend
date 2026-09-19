@@ -50,11 +50,11 @@ shop orders 5/min (`shop`).
 | POST | `/api/link/{initiate,confirm}`, DELETE `/api/link` | session / bot | |
 | GET/POST | `/api/store/*` | storeAuth (bot+`X-Mc-Uuid` or session) | PayNow checkout |
 | POST | `/api/webhooks/paynow` | PayNow HMAC signature | |
-| POST | `/api/action/sellall`, `/api/admin/*` | session / bot | Redis command bus |
+| POST | `/api/action/sellall`, `/api/admin/*` | session / bot | game-MySQL command bus (Redis fallback) |
 | GET/POST | `/api/tickets*`, `/api/referrals/*`, `/api/marketplace/*`, `/api/legion/{create,leave,invite}`, `/api/refcode/*` | bot / session | |
 | GET | `/api/player/crates` | delegated service (site proxy) | read 60/min | none | game MySQL: `player_crate_keys` + `crate_line_keys` + `crate_open_log` |
-| GET | `/api/player/crates/placed` | delegated service | read 60/min | none | Redis bus → `GET_PLACED_CRATES` (placed-only web opening set) |
-| POST | `/api/player/crates/open` | delegated service | 10/min (`crate-open`) | none | Redis bus → `CRATE_OPEN_WEB` — one REAL open, online **or offline** |
+| GET | `/api/player/crates/placed` | delegated service | read 60/min | none | game-MySQL bus → `GET_PLACED_CRATES` (placed-only web opening set) |
+| POST | `/api/player/crates/open` | delegated service | 10/min (`crate-open`) | none | game-MySQL bus → `CRATE_OPEN_WEB` — one REAL open, online **or offline** |
 
 ### 12a expansion (this doc's focus)
 
@@ -370,8 +370,8 @@ Postgres mirror of classic keys is the fallback when game MySQL is unreachable
 
 ### GET /api/player/crates/placed — crates with a physical stand
 
-Delegated service identity. Round-trips the Redis command bus (`GET_PLACED_CRATES`,
-8s timeout): the plugin answers from its `placed_world_blocks` restore set. Only
+Delegated service identity. Round-trips the game-MySQL command bus (`GET_PLACED_CRATES`,
+8s timeout; the plugin's poller picks up within ~500ms): the plugin answers from its `placed_world_blocks` restore set. Only
 these crates are openable from the web (owner directive — no opening unplaced
 catalog entries). 501 `{placed:[], error:"Game server did not respond"}` when the
 bus times out; the dashboard surfaces that as a banner instead of hiding buttons.
@@ -380,7 +380,7 @@ bus times out; the dashboard surfaces that as a banner instead of hiding buttons
 
 Delegated service identity. Body `{ crate }` (the backend also resolves and sends
 `name` from `player_names` so the plugin never blocks on a Bukkit profile lookup).
-Rate-limited 10/min (`crate-open`). Bus command `CRATE_OPEN_WEB` (15s timeout).
+Rate-limited 10/min (`crate-open`). Bus command `CRATE_OPEN_WEB` (15s timeout) over the game-MySQL bus (~1s round-trip) over the game-MySQL bus (~1s round-trip).
 
 ```json
 { "reward": "$844,500 Denarius", "rarity": "eximius" }
@@ -557,7 +557,7 @@ signature = lowercaseHex( HMAC-SHA256( WEBPANEL_HMAC_SECRET, message ) )
   recomputes the signature from the row it just read and rejects mismatches —
   hand-edited or forged rows can never grant anything.
 - `WEBPANEL_HMAC_SECRET` is the same Workers secret the plugin already shares
-  for the Redis command bus (`env.webpanelHmacSecret` / plugin
+  for the web command bus (`env.webpanelHmacSecret` / plugin — signs envelopes on the game-MySQL bus; the Redis fallback transport signs identically
   `IMPERIUMMC_HMAC_SECRET` or `webpanel.hmac-secret`). No new secret.
 - Freshness: rows are written with the backend's clock; the plugin SHOULD
   discard (mark `skipped`) rows older than 24h.
