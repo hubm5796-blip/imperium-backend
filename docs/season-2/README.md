@@ -3,7 +3,7 @@
 This repo is **Lane D** in the ImperiumMC Season 2 program.
 
 The program hub — charter, business plan, economy design, launch plan, the full
-65-packet work queue and the execution protocol — lives in the plugin repo at
+71-packet work queue and the execution protocol — lives in the plugin repo at
 `ImperiumMC-Plugin/docs/season-2/`. Read these before working here:
 
 | Read | For |
