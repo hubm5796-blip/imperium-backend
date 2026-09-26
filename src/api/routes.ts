@@ -2774,8 +2774,12 @@ api.get('/player/tags', readRateLimit, requireMcIdentity, async (c) => {
   }
 });
 
-/** POST /api/player/tags/equip — { tag: id } ("" to unequip). Requires the
- *  player to be ONLINE (the plugin equips on the live Player object). */
+/** POST /api/player/tags/equip — { tag: id } ("" to unequip). Works OFFLINE as well
+ *  (forward-plan 2026-09-18 #2): the plugin's active-tag slot is UUID-keyed persisted
+ *  state, so it equips by UUID and reports honesty flags — data: { applied, pending,
+ *  active }. applied=true means the live player re-equips now; applied=false +
+ *  pending=true means the choice is persisted and renders in chat from the player's
+ *  next line after joining. The plugin refuses tags the player does not own. */
 api.post('/player/tags/equip', writeRateLimit, requireMcIdentity, async (c) => {
   const mcUuid = c.var.mcUuid!;
   let body: { tag?: string };
