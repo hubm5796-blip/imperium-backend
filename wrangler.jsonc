@@ -78,6 +78,9 @@
 		// Staff error-alert webhook (error-visibility pipeline). Empty = alerting off;
 		// paste a Discord webhook URL (or set it as a dashboard Secret) to arm it.
 		"STAFF_ALERT_WEBHOOK_URL": "",
+		// V6 02-05 changelog destination — the #changelog channel. Without this the
+		// /api/v2/changelog/post route 503s (no fallback channel exists, B-23).
+		"CHANGELOG_CHANNEL_ID": "1430014299425738752",
 		// Dedicated delegated-service token (2026-09-14 web-crate-opening outage):
 		// env.ts always intended INTERNAL_SERVICE_TOKEN as the identity the site
 		// proxy presents (X-Bot-Token + X-Mc-Uuid); it only fell back to
