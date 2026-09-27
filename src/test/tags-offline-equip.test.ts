@@ -45,11 +45,13 @@ const UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const DELEGATED = { 'X-Bot-Token': 'svc-secret', 'X-Mc-Uuid': UUID };
 
 function post(tag: string): Promise<Response> {
-  return app.request('/api/player/tags/equip', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...DELEGATED },
-    body: JSON.stringify({ tag }),
-  });
+  return Promise.resolve(
+    app.request('/api/player/tags/equip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...DELEGATED },
+      body: JSON.stringify({ tag }),
+    }),
+  );
 }
 
 describe('POST /api/player/tags/equip — offline-capable pass-through', () => {

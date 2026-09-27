@@ -12,14 +12,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { fetchCalls } = vi.hoisted(() => ({ fetchCalls: [] as Array<{ url: string; body: Record<string, unknown> }> }));
 
-vi.mock('../../db/pool.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../db/pool.js')>();
-  return {
-    ...actual,
-    getD1: vi.fn(() => actual.getD1()),
-  };
-});
-
 import { Hono } from 'hono';
 import { __resetEnvForTests, initEnvFromBindings } from '../env.js';
 import { adminPanelV2 } from '../api/v2/adminPanel.js';
