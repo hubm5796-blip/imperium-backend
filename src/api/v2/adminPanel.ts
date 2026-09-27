@@ -26,7 +26,10 @@ export const adminPanelV2 = new Hono<ApiEnv>();
 // on an authenticated request / per-staff tokens). Bot-token-only callers
 // keep the transitional service exemption until the exemption-deletion
 // commit; sessions without a staff role are refused.
-adminPanelV2.use('*', readRateLimit, requireStaffRole('helper'));
+// Scoped to /admin* — a bare '*' use() here leaks the helper gate onto EVERY
+// sub-app mounted after this one at the v2 root (dm enqueue, changelog post
+// both 403'd for service principals in production because of it).
+adminPanelV2.use('/admin*', readRateLimit, requireStaffRole('helper'));
 
 const PAGE_SIZE = 50;
 

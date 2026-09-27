@@ -144,7 +144,7 @@ async function sendDm(botToken: string, discordId: string, notif: DmNotification
 // ── API routes ──────────────────────────────────────────────────────────────
 export const dmApi = new Hono<ApiEnv>();
 
-dmApi.use('*', readRateLimit, requireServiceToken);
+dmApi.use('/notifications*', readRateLimit, requireServiceToken);
 
 /**
  * POST /api/v2/notifications/dm
@@ -214,7 +214,7 @@ dmApi.post('/notifications/dm', writeRateLimit, async (c) => {
 // ── Changelog posting ──────────────────────────────────────────────────────
 export const changelogApi = new Hono<ApiEnv>();
 
-changelogApi.use('*', readRateLimit, requireServiceToken);
+changelogApi.use('/changelog*', readRateLimit, requireServiceToken);
 
 /**
  * POST /api/v2/changelog/post
