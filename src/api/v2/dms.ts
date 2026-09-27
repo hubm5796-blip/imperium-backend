@@ -236,8 +236,20 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
   const changes = Array.isArray(body.changes)
     ? (body.changes as unknown[]).filter((c): c is string => typeof c === 'string').slice(0, 25)
     : [];
+  // Optional grouping: sections: [{ name, changes: [] }] renders as bold headers
+  // over bullet lists; the flat changes[] renders as one bullet list.
+  const sections = Array.isArray(body.sections)
+    ? (body.sections as Record<string, unknown>[])
+        .filter((sec) => sec && typeof sec.name === 'string' && Array.isArray(sec.changes))
+        .map((sec) => ({
+          name: String(sec.name).slice(0, 100),
+          changes: (sec.changes as unknown[]).filter((c): c is string => typeof c === 'string').slice(0, 25),
+        }))
+        .filter((sec) => sec.changes.length > 0)
+        .slice(0, 8)
+    : [];
 
-  if (!title || changes.length === 0) {
+  if (!title || (changes.length === 0 && sections.length === 0)) {
     return c.json({ error: 'title and at least one change are required' }, 400);
   }
 
@@ -247,15 +259,18 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
     return c.json({ error: 'Changelog channel not configured' }, 503);
   }
 
-  // Build the embed
+  // Body: markdown bullets in the description. The old per-change '•' FIELDS
+  // rendered as a wall of one-line name/value rows on Discord — bold section
+  // headers over bullet lists reads like a changelog instead of a receipt.
+  const sectionText = sections
+    .map((sec) => `**${sec.name}**\n${sec.changes.map((c) => '- ' + c.slice(0, 500)).join('\n')}`)
+    .join('\n\n');
+  const flatText = changes.map((c) => '- ' + c.slice(0, 500)).join('\n');
+  const lead = description ? description + '\n\n' : '';
   const embed = {
     title: `📜 ${title}`,
-    description: description || undefined,
+    description: (lead + (sectionText || flatText)).slice(0, 4000),
     color: 0xd4af37,
-    fields: changes.map((change) => ({
-      name: '•',
-      value: change.slice(0, 1000),
-    })),
     footer: { text: 'ImperiumMC • imperiummc.net' },
     timestamp: new Date().toISOString(),
   };
