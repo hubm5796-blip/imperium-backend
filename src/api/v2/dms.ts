@@ -268,7 +268,7 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
   const flatText = changes.map((c) => '- ' + c.slice(0, 500)).join('\n');
   const lead = description ? description + '\n\n' : '';
   const embed = {
-    title: `📜 ${title}`,
+    title: title,
     description: (lead + (sectionText || flatText)).slice(0, 4000),
     color: 0xd4af37,
     footer: { text: 'ImperiumMC • imperiummc.net' },
