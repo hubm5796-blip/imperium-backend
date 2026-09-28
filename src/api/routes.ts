@@ -88,6 +88,7 @@ import { CURRENCY_ALIASES } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { alertError } from '../utils/errorAlerts.js';
 import { expansionApi } from './expansion/index.js';
+import { licenseStatusApi } from './license.js';
 import { fetchExpansionBoard, isExpansionBoard } from './expansion/leaderboards.js';
 import { swrJson } from './expansion/cache.js';
 import { emit } from '../webhooks/deliver.js';
@@ -3496,3 +3497,7 @@ api.post('/refcode/redeem', requireMcIdentity, async (c) => {
 // sit directly under /api and share attachUser + globalRateLimit above.
 // See docs/api.md for the full route table and the web_queue contract.
 api.route('/', expansionApi);
+// LICENSE STATUS (anti-piracy 2026-09-26): public read the plugin polls on boot + every
+// 4-8h. Revocation status is not secret — the Ed25519 token is the proof; this only says
+// whether its id (or the global kill switch) has been revoked. See src/api/license.ts.
+api.route('/', licenseStatusApi);
