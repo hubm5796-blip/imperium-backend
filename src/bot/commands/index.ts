@@ -5,6 +5,7 @@ import { botstatsCommand } from './botstats.js';
 import { cratesCommand } from './crates.js';
 import { dungeonsCommand } from './dungeons.js';
 import { factionsCommand } from './factions.js';
+import { ipCommand } from './ip.js';
 import { gadgetsCommand } from './gadgets.js';
 import { helpCommand } from './help.js';
 import { leaderboardCommand } from './leaderboard.js';
@@ -39,6 +40,7 @@ export const commands: BotCommand[] = [
   morphCommand,
   parkourCommand,
   factionsCommand,
+  ipCommand,
   gadgetsCommand,
   accessibilityCommand,
   botstatsCommand,
