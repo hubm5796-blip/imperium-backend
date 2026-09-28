@@ -12,6 +12,7 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { api } from './api/routes.js';
 import { v2Api } from './api/v2/index.js';
+import { licenseAdminApi } from './api/license.js';
 import { discordInteractions } from './bot/interactions.js';
 import { botAdmin } from './bot/adminRegisterRoute.js';
 import { bridgeApi } from './bot/bridge.js';
@@ -102,6 +103,12 @@ export function createApp() {
     );
   });
 
+  // LICENSE ADMIN (anti-piracy 2026-09-26): mounted BEFORE the v2 sub-app on purpose —
+  // adminPanelV2 path-merges a staff-session gate over '/admin*', which would layer a
+  // browser-session requirement on top of the service token this route actually uses.
+  // Registered first, /api/v2/admin/licenses/* is claimed here and never dispatches into
+  // v2Api. The mount-order test in src/test/license.test.ts pins this.
+  app.route('/api/v2/admin/licenses', licenseAdminApi);
   app.route('/api', api);
   // V6 05-01: the versioned contract surface (envelope + cursors + openapi.json).
   app.route('/api/v2', v2Api);
