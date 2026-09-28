@@ -14,6 +14,7 @@
  *                only existed to be signed)
  *   X-Signature: hex HMAC-SHA256(secret, "<timestamp>|<nonce>")
  */
+import { serviceTokenMatches } from '../middleware/serviceToken.js';
 import { Hono } from 'hono';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from '../env.js';
@@ -51,7 +52,11 @@ function authorized(headers: Headers): boolean {
 
 botAdmin.post('/bot/register-commands', writeRateLimit, async (c) => {
   const h = c.req.header();
-  if (!authorized(new Headers(Object.entries(h)))) {
+  // Service token OR the signed HMAC trigger both register commands — the
+  // service principal is our own trusted proxy (B-23 posture), and ops needs
+  // to re-register after adding commands without fetching the HMAC secret.
+  const viaServiceToken = serviceTokenMatches(c as never);
+  if (!viaServiceToken && !authorized(new Headers(Object.entries(h)))) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
