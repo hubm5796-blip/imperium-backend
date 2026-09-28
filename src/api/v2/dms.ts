@@ -129,7 +129,7 @@ async function sendDm(botToken: string, discordId: string, notif: DmNotification
           title: `${icon} ${notif.title}`,
           description: notif.message,
           color,
-          footer: { text: 'ImperiumMC • imperiummc.net' },
+          footer: { text: 'ImperiumMC - imperiummc.net' },
           timestamp: new Date().toISOString(),
         }],
       }),
@@ -222,6 +222,19 @@ changelogApi.use('/changelog*', readRateLimit, requireServiceToken);
  * Posts the changelog embed to the configured channel (CHANGELOG_CHANNEL_ID).
  * Unconfigured → 503; no fallback channel exists (B-23).
  */
+  // Owner-facing garble guard (2026-09-28): some clients render em-dashes, middle
+  // dots, curly quotes and multiplication signs as replacement characters. Every
+  // string that reaches a Discord embed passes through asciify() first — plain
+  // ASCII regardless of what the caller composed.
+  const asciify = (input: string): string => input
+    .replace(/[\u2014\u2013]/g, '-')
+    .replace(/[\u2022\u00b7]/g, '-')
+    .replace(/\u00d7/g, 'x')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[^\x20-\x7e]/g, '');
+
 changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
   let body: Record<string, unknown> = {};
   try {
@@ -231,8 +244,8 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const title = typeof body.title === 'string' ? body.title.slice(0, 200) : '';
-  const description = typeof body.description === 'string' ? body.description.slice(0, 1000) : '';
+  const title = typeof body.title === 'string' ? asciify(body.title).slice(0, 200) : '';
+  const description = typeof body.description === 'string' ? asciify(body.description).slice(0, 1000) : '';
   const changes = Array.isArray(body.changes)
     ? (body.changes as unknown[]).filter((c): c is string => typeof c === 'string').slice(0, 25)
     : [];
@@ -242,7 +255,7 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
     ? (body.sections as Record<string, unknown>[])
         .filter((sec) => sec && typeof sec.name === 'string' && Array.isArray(sec.changes))
         .map((sec) => ({
-          name: String(sec.name).slice(0, 100),
+          name: asciify(String(sec.name).slice(0, 100)),
           changes: (sec.changes as unknown[]).filter((c): c is string => typeof c === 'string').slice(0, 25),
         }))
         .filter((sec) => sec.changes.length > 0)
@@ -263,7 +276,7 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
   // rendered as a wall of one-line name/value rows on Discord — bold section
   // headers over bullet lists reads like a changelog instead of a receipt.
   const sectionText = sections
-    .map((sec) => `**${sec.name}**\n${sec.changes.map((c) => '- ' + c.slice(0, 500)).join('\n')}`)
+    .map((sec) => `**${sec.name}**\n${sec.changes.map((c) => '- ' + asciify(c).slice(0, 500)).join('\n')}`)
     .join('\n\n');
   const flatText = changes.map((c) => '- ' + c.slice(0, 500)).join('\n');
   const lead = description ? description + '\n\n' : '';
