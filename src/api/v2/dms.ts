@@ -25,6 +25,8 @@ import { getDiscordIdByUuid, getD1 } from '../../db/pool.js';
 import { readRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
 import { requireServiceToken } from '../../middleware/serviceToken.js';
 import { parseMcUuid } from '../../middleware/gates.js';
+import { recordAction } from '../../db/actionLog.js';
+import { resolveAuditActor } from '../../utils/auditActor.js';
 import { logger } from '../../utils/logger.js';
 import { env } from '../../env.js';
 import type { AppContextVariables } from '../../types/index.js';
@@ -300,7 +302,18 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
       logger.error({ status: res.status, body: errBody.slice(0, 300) }, 'changelog post failed');
       return c.json({ error: `Discord returned ${res.status}` }, 502);
     }
-    return c.json({ posted: true });
+    // Per-actor audit attribution: a changelog post speaks as the server, so
+    // the action_log must name WHO triggered it — a per-staff token / session
+    // when a human posted, the service identity for the owner's script, and
+    // the shared-bot attribution only as the no-actor fallback.
+    const actor = await resolveAuditActor(c);
+    await recordAction({
+      actor,
+      action: 'changelog.post',
+      target: title.slice(0, 120),
+      detail: `channel=${channelId}`,
+    });
+    return c.json({ posted: true, actor: actor.id });
   } catch (err) {
     logger.error({ err: String(err) }, 'changelog post crashed');
     return c.json({ error: 'Post failed' }, 502);

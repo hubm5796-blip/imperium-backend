@@ -25,6 +25,7 @@ import { getD1 } from '../../db/pool.js';
 import { query } from '../../db/pool.js';
 import { requireLinked } from '../../middleware/auth.js';
 import { writeRateLimit } from '../../middleware/rateLimit.js';
+import { recordAction } from '../../db/actionLog.js';
 import { logger } from '../../utils/logger.js';
 import { ok, fail } from './respond.js';
 import type { AppContextVariables } from '../../types/index.js';
@@ -255,6 +256,14 @@ galleryV2.post('/community/gallery/:id/moderate', requireLinked, writeRateLimit,
     logger.error({ err: String(err), id }, 'gallery moderate failed');
     return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.');
   }
+  // Per-actor audit attribution: approve/remove makes community content public
+  // or hides it — the action_log names which linked staff account decided.
+  await recordAction({
+    actor: { id: `mc:${uuid}`, name: uuid },
+    action: 'gallery.moderate',
+    target: id,
+    detail: `status=${status}`,
+  });
   logger.info({ id, status, by: uuid }, 'gallery moderated');
   return ok(c, { id, status });
 });

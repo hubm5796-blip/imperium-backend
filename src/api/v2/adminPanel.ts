@@ -12,6 +12,7 @@
  */
 import { Hono } from 'hono';
 import { query } from '../../db/pool.js';
+import { listActions } from '../../db/actionLog.js';
 import { requireStaffRole } from '../../middleware/gates.js';
 import { parseMcUuid } from '../../middleware/gates.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
@@ -155,6 +156,42 @@ adminPanelV2.get('/admin/audit', async (c) => {
   } catch (err) {
     logger.error({ err: String(err) }, 'v2 admin audit failed');
     return c.json({ error: 'Audit log unavailable' }, 503);
+  }
+});
+
+// ── Backend action log (per-actor attribution, 2026-10-06) ──────────────────
+// The backend-owned D1 trail for actions that never reach the plugin's
+// admin_actions table (ticket staff notes/status changes, changelog posts,
+// gallery moderation). Every row answers "WHO did this": a discord:<id> /
+// mc:<uuid> / named:<staff> human where one acted, the shared-bot identity
+// only as the system fallback.
+adminPanelV2.get('/admin/actions', async (c) => {
+  const { limit, offset, page } = pageParams(c);
+  const actorId = c.req.query('actor_id');
+  const action = c.req.query('action');
+  try {
+    const { entries, total } = await listActions({
+      actorId: actorId || undefined,
+      action: action || undefined,
+      limit,
+      offset,
+    });
+    return c.json({
+      entries: entries.map((r) => ({
+        id: r.id,
+        actorId: r.actor_id,
+        actorName: r.actor_name,
+        action: r.action,
+        target: r.target,
+        detail: r.detail,
+        at: new Date(r.ts).toISOString(),
+      })),
+      total,
+      page,
+    });
+  } catch (err) {
+    logger.error({ err: String(err) }, 'v2 admin actions failed');
+    return c.json({ error: 'Action log unavailable' }, 503);
   }
 });
 
