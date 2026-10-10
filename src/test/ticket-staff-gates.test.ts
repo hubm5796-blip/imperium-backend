@@ -200,7 +200,15 @@ describe('discord /ticket staff gate (B-40)', () => {
     // memberRoles is EMPTY — the Discord role check would refuse; requireStaff must let it through.
     await ticketCommand.execute(shim as never);
     const { appendTicketNoteV2 } = await import('../bot/apiClient.js');
-    expect(appendTicketNoteV2).toHaveBeenCalledWith('known-ticket', 'staff', expect.stringContaining('a reply'));
+    // The note ride also carries the invoking member as a structured actor
+    // (per-actor audit attribution) — username missing on this shim, so the
+    // display name falls back to the snowflake.
+    expect(appendTicketNoteV2).toHaveBeenCalledWith(
+      'known-ticket',
+      'staff',
+      expect.stringContaining('a reply'),
+      { id: 'discord:111111111111111111', name: '111111111111111111' },
+    );
   });
 
   it('refuses when the backend permission lookup denies (no Discord role AND no LuckPerms staff group)', async () => {

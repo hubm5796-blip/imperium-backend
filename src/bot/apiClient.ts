@@ -273,12 +273,25 @@ export function listTicketsV2(status?: string, createdSince?: string) {
   );
 }
 
-export function patchTicketV2(id: string, body: { status?: string; priority?: string; discordThreadId?: string | null; satisfaction?: string }) {
-  return request<{ updated: Record<string, unknown> }>('PATCH', `/api/v2/tickets/${encodeURIComponent(id)}`, body);
+export function patchTicketV2(
+  id: string,
+  body: { status?: string; priority?: string; discordThreadId?: string | null; satisfaction?: string },
+  actor?: { id: string; name: string },
+) {
+  // Per-actor audit attribution: the bot forwards the invoking Discord member
+  // so the backend's action_log names the human, not just "the bot".
+  const payload = actor ? { ...body, actorId: actor.id, actorName: actor.name } : body;
+  return request<{ updated: Record<string, unknown> }>('PATCH', `/api/v2/tickets/${encodeURIComponent(id)}`, payload);
 }
 
-export function appendTicketNoteV2(id: string, author: 'player' | 'discord' | 'staff', body: string) {
-  return request<{ appended: boolean }>('POST', `/api/v2/tickets/${encodeURIComponent(id)}/notes`, { author, body });
+export function appendTicketNoteV2(
+  id: string,
+  author: 'player' | 'discord' | 'staff',
+  body: string,
+  actor?: { id: string; name: string },
+) {
+  const payload = actor ? { author, body, actorId: actor.id, actorName: actor.name } : { author, body };
+  return request<{ appended: boolean }>('POST', `/api/v2/tickets/${encodeURIComponent(id)}/notes`, payload);
 }
 
 // ── V6 02-04: moderation surface ────────────────────────────────────────────

@@ -24,6 +24,7 @@ import { requireStaff } from '../moderation.js';
 import { errorEmbed } from '../embeds.js';
 import { COLORS, EMOJI } from '../config.js';
 import { getCronConfig } from '../cronConfig.js';
+import { discordActor } from '../../utils/auditActor.js';
 import { type BotCommand } from './_shared.js';
 import type { InteractionShim } from '../interactionShim.js';
 
@@ -182,7 +183,15 @@ export const ticketCommand: BotCommand = {
     if (sub === 'reply') {
       await interaction.deferReply({ ephemeral: true });
       const text = interaction.options.getString('text', true).slice(0, 2000);
-      const noted = await appendTicketNoteV2(ticketId, 'staff', `(discord <@${interaction.user.id}>) ${text}`);
+      // Per-actor audit attribution: the note row plus the backend action_log
+      // must name the invoking human, not just "the bot replied".
+      const actor = discordActor(interaction.user.id, interaction.user.username);
+      const noted = await appendTicketNoteV2(
+        ticketId,
+        'staff',
+        `(discord <@${interaction.user.id}>) ${text}`,
+        actor ?? undefined,
+      );
       if (!noted.ok) {
         await interaction.editReply({ embeds: [errorEmbed(noted.status === 404 ? 'Ticket not found.' : noted.message)] });
         return;
@@ -201,7 +210,8 @@ export const ticketCommand: BotCommand = {
     if (sub === 'close') {
       await interaction.deferReply({ ephemeral: true });
       const resolution = interaction.options.getString('resolution', false) ?? 'resolved';
-      const closed = await patchTicketV2(ticketId, { status: 'closed', satisfaction: 'pending' });
+      const actor = discordActor(interaction.user.id, interaction.user.username);
+      const closed = await patchTicketV2(ticketId, { status: 'closed', satisfaction: 'pending' }, actor ?? undefined);
       if (!closed.ok) {
         await interaction.editReply({ embeds: [errorEmbed(closed.status === 404 ? 'Ticket not found.' : closed.message)] });
         return;

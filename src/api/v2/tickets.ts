@@ -15,6 +15,8 @@ import { query } from '../../db/pool.js';
 import { botTokenMatches } from '../../middleware/auth.js';
 import { parseMcUuid } from '../../middleware/gates.js';
 import { readRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
+import { recordAction } from '../../db/actionLog.js';
+import { parseActorRef, SHARED_BOT_ACTOR, type AuditActor } from '../../utils/auditActor.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
 
@@ -28,6 +30,19 @@ ticketsV2.use('/tickets*', readRateLimit, async (c, next) => {
 });
 
 const CATEGORIES = new Set(['bug', 'payment', 'report', 'appeal', 'general']);
+
+/**
+ * Per-actor audit attribution: the bot forwards the invoking Discord member
+ * (actorId/actorName body fields — the same threading pattern punishAdmin
+ * uses for `actor`). This surface is bot-token gated, so the bot is the only
+ * authenticated caller and its assertion is internal trust (the delegated
+ * X-Mc-Uuid doctrine). Garbage refs fall back to the shared-bot identity —
+ * never to the raw caller value — and callers with no actor at all (the
+ * cron sweep) keep the legacy bot attribution.
+ */
+function actorFromBody(body: Record<string, unknown>): AuditActor {
+  return parseActorRef(body.actorId, body.actorName) ?? SHARED_BOT_ACTOR;
+}
 
 ticketsV2.post('/tickets', writeRateLimit, async (c) => {
   let body: Record<string, unknown>;
@@ -139,6 +154,14 @@ ticketsV2.patch('/tickets/:id', writeRateLimit, async (c) => {
       params,
     );
     if (res.rows.length === 0) return c.json({ error: 'Ticket not found' }, 404);
+    // Audit row: who changed the ticket (staff human via the bot, or the bot
+    // itself for the cron sweep) and which fields moved.
+    await recordAction({
+      actor: actorFromBody(body),
+      action: 'ticket.patch',
+      target: id,
+      detail: `fields=${sets.map((s) => s.split(' =')[0]).join(',')}`,
+    });
     return c.json({ updated: res.rows[0] });
   } catch (err) {
     logger.error({ err: String(err) }, 'v2 tickets: patch failed');
@@ -163,6 +186,16 @@ ticketsV2.post('/tickets/:id/notes', writeRateLimit, async (c) => {
       [id, author, note],
     );
     if (res.rows.length === 0) return c.json({ error: 'Ticket not found' }, 404);
+    // Audit row for staff notes: the note body already embeds the Discord
+    // mention, but the structured actor here is what audit queries filter on.
+    if (author === 'staff') {
+      await recordAction({
+        actor: actorFromBody(body),
+        action: 'ticket.note',
+        target: id,
+        detail: `chars=${note.length}`,
+      });
+    }
     return c.json({ appended: true }, 201);
   } catch (err) {
     logger.error({ err: String(err) }, 'v2 tickets: note append failed');
