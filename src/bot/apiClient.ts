@@ -6,7 +6,6 @@
  */
 import { getBotConfig } from './config.js';
 import { createApp } from '../app.js';
-
 // The backend used to be a separate service the bot called over HTTP; now
 // both live in the same Worker, and BACKEND_API_BASE points at this Worker's
 // own routed domain (api.imperiummc.net). A real fetch() to your own zone
@@ -16,305 +15,271 @@ import { createApp } from '../app.js';
 // entirely; same routing/middleware, zero self-referential HTTP.
 let appInstance: ReturnType<typeof createApp> | undefined;
 function localApp() {
-  if (!appInstance) appInstance = createApp();
-  return appInstance;
+ if (!appInstance) appInstance = createApp();
+ return appInstance;
 }
-
 /** Shape of a confirmed account link returned by the backend. */
 export interface LinkResult {
-  discordId: string;
-  username: string;
-  uuid: string;
-  linked?: boolean;
+ discordId: string;
+ username: string;
+ uuid: string;
+ linked?: boolean;
 }
-
 /** Player profile (linked from a UUID via /api/player/profile). */
 export interface PlayerProfile {
-  uuid: string;
-  username: string;
-  discordId?: string | null;
-  rank?: number;
-  prestigeLevel?: number;
-  denarius?: number;
-  auctoritas?: number;
-  civitas?: number;
-  aureus?: number;
-  blocksMined?: number;
-  playtimeSeconds?: number;
-  pvpKills?: number;
-  pvpDeaths?: number;
-  trophies?: number;
-  joinedAt?: string | null;
-  lastSeen?: string | null;
+ uuid: string;
+ username: string;
+ discordId?: string | null;
+ rank?: number;
+ prestigeLevel?: number;
+ denarius?: number;
+ auctoritas?: number;
+ civitas?: number;
+ aureus?: number;
+ blocksMined?: number;
+ playtimeSeconds?: number;
+ pvpKills?: number;
+ pvpDeaths?: number;
+ trophies?: number;
+ joinedAt?: string | null;
+ lastSeen?: string | null;
 }
-
 /** One row of a leaderboard. */
 export interface LeaderboardEntry {
-  rank: number;
-  uuid: string;
-  username: string;
-  value: number;
+ rank: number;
+ uuid: string;
+ username: string;
+ value: number;
 }
-
 export interface LeaderboardResult {
-  type: string;
-  entries: LeaderboardEntry[];
+ type: string;
+ entries: LeaderboardEntry[];
 }
-
 /** Live server status. */
 export interface ServerStatus {
-  online: boolean;
-  playerCount?: number;
-  maxPlayers?: number;
-  tps?: number;
-  motd?: string;
-  version?: string;
-  players?: string[];
+ online: boolean;
+ playerCount?: number;
+ maxPlayers?: number;
+ tps?: number;
+ motd?: string;
+ version?: string;
+ players?: string[];
 }
-
 /**
  * Discriminated result of an API call: either the parsed JSON body or an
  * error with an HTTP status and a human-friendly message.
  */
 export type ApiResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; status: number; message: string };
-
+ | { ok: true; data: T }
+ | { ok: false; status: number; message: string };
 /** Normalize backend error payloads into a single message string. */
 function extractMessage(payload: unknown, fallback: string): string {
-  if (payload && typeof payload === 'object') {
-    const rec = payload as Record<string, unknown>;
-    if (typeof rec.message === 'string') return rec.message;
-    if (typeof rec.error === 'string') return rec.error;
-  }
-  return fallback;
+ if (payload && typeof payload === 'object') {
+ const rec = payload as Record<string, unknown>;
+ if (typeof rec.message === 'string') return rec.message;
+ if (typeof rec.error === 'string') return rec.error;
+ }
+ return fallback;
 }
-
 /** Perform a JSON request and return a discriminated ApiResult. */
 async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  staffRole?: 'helper' | 'mod' | 'admin',
+ method: string,
+ path: string,
+ body?: unknown,
+ staffRole?: 'helper' | 'mod' | 'admin',
 ): Promise<ApiResult<T>> {
-  const { apiToken } = getBotConfig();
-  try {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    };
-    // Authenticate bot-only endpoints (/link/confirm, DELETE /link,
-    // /player/profile with ?uuid= or ?discord_id=).
-    if (apiToken) {
-      headers['X-Bot-Token'] = apiToken;
-    }
-    // B-01(c)/X-04: staff-gated backend routes no longer exempt the bare
-    // bot token. The bot asserts the role its OWN requireStaff lookup just
-    // verified for this interaction — the header is honored because the
-    // request is bot-token authenticated (the Phase-1 staff protocol).
-    if (staffRole) {
-      headers['X-Staff-Role'] = staffRole;
-    }
-    // In-process via Hono (see localApp() above) — not a real network fetch.
-    const res = await localApp().request(path, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-
-    const text = await res.text();
-    let parsed: unknown = undefined;
-    if (text) {
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        parsed = text;
-      }
-    }
-
-    if (!res.ok) {
-      const message =
-        typeof parsed === 'string'
-          ? parsed
-          : extractMessage(parsed, `${res.status} ${res.statusText}`);
-      return { ok: false, status: res.status, message };
-    }
-
-    return { ok: true, data: parsed as T };
-  } catch (err) {
-    return {
-      ok: false,
-      status: 0,
-      message: err instanceof Error ? err.message : 'Network request failed',
-    };
-  }
+ const { apiToken } = getBotConfig();
+ try {
+ const headers: Record<string, string> = {
+ 'Content-Type': 'application/json',
+ Accept: 'application/json',
+ };
+ // Authenticate bot-only endpoints (/link/confirm, DELETE /link,
+ // /player/profile with ?uuid= or ?discord_id=).
+ if (apiToken) {
+ headers['X-Bot-Token'] = apiToken;
+ }
+ // B-01(c)/X-04: staff-gated backend routes no longer exempt the bare
+ // bot token. The bot asserts the role its OWN requireStaff lookup just
+ // verified for this interaction — the header is honored because the
+ // request is bot-token authenticated (the Phase-1 staff protocol).
+ if (staffRole) {
+ headers['X-Staff-Role'] = staffRole;
+ }
+ // In-process via Hono (see localApp() above) — not a real network fetch.
+ const res = await localApp().request(path, {
+ method,
+ headers,
+ body: body !== undefined ? JSON.stringify(body) : undefined,
+ });
+ const text = await res.text();
+ let parsed: unknown = undefined;
+ if (text) {
+ try {
+ parsed = JSON.parse(text);
+ } catch {
+ parsed = text;
+ }
+ }
+ if (!res.ok) {
+ const message =
+ typeof parsed === 'string'
+ ? parsed
+ : extractMessage(parsed, `${res.status} ${res.statusText}`);
+ return { ok: false, status: res.status, message };
+ }
+ return { ok: true, data: parsed as T };
+ } catch (err) {
+ return {
+ ok: false,
+ status: 0,
+ message: err instanceof Error ? err.message : 'Network request failed',
+ };
+ }
 }
-
 /** Build a query string from non-null entries. */
 function qs(params: Record<string, string | undefined>): string {
-  const sp = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== '') sp.set(k, v);
-  }
-  const s = sp.toString();
-  return s ? `?${s}` : '';
+ const sp = new URLSearchParams();
+ for (const [k, v] of Object.entries(params)) {
+ if (v !== undefined && v !== '') sp.set(k, v);
+ }
+ const s = sp.toString();
+ return s ? `?${s}` : '';
 }
-
 /** POST /api/link/confirm — confirm a Discord↔MC link using a code. */
 export function confirmLink(discordId: string, code: string) {
-  return request<LinkResult>('POST', '/api/link/confirm', { discordId, code });
+ return request<LinkResult>('POST', '/api/link/confirm', { discordId, code });
 }
-
 /** DELETE /api/link — remove the Discord↔MC link for a Discord user. */
 export function unlinkAccount(discordId: string) {
-  return request<{ discordId: string; unlinked: boolean }>(
-    'DELETE',
-    `/api/link${qs({ discord_id: discordId })}`,
-  );
+ return request<{ discordId: string; unlinked: boolean }>(
+ 'DELETE',
+ `/api/link${qs({ discord_id: discordId })}`,
+ );
 }
-
 /**
  * GET /api/player/profile — resolve a profile.
  * The backend looks the player up by Discord id when `discord_id` is passed,
  * or by uuid/username otherwise.
  */
 export function getProfile(opts: { discordId?: string; uuid?: string; username?: string }) {
-  return request<PlayerProfile>(
-    'GET',
-    `/api/player/profile${qs({ discord_id: opts.discordId, uuid: opts.uuid, username: opts.username })}`,
-  );
+ return request<PlayerProfile>(
+ 'GET',
+ `/api/player/profile${qs({ discord_id: opts.discordId, uuid: opts.uuid, username: opts.username })}`,
+ );
 }
-
 /** GET /api/leaderboards/:type — top players for a given metric. */
 export function getLeaderboard(type: string, limit = 10) {
-  return request<LeaderboardResult>(
-    'GET',
-    `/api/leaderboards/${encodeURIComponent(type)}${qs({ limit: String(limit) })}`,
-  );
+ return request<LeaderboardResult>(
+ 'GET',
+ `/api/leaderboards/${encodeURIComponent(type)}${qs({ limit: String(limit) })}`,
+ );
 }
-
 /** GET /api/server/status — live server status. */
 export function getServerStatus() {
-  return request<ServerStatus>('GET', '/api/server/status');
+ return request<ServerStatus>('GET', '/api/server/status');
 }
-
 // ── bot-cron surface (V6 02-05/02-07/02-09) — consumed by the scheduled
 // sweep, the role-sync engine, and /botstats. All bot-token gated server-side.
-
 /** GET /api/seasons/current — season + 7-day event calendar + live festival. */
 export interface SeasonsCurrent {
-  season?: { number?: number; name?: string; endsAt?: string | null };
-  events?: Array<{
-    id: string;
-    type: string;
-    name: string;
-    startsAt: string;
-    signupDeadline?: string | null;
-  }>;
-  festival?: { id: string; active: boolean; name: string; impact?: string } | null;
+ season?: { number?: number; name?: string; endsAt?: string | null };
+ events?: Array<{
+ id: string;
+ type: string;
+ name: string;
+ startsAt: string;
+ signupDeadline?: string | null;
+ }>;
+ festival?: { id: string; active: boolean; name: string; impact?: string } | null;
 }
-
 export function getSeasonsCurrent() {
-  return request<SeasonsCurrent>('GET', '/api/seasons/current');
+ return request<SeasonsCurrent>('GET', '/api/seasons/current');
 }
-
 /** GET /api/events/feed?since=ISO — plugin-pushed personal events. */
 export function getEventsFeed(sinceIso: string) {
-  return request<{ events: Array<{ id: string; type: string; uuid: string; message: string }> }>(
-    'GET',
-    `/api/events/feed${qs({ since: sinceIso })}`,
-  );
+ return request<{ events: Array<{ id: string; type: string; uuid: string; message: string }> }>(
+ 'GET',
+ `/api/events/feed${qs({ since: sinceIso })}`,
+ );
 }
-
 /** GET /api/v2/member?discord_id= — the role-sync desired-state aggregate. */
 export interface MemberSummary {
-  uuid: string;
-  discordId: string;
-  username: string | null;
-  rank: number;
-  prestigeLevel: number;
-  donor: { tier: string; type: string; active: boolean; expiresAt: string | null } | null;
+ uuid: string;
+ discordId: string;
+ username: string | null;
+ rank: number;
+ prestigeLevel: number;
+ donor: { tier: string; type: string; active: boolean; expiresAt: string | null } | null;
 }
-
 export function getMember(discordId: string) {
-  return request<MemberSummary>('GET', `/api/v2/member${qs({ discord_id: discordId })}`);
+ return request<MemberSummary>('GET', `/api/v2/member${qs({ discord_id: discordId })}`);
 }
-
 /** GET /api/player/permissions?discord_id= — LuckPerms flags (staff gates). */
 export function getPermissions(discordId: string) {
-  return request<{ isAdmin: boolean; isMod: boolean; isHelper: boolean }>(
-    'GET',
-    `/api/player/permissions${qs({ discord_id: discordId })}`,
-  );
+ return request<{ isAdmin: boolean; isMod: boolean; isHelper: boolean }>(
+ 'GET',
+ `/api/player/permissions${qs({ discord_id: discordId })}`,
+ );
 }
-
 // ── V6 02-06: v2 ticket surface (the Discord-thread-as-view model) ─────────
-
 export interface TicketRowV2 {
-  id: string;
-  uuid: string;
-  username: string | null;
-  category: string;
-  subject: string;
-  status: string;
-  priority: string;
-  discord_thread_id: string | null;
-  created_at: string;
+ id: string;
+ uuid: string;
+ username: string | null;
+ category: string;
+ subject: string;
+ status: string;
+ priority: string;
+ discord_thread_id: string | null;
+ created_at: string;
 }
-
 export function createTicketV2(body: { uuid: string; category: string; subject: string; body: string; discordThreadId?: string; discordOpenerId?: string }) {
-  return request<{ id: string; status: string }>('POST', '/api/v2/tickets', body);
+ return request<{ id: string; status: string }>('POST', '/api/v2/tickets', body);
 }
-
 export function listTicketsV2(status?: string, createdSince?: string) {
-  return request<{ tickets: TicketRowV2[] }>(
-    'GET',
-    `/api/v2/tickets${qs({ status, created_since: createdSince })}`,
-  );
+ return request<{ tickets: TicketRowV2[] }>(
+ 'GET',
+ `/api/v2/tickets${qs({ status, created_since: createdSince })}`,
+ );
 }
-
 export function patchTicketV2(
-  id: string,
-  body: { status?: string; priority?: string; discordThreadId?: string | null; satisfaction?: string },
-  actor?: { id: string; name: string },
+ id: string,
+ body: { status?: string; priority?: string; discordThreadId?: string | null; satisfaction?: string },
+ actor?: { id: string; name: string },
 ) {
-  // Per-actor audit attribution: the bot forwards the invoking Discord member
-  // so the backend's action_log names the human, not just "the bot".
-  const payload = actor ? { ...body, actorId: actor.id, actorName: actor.name } : body;
-  return request<{ updated: Record<string, unknown> }>('PATCH', `/api/v2/tickets/${encodeURIComponent(id)}`, payload);
+ // Per-actor audit attribution: the bot forwards the invoking Discord member
+ // so the backend's action_log names the human, not just "the bot".
+ const payload = actor ? { ...body, actorId: actor.id, actorName: actor.name } : body;
+ return request<{ updated: Record<string, unknown> }>('PATCH', `/api/v2/tickets/${encodeURIComponent(id)}`, payload);
 }
-
 export function appendTicketNoteV2(
-  id: string,
-  author: 'player' | 'discord' | 'staff',
-  body: string,
-  actor?: { id: string; name: string },
+ id: string,
+ author: 'player' | 'discord' | 'staff',
+ body: string,
+ actor?: { id: string; name: string },
 ) {
-  const payload = actor ? { author, body, actorId: actor.id, actorName: actor.name } : { author, body };
-  return request<{ appended: boolean }>('POST', `/api/v2/tickets/${encodeURIComponent(id)}/notes`, payload);
+ const payload = actor ? { author, body, actorId: actor.id, actorName: actor.name } : { author, body };
+ return request<{ appended: boolean }>('POST', `/api/v2/tickets/${encodeURIComponent(id)}/notes`, payload);
 }
-
 // ── V6 02-04: moderation surface ────────────────────────────────────────────
-
 /** POST /api/admin/punish — forward a punishment to the plugin over the Redis bus (mod+). */
 export function punishAdmin(
-  body: { target: string; action: string; reason: string; duration?: string; actor?: string },
-  staffRole: 'helper' | 'mod' | 'admin' = 'mod',
+ body: { target: string; action: string; reason: string; duration?: string; actor?: string },
+ staffRole: 'helper' | 'mod' | 'admin' = 'mod',
 ) {
-  return request<{ ok: boolean; result: unknown }>('POST', '/api/admin/punish', body, staffRole);
+ return request<{ ok: boolean; result: unknown }>('POST', '/api/admin/punish', body, staffRole);
 }
-
 /** GET /api/admin/player?query= — staff player lookup (helper+). */
 export function adminPlayerLookup(query: string, staffRole: 'helper' | 'mod' | 'admin' = 'helper') {
-  return request<Record<string, unknown>>('GET', `/api/admin/player${qs({ query })}`, undefined, staffRole);
+ return request<Record<string, unknown>>('GET', `/api/admin/player${qs({ query })}`, undefined, staffRole);
 }
-
 /** GET /api/v2/moderation/history?uuid= — punishment history for a player (mod+). */
 export function moderationHistory(uuid: string, staffRole: 'helper' | 'mod' | 'admin' = 'mod') {
-  return request<{ history: Array<Record<string, unknown>> }>(
-    'GET',
-    `/api/v2/moderation/history${qs({ uuid })}`,
-    undefined,
-    staffRole,
-  );
+ return request<{ history: Array<Record<string, unknown>> }>(
+ 'GET',
+ `/api/v2/moderation/history${qs({ uuid })}`,
+ undefined,
+ staffRole,
+ );
 }

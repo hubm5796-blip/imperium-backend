@@ -21,42 +21,46 @@ import { skillsCommand } from './skills.js';
 import { statsCommand } from './stats.js';
 import { ticketCommand } from './ticket.js';
 import { storeCommand } from './store.js';
+import { mineCommand } from './mine.js';
+import { changelogCommand } from './changelog.js';
+import { voteCommand } from './vote.js';
 import { unlinkCommand } from './unlink.js';
 import type { BotCommand } from './_shared.js';
-
 export const commands: BotCommand[] = [
-  linkCommand,
-  unlinkCommand,
-  profileCommand,
-  balanceCommand,
-  statsCommand,
-  leaderboardCommand,
-  onlineCommand,
-  storeCommand,
-  cratesCommand,
-  petsCommand,
-  dungeonsCommand,
-  skillsCommand,
-  morphCommand,
-  parkourCommand,
-  factionsCommand,
-  ipCommand,
-  gadgetsCommand,
-  accessibilityCommand,
-  botstatsCommand,
-  lookupCommand,
-  historyCommand,
-  warnCommand,
-  muteCommand,
-  kickCommand,
-  tempbanCommand,
-  banCommand,
-  ticketCommand,
-  myTicketsCommand,
-  helpCommand,
+ linkCommand,
+ unlinkCommand,
+ profileCommand,
+ balanceCommand,
+ statsCommand,
+ leaderboardCommand,
+ onlineCommand,
+ storeCommand,
+ cratesCommand,
+ petsCommand,
+ dungeonsCommand,
+ skillsCommand,
+ morphCommand,
+ parkourCommand,
+ factionsCommand,
+ ipCommand,
+ gadgetsCommand,
+ accessibilityCommand,
+ botstatsCommand,
+ lookupCommand,
+ historyCommand,
+ warnCommand,
+ muteCommand,
+ kickCommand,
+ tempbanCommand,
+ banCommand,
+ ticketCommand,
+ myTicketsCommand,
+ mineCommand,
+ changelogCommand,
+ voteCommand,
+ helpCommand,
 ];
-
 /** Map of command name -> command for O(1) dispatch. */
 export const commandMap: ReadonlyMap<string, BotCommand> = new Map(
-  commands.map((c) => [c.name, c]),
+ commands.map((c) => [c.name, c]),
 );
