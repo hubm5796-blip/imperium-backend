@@ -306,7 +306,7 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
   const embed = {
     title: title,
     description: (lead + (sectionText || flatText)).slice(0, 4000),
-    color: 0xd4af37,
+    color: 0xcea464,
     footer: { text: 'ImperiumMC • imperiummc.net' },
     timestamp: new Date().toISOString(),
   };
