@@ -112,6 +112,7 @@ describe('every registered command executes without throwing', () => {
   // handler actually runs (a required-option rejection would prove nothing).
   const REQUIRED_OPTIONS: Record<string, Record<string, string>> = {
     link: { code: 'IMPERIUS-42' },
+    mine: { mine: 'XLI' },
     leaderboard: { type: 'denarius' },
     lookup: { player: 'Yxrqy' },
     warn: { player: 'Yxrqy', reason: 'testing' },

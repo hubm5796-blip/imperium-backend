@@ -1,0 +1,3160 @@
+{
+ "generatedAt": "2026-10-11T18:03:14.821Z",
+ "contentCap": 50,
+ "mines": [
+  {
+   "id": 1,
+   "numeral": "I",
+   "name": "Silvanna Quarry",
+   "unlockRank": 1,
+   "blocks": [
+    {
+     "m": "STONE",
+     "v": 0.04
+    },
+    {
+     "m": "COBBLESTONE",
+     "v": 0.06
+    },
+    {
+     "m": "IRON_ORE",
+     "v": 0.1
+    },
+    {
+     "m": "COAL_ORE",
+     "v": 0.17
+    },
+    {
+     "m": "LAPIS_ORE",
+     "v": 0.39
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "numeral": "II",
+   "name": "Aethelwood Quarry",
+   "unlockRank": 2,
+   "blocks": [
+    {
+     "m": "GRANITE",
+     "v": 0.1
+    },
+    {
+     "m": "DIORITE",
+     "v": 0.14
+    },
+    {
+     "m": "COPPER_ORE",
+     "v": 0.22
+    },
+    {
+     "m": "IRON_ORE",
+     "v": 0.35
+    },
+    {
+     "m": "REDSTONE_ORE",
+     "v": 0.8
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "numeral": "III",
+   "name": "Palatinus Quarry",
+   "unlockRank": 3,
+   "blocks": [
+    {
+     "m": "DIORITE",
+     "v": 0.18
+    },
+    {
+     "m": "ANDESITE",
+     "v": 0.25
+    },
+    {
+     "m": "COAL_ORE",
+     "v": 0.35
+    },
+    {
+     "m": "COPPER_ORE",
+     "v": 0.55
+    },
+    {
+     "m": "GOLD_ORE",
+     "v": 1.3
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "numeral": "IV",
+   "name": "Aurelian Quarry",
+   "unlockRank": 4,
+   "blocks": [
+    {
+     "m": "ANDESITE",
+     "v": 0.28
+    },
+    {
+     "m": "TUFF",
+     "v": 0.38
+    },
+    {
+     "m": "IRON_ORE",
+     "v": 0.5
+    },
+    {
+     "m": "REDSTONE_ORE",
+     "v": 0.8
+    },
+    {
+     "m": "LAPIS_ORE",
+     "v": 1.9
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "numeral": "V",
+   "name": "Romulus Quarry",
+   "unlockRank": 5,
+   "blocks": [
+    {
+     "m": "TUFF",
+     "v": 0.4
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 0.55
+    },
+    {
+     "m": "COPPER_ORE",
+     "v": 0.72
+    },
+    {
+     "m": "GOLD_ORE",
+     "v": 1.15
+    },
+    {
+     "m": "DIAMOND_ORE",
+     "v": 2.8
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "numeral": "VI",
+   "name": "Caesar's Quarry",
+   "unlockRank": 6,
+   "blocks": [
+    {
+     "m": "DEEPSLATE",
+     "v": 0.55
+    },
+    {
+     "m": "CALCITE",
+     "v": 0.75
+    },
+    {
+     "m": "DEEPSLATE_REDSTONE_ORE",
+     "v": 0.95
+    },
+    {
+     "m": "GOLD_ORE",
+     "v": 1.5
+    },
+    {
+     "m": "EMERALD_ORE",
+     "v": 3.7
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "numeral": "VII",
+   "name": "Locus Aeterna",
+   "unlockRank": 7,
+   "blocks": [
+    {
+     "m": "CALCITE",
+     "v": 0.72
+    },
+    {
+     "m": "SCULK",
+     "v": 0.98
+    },
+    {
+     "m": "DEEPSLATE_IRON_ORE",
+     "v": 1.25
+    },
+    {
+     "m": "DIAMOND_ORE",
+     "v": 2
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 5
+    }
+   ]
+  },
+  {
+   "id": 8,
+   "numeral": "VIII",
+   "name": "Flora Quirinalis",
+   "unlockRank": 8,
+   "blocks": [
+    {
+     "m": "SCULK",
+     "v": 0.92
+    },
+    {
+     "m": "BASALT",
+     "v": 1.25
+    },
+    {
+     "m": "DEEPSLATE_GOLD_ORE",
+     "v": 1.6
+    },
+    {
+     "m": "DIAMOND_ORE",
+     "v": 2.55
+    },
+    {
+     "m": "EMERALD_ORE",
+     "v": 6.2
+    }
+   ]
+  },
+  {
+   "id": 9,
+   "numeral": "IX",
+   "name": "Campus Martius",
+   "unlockRank": 9,
+   "blocks": [
+    {
+     "m": "BASALT",
+     "v": 1.15
+    },
+    {
+     "m": "BLACKSTONE",
+     "v": 1.55
+    },
+    {
+     "m": "DIAMOND_ORE",
+     "v": 2
+    },
+    {
+     "m": "EMERALD_ORE",
+     "v": 3.2
+    },
+    {
+     "m": "NETHER_QUARTZ_ORE",
+     "v": 7.8
+    }
+   ]
+  },
+  {
+   "id": 10,
+   "numeral": "X",
+   "name": "Rubrum Quarry",
+   "unlockRank": 10,
+   "blocks": [
+    {
+     "m": "BLACKSTONE",
+     "v": 1.42
+    },
+    {
+     "m": "END_STONE",
+     "v": 1.92
+    },
+    {
+     "m": "DIAMOND_ORE",
+     "v": 2.45
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 4
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 9.7
+    }
+   ]
+  },
+  {
+   "id": 11,
+   "numeral": "XI",
+   "name": "The Praetorian Bastion",
+   "unlockRank": 11,
+   "blocks": [
+    {
+     "m": "END_STONE",
+     "v": 1.7
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 2.3
+    },
+    {
+     "m": "EMERALD_ORE",
+     "v": 3.15
+    },
+    {
+     "m": "NETHER_QUARTZ_ORE",
+     "v": 4.93
+    },
+    {
+     "m": "BONE_BLOCK",
+     "v": 11.9,
+     "s": "Fossil Relief"
+    }
+   ]
+  },
+  {
+   "id": 12,
+   "numeral": "XII",
+   "name": "Castra Hiberna",
+   "unlockRank": 12,
+   "blocks": [
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 2.05
+    },
+    {
+     "m": "CALCITE",
+     "v": 2.77
+    },
+    {
+     "m": "DIAMOND_ORE",
+     "v": 3.79
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 5.95
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 14.36,
+     "s": "Vein of Janus"
+    }
+   ]
+  },
+  {
+   "id": 13,
+   "numeral": "XIII",
+   "name": "The Teutoburg Bastion",
+   "unlockRank": 13,
+   "blocks": [
+    {
+     "m": "SMOOTH_BASALT",
+     "v": 2.25
+    },
+    {
+     "m": "TUFF",
+     "v": 3.03
+    },
+    {
+     "m": "EMERALD_ORE",
+     "v": 4.16
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 6.52
+    },
+    {
+     "m": "POLISHED_BASALT",
+     "v": 15.74,
+     "s": "Corvus Seal"
+    }
+   ]
+  },
+  {
+   "id": 14,
+   "numeral": "XIV",
+   "name": "The Gardens of Sallust",
+   "unlockRank": 14,
+   "blocks": [
+    {
+     "m": "DEEPSLATE",
+     "v": 2.66
+    },
+    {
+     "m": "SCULK",
+     "v": 3.59
+    },
+    {
+     "m": "DIAMOND_ORE",
+     "v": 4.93
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 7.72
+    },
+    {
+     "m": "DEEPSLATE_BRICKS",
+     "v": 18.64,
+     "s": "Senate Shard"
+    }
+   ]
+  },
+  {
+   "id": 15,
+   "numeral": "XV",
+   "name": "The Palatine Terraces",
+   "unlockRank": 15,
+   "blocks": [
+    {
+     "m": "QUARTZ_BLOCK",
+     "v": 2.99
+    },
+    {
+     "m": "CALCITE",
+     "v": 4.04
+    },
+    {
+     "m": "EMERALD_ORE",
+     "v": 5.54
+    },
+    {
+     "m": "NETHER_GOLD_ORE",
+     "v": 8.68
+    },
+    {
+     "m": "MOSSY_COBBLESTONE",
+     "v": 20.95,
+     "s": "Laurel Ore"
+    }
+   ]
+  },
+  {
+   "id": 16,
+   "numeral": "XVI",
+   "name": "Curia Julia",
+   "unlockRank": 16,
+   "blocks": [
+    {
+     "m": "CALCITE",
+     "v": 3.42
+    },
+    {
+     "m": "QUARTZ_BRICKS",
+     "v": 4.62
+    },
+    {
+     "m": "DIAMOND_ORE",
+     "v": 6.33
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 9.92
+    },
+    {
+     "m": "CHISELED_STONE_BRICKS",
+     "v": 23.95,
+     "s": "Frontier Idol"
+    }
+   ]
+  },
+  {
+   "id": 17,
+   "numeral": "XVII",
+   "name": "Grove of Picus",
+   "unlockRank": 17,
+   "blocks": [
+    {
+     "m": "SMOOTH_SANDSTONE",
+     "v": 4.08
+    },
+    {
+     "m": "QUARTZ_BRICKS",
+     "v": 5.51
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 7.55
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 11.84
+    },
+    {
+     "m": "POLISHED_GRANITE",
+     "v": 28.57,
+     "s": "Eagle Standard"
+    }
+   ]
+  },
+  {
+   "id": 18,
+   "numeral": "XVIII",
+   "name": "The Tartarus Chasm",
+   "unlockRank": 18,
+   "blocks": [
+    {
+     "m": "RED_SANDSTONE",
+     "v": 4.55
+    },
+    {
+     "m": "BRICKS",
+     "v": 6.15
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 8.42
+    },
+    {
+     "m": "DEEPSLATE_EMERALD_ORE",
+     "v": 13.2
+    },
+    {
+     "m": "CRACKED_STONE_BRICKS",
+     "v": 31.87,
+     "s": "Aquila Fragment"
+    }
+   ]
+  },
+  {
+   "id": 19,
+   "numeral": "XIX",
+   "name": "The Lucus Capitolina",
+   "unlockRank": 19,
+   "blocks": [
+    {
+     "m": "STONE_BRICKS",
+     "v": 5.37
+    },
+    {
+     "m": "MOSSY_STONE_BRICKS",
+     "v": 7.26
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 9.94
+    },
+    {
+     "m": "DEEPSLATE_DIAMOND_ORE",
+     "v": 15.58
+    },
+    {
+     "m": "BOOKSHELF",
+     "v": 37.62,
+     "s": "Conspirator's Note"
+    }
+   ]
+  },
+  {
+   "id": 20,
+   "numeral": "XX",
+   "name": "Viminalis Frost Veins",
+   "unlockRank": 20,
+   "blocks": [
+    {
+     "m": "POLISHED_ANDESITE",
+     "v": 5.85
+    },
+    {
+     "m": "CHISELED_SANDSTONE",
+     "v": 7.9
+    },
+    {
+     "m": "EMERALD_ORE",
+     "v": 10.83
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 16.97
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 40.96,
+     "s": "Gilded Laurel"
+    }
+   ]
+  },
+  {
+   "id": 21,
+   "numeral": "XXI",
+   "name": "The Palmyrene Basin",
+   "unlockRank": 21,
+   "blocks": [
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 6.83
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 9.22
+    },
+    {
+     "m": "DEEPSLATE_DIAMOND_ORE",
+     "v": 12.63
+    },
+    {
+     "m": "COPPER_BLOCK",
+     "v": 19.8
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 47.8,
+     "s": "Senate Seal"
+    }
+   ]
+  },
+  {
+   "id": 22,
+   "numeral": "XXII",
+   "name": "Vicus Gallia",
+   "unlockRank": 22,
+   "blocks": [
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 8.08
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 10.91
+    },
+    {
+     "m": "COPPER_BLOCK",
+     "v": 14.95
+    },
+    {
+     "m": "QUARTZ_BLOCK",
+     "v": 23.43
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 56.55,
+     "s": "Divine Ember"
+    }
+   ]
+  },
+  {
+   "id": 23,
+   "numeral": "XXIII",
+   "name": "The Tuscan Enclave",
+   "unlockRank": 23,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 9.69
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 13.09
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 17.93
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 28.11
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 67.86,
+     "s": "Omen Core"
+    }
+   ]
+  },
+  {
+   "id": 24,
+   "numeral": "XXIV",
+   "name": "The Pontine Marshes",
+   "unlockRank": 24,
+   "blocks": [
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 11.66
+    },
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 15.74
+    },
+    {
+     "m": "QUARTZ_BLOCK",
+     "v": 21.57
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 33.82
+    },
+    {
+     "m": "LIGHTNING_ROD",
+     "v": 81.63,
+     "s": "Pantheon Relic"
+    }
+   ]
+  },
+  {
+   "id": 25,
+   "numeral": "XXV",
+   "name": "The Alpine Fief",
+   "unlockRank": 25,
+   "blocks": [
+    {
+     "m": "WAXED_OXIDIZED_COPPER",
+     "v": 13.98
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 18.87
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 25.86
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 40.54
+    },
+    {
+     "m": "CHISELED_NETHER_BRICKS",
+     "v": 97.86,
+     "s": "Imperial Crown Ore"
+    }
+   ]
+  },
+  {
+   "id": 26,
+   "numeral": "XXVI",
+   "name": "Praeneste Shaft",
+   "unlockRank": 26,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SCULK",
+     "v": 16.37
+    },
+    {
+     "m": "SOUL_SAND",
+     "v": 22.1
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 30.28
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 47.47
+    },
+    {
+     "m": "SCULK_VEIN",
+     "v": 114.58,
+     "s": "Styx Sediment"
+    }
+   ]
+  },
+  {
+   "id": 27,
+   "numeral": "XXVII",
+   "name": "The Sabine Ridge",
+   "unlockRank": 27,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SCULK",
+     "v": 18.97
+    },
+    {
+     "m": "SOUL_SAND",
+     "v": 25.61
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 35.09
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 55.01
+    },
+    {
+     "m": "SCULK_VEIN",
+     "v": 132.77,
+     "s": "Styx Sediment"
+    }
+   ]
+  },
+  {
+   "id": 28,
+   "numeral": "XXVIII",
+   "name": "Etruscan Tomb Depths",
+   "unlockRank": 28,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SCULK",
+     "v": 22.13
+    },
+    {
+     "m": "SOUL_SAND",
+     "v": 29.87
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 40.94
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 64.17
+    },
+    {
+     "m": "SCULK_VEIN",
+     "v": 154.9,
+     "s": "Styx Sediment"
+    }
+   ]
+  },
+  {
+   "id": 29,
+   "numeral": "XXIX",
+   "name": "The Volscian Trench",
+   "unlockRank": 29,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SCULK",
+     "v": 25.99
+    },
+    {
+     "m": "SOUL_SAND",
+     "v": 35.09
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 48.09
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 75.38
+    },
+    {
+     "m": "SCULK_VEIN",
+     "v": 181.95,
+     "s": "Styx Sediment"
+    }
+   ]
+  },
+  {
+   "id": 30,
+   "numeral": "XXX",
+   "name": "Samnite War Tunnels",
+   "unlockRank": 30,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SCULK",
+     "v": 30.21
+    },
+    {
+     "m": "SOUL_SAND",
+     "v": 40.78
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 55.88
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 87.6
+    },
+    {
+     "m": "SCULK_VEIN",
+     "v": 211.45,
+     "s": "Styx Sediment"
+    }
+   ]
+  },
+  {
+   "id": 31,
+   "numeral": "XXXI",
+   "name": "The Rubicon Crossing",
+   "unlockRank": 31,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "QUARTZ_BLOCK",
+     "v": 35.12
+    },
+    {
+     "m": "QUARTZ_BRICKS",
+     "v": 47.42
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 64.98
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 101.86
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 245.87,
+     "s": "Ichor Vein"
+    }
+   ]
+  },
+  {
+   "id": 32,
+   "numeral": "XXXII",
+   "name": "Gallia Transalpina Mine",
+   "unlockRank": 32,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "QUARTZ_BLOCK",
+     "v": 40.74
+    },
+    {
+     "m": "QUARTZ_BRICKS",
+     "v": 55.01
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 75.38
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 118.16
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 285.21,
+     "s": "Ichor Vein"
+    }
+   ]
+  },
+  {
+   "id": 33,
+   "numeral": "XXXIII",
+   "name": "The Helvetii Shaft",
+   "unlockRank": 33,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "QUARTZ_BLOCK",
+     "v": 47.07
+    },
+    {
+     "m": "QUARTZ_BRICKS",
+     "v": 63.54
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 87.07
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 136.49
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 329.47,
+     "s": "Ichor Vein"
+    }
+   ]
+  },
+  {
+   "id": 34,
+   "numeral": "XXXIV",
+   "name": "Britannia Clay Pit",
+   "unlockRank": 34,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "QUARTZ_BLOCK",
+     "v": 54.44
+    },
+    {
+     "m": "QUARTZ_BRICKS",
+     "v": 73.5
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 100.72
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 157.89
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 381.1,
+     "s": "Ichor Vein"
+    }
+   ]
+  },
+  {
+   "id": 35,
+   "numeral": "XXXV",
+   "name": "The Aventine Pits",
+   "unlockRank": 35,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "QUARTZ_BLOCK",
+     "v": 63.22
+    },
+    {
+     "m": "QUARTZ_BRICKS",
+     "v": 85.35
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 116.97
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 183.35
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 442.57,
+     "s": "Ichor Vein"
+    }
+   ]
+  },
+  {
+   "id": 36,
+   "numeral": "XXXVI",
+   "name": "Carthage Salt Flats",
+   "unlockRank": 36,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 72.01
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 97.21
+    },
+    {
+     "m": "END_STONE",
+     "v": 133.21
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 208.82
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 504.04,
+     "s": "Void Pearl"
+    }
+   ]
+  },
+  {
+   "id": 37,
+   "numeral": "XXXVII",
+   "name": "Numidian Quartz Vein",
+   "unlockRank": 37,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 82.54
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 111.43
+    },
+    {
+     "m": "END_STONE",
+     "v": 152.7
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 239.37
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 577.8,
+     "s": "Void Pearl"
+    }
+   ]
+  },
+  {
+   "id": 38,
+   "numeral": "XXXVIII",
+   "name": "The Corinth Canal",
+   "unlockRank": 38,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 94.84
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 128.03
+    },
+    {
+     "m": "END_STONE",
+     "v": 175.45
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 275.03
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 663.86,
+     "s": "Void Pearl"
+    }
+   ]
+  },
+  {
+   "id": 39,
+   "numeral": "XXXIX",
+   "name": "Athens Marble Gallery",
+   "unlockRank": 39,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 108.89
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 147
+    },
+    {
+     "m": "END_STONE",
+     "v": 201.44
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 315.77
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 762.21,
+     "s": "Void Pearl"
+    }
+   ]
+  },
+  {
+   "id": 40,
+   "numeral": "XL",
+   "name": "Alexandria Deep Harbor",
+   "unlockRank": 40,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 124.69
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 168.34
+    },
+    {
+     "m": "END_STONE",
+     "v": 230.68
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 361.61
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 872.85,
+     "s": "Void Pearl"
+    }
+   ]
+  },
+  {
+   "id": 41,
+   "numeral": "XLI",
+   "name": "The Augustan Forum Mine",
+   "unlockRank": 41,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "NETHERRACK",
+     "v": 142.26
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 192.04
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 263.17
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 412.54
+    },
+    {
+     "m": "BLACKSTONE",
+     "v": 995.79,
+     "s": "Rift Shard"
+    }
+   ]
+  },
+  {
+   "id": 42,
+   "numeral": "XLII",
+   "name": "Campus Martius Excavation",
+   "unlockRank": 42,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "NETHERRACK",
+     "v": 163.33
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 220.5
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 302.16
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 473.66
+    },
+    {
+     "m": "BLACKSTONE",
+     "v": 1143.31,
+     "s": "Rift Shard"
+    }
+   ]
+  },
+  {
+   "id": 43,
+   "numeral": "XLIII",
+   "name": "The Flavian Amphitheater Pit",
+   "unlockRank": 43,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "NETHERRACK",
+     "v": 186.16
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 251.32
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 344.4
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 539.87
+    },
+    {
+     "m": "BLACKSTONE",
+     "v": 1303.13,
+     "s": "Rift Shard"
+    }
+   ]
+  },
+  {
+   "id": 44,
+   "numeral": "XLIV",
+   "name": "Trajan's Market Cellar",
+   "unlockRank": 44,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "NETHERRACK",
+     "v": 212.5
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 286.88
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 393.13
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 616.26
+    },
+    {
+     "m": "BLACKSTONE",
+     "v": 1487.53,
+     "s": "Rift Shard"
+    }
+   ]
+  },
+  {
+   "id": 45,
+   "numeral": "XLV",
+   "name": "The Palatine Vaults",
+   "unlockRank": 45,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "NETHERRACK",
+     "v": 242.36
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 327.19
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 448.37
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 702.85
+    },
+    {
+     "m": "BLACKSTONE",
+     "v": 1696.52,
+     "s": "Rift Shard"
+    }
+   ]
+  },
+  {
+   "id": 46,
+   "numeral": "XLVI",
+   "name": "Hadrian's Villa Caverns",
+   "unlockRank": 46,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_BLACKSTONE",
+     "v": 275.73
+    },
+    {
+     "m": "CUT_COPPER",
+     "v": 372.23
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 510.1
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 799.61
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 1930.1,
+     "s": "SUMMUS Ore"
+    }
+   ]
+  },
+  {
+   "id": 47,
+   "numeral": "XLVII",
+   "name": "The Antonine Bath Springs",
+   "unlockRank": 47,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_BLACKSTONE",
+     "v": 314.37
+    },
+    {
+     "m": "CUT_COPPER",
+     "v": 424.39
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 581.58
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 911.66
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 2200.56,
+     "s": "SUMMUS Ore"
+    }
+   ]
+  },
+  {
+   "id": 48,
+   "numeral": "XLVIII",
+   "name": "Marcus Aurelius Memorial",
+   "unlockRank": 48,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_BLACKSTONE",
+     "v": 358.27
+    },
+    {
+     "m": "CUT_COPPER",
+     "v": 483.67
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 662.8
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 1038.99
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 2507.9,
+     "s": "SUMMUS Ore"
+    }
+   ]
+  },
+  {
+   "id": 49,
+   "numeral": "XLIX",
+   "name": "The Septimius Tunnel",
+   "unlockRank": 49,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_BLACKSTONE",
+     "v": 407.45
+    },
+    {
+     "m": "CUT_COPPER",
+     "v": 550.05
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 753.78
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 1181.59
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 2852.13,
+     "s": "SUMMUS Ore"
+    }
+   ]
+  },
+  {
+   "id": 50,
+   "numeral": "L",
+   "name": "The Golden Milestone",
+   "unlockRank": 50,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_BLACKSTONE",
+     "v": 463.65
+    },
+    {
+     "m": "CUT_COPPER",
+     "v": 625.92
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 857.74
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 1344.57
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 3245.52,
+     "s": "SUMMUS Ore"
+    }
+   ]
+  },
+  {
+   "id": 51,
+   "numeral": "LI",
+   "name": "The Claudian Aquifer",
+   "unlockRank": 51,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 504.45
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 681.01
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 933.24
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 1462.92
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 3531.18,
+     "s": "Blessed Ore"
+    }
+   ]
+  },
+  {
+   "id": 52,
+   "numeral": "LII",
+   "name": "Nero's Domus Aura",
+   "unlockRank": 52,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 548.85
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 740.95
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 1015.38
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 1591.67
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 3841.96,
+     "s": "Blessed Ore"
+    }
+   ]
+  },
+  {
+   "id": 53,
+   "numeral": "LIII",
+   "name": "The Flavian Obsidian Pit",
+   "unlockRank": 53,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 597.15
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 806.16
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 1104.74
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 1731.75
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 4180.08,
+     "s": "Blessed Ore"
+    }
+   ]
+  },
+  {
+   "id": 54,
+   "numeral": "LIV",
+   "name": "Trajan's Dacian Spoils",
+   "unlockRank": 54,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 649.71
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 877.11
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 1201.96
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 1884.15
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 4547.96,
+     "s": "Blessed Ore"
+    }
+   ]
+  },
+  {
+   "id": 55,
+   "numeral": "LV",
+   "name": "The Quirinal Lapis Beds",
+   "unlockRank": 55,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 706.89
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 954.3
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 1307.75
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 2049.99
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 4948.24,
+     "s": "Blessed Ore"
+    }
+   ]
+  },
+  {
+   "id": 56,
+   "numeral": "LVI",
+   "name": "The Viminal Iron Cascade",
+   "unlockRank": 56,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 769.1
+    },
+    {
+     "m": "SCULK",
+     "v": 1038.29
+    },
+    {
+     "m": "BASALT",
+     "v": 1422.84
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 2230.4
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 5383.73,
+     "s": "Tartaric Core"
+    }
+   ]
+  },
+  {
+   "id": 57,
+   "numeral": "LVII",
+   "name": "The Esquiline Grand Vein",
+   "unlockRank": 57,
+   "autoGenerate": true,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 836.8
+    },
+    {
+     "m": "SCULK",
+     "v": 1129.68
+    },
+    {
+     "m": "BASALT",
+     "v": 1548.07
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 2426.71
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 5857.58,
+     "s": "Tartaric Core"
+    }
+   ]
+  },
+  {
+   "id": 58,
+   "numeral": "LVIII",
+   "name": "Caelian Diamond Cathedral",
+   "unlockRank": 58,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 910.44
+    },
+    {
+     "m": "SCULK",
+     "v": 1229.09
+    },
+    {
+     "m": "BASALT",
+     "v": 1684.31
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 2640.27
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 6373.07,
+     "s": "Tartaric Core"
+    }
+   ]
+  },
+  {
+   "id": 59,
+   "numeral": "LIX",
+   "name": "The Aventine Emerald Grotto",
+   "unlockRank": 59,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 990.57
+    },
+    {
+     "m": "SCULK",
+     "v": 1337.26
+    },
+    {
+     "m": "BASALT",
+     "v": 1832.55
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 2872.64
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 6933.96,
+     "s": "Tartaric Core"
+    }
+   ]
+  },
+  {
+   "id": 60,
+   "numeral": "LX",
+   "name": "The Field of Mars Crystal Pit",
+   "unlockRank": 60,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 1077.75
+    },
+    {
+     "m": "SCULK",
+     "v": 1454.97
+    },
+    {
+     "m": "BASALT",
+     "v": 1993.84
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 3125.48
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 7544.26,
+     "s": "Tartaric Core"
+    }
+   ]
+  },
+  {
+   "id": 61,
+   "numeral": "LXI",
+   "name": "Constantine's Cross Mine",
+   "unlockRank": 61,
+   "blocks": [
+    {
+     "m": "SEA_LANTERN",
+     "v": 1172.6
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 1583.01
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 2169.32
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 3400.55
+    },
+    {
+     "m": "END_ROD",
+     "v": 8208.22,
+     "s": "Aether Mote"
+    }
+   ]
+  },
+  {
+   "id": 62,
+   "numeral": "LXII",
+   "name": "The Eastern Capital Shaft",
+   "unlockRank": 62,
+   "blocks": [
+    {
+     "m": "SEA_LANTERN",
+     "v": 1275.81
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 1722.34
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 2360.24
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 3699.84
+    },
+    {
+     "m": "END_ROD",
+     "v": 8930.64,
+     "s": "Aether Mote"
+    }
+   ]
+  },
+  {
+   "id": 63,
+   "numeral": "LXIII",
+   "name": "Ravenna Marsh Pits",
+   "unlockRank": 63,
+   "blocks": [
+    {
+     "m": "SEA_LANTERN",
+     "v": 1388.09
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 1873.92
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 2567.96
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 4025.45
+    },
+    {
+     "m": "END_ROD",
+     "v": 9716.6,
+     "s": "Aether Mote"
+    }
+   ]
+  },
+  {
+   "id": 64,
+   "numeral": "LXIV",
+   "name": "The Danube Limes Trench",
+   "unlockRank": 64,
+   "blocks": [
+    {
+     "m": "SEA_LANTERN",
+     "v": 1510.26
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 2038.85
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 2793.97
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 4379.74
+    },
+    {
+     "m": "END_ROD",
+     "v": 10571.79,
+     "s": "Aether Mote"
+    }
+   ]
+  },
+  {
+   "id": 65,
+   "numeral": "LXV",
+   "name": "The Rhine Frontier Dig",
+   "unlockRank": 65,
+   "blocks": [
+    {
+     "m": "SEA_LANTERN",
+     "v": 1643.18
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 2218.29
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 3039.87
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 4765.21
+    },
+    {
+     "m": "END_ROD",
+     "v": 11502.23,
+     "s": "Aether Mote"
+    }
+   ]
+  },
+  {
+   "id": 66,
+   "numeral": "LXVI",
+   "name": "The Euphrates Crossing",
+   "unlockRank": 66,
+   "blocks": [
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 1787.79
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 2413.52
+    },
+    {
+     "m": "END_STONE",
+     "v": 3307.41
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 5184.59
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 12514.53,
+     "s": "Chaos Gem"
+    }
+   ]
+  },
+  {
+   "id": 67,
+   "numeral": "LXVII",
+   "name": "The Sahara Salt Road",
+   "unlockRank": 67,
+   "blocks": [
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 1945.14
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 2625.93
+    },
+    {
+     "m": "END_STONE",
+     "v": 3598.5
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 5640.89
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 13615.95,
+     "s": "Chaos Gem"
+    }
+   ]
+  },
+  {
+   "id": 68,
+   "numeral": "LXVIII",
+   "name": "The Atlas Mountain Cut",
+   "unlockRank": 68,
+   "blocks": [
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 2116.33
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 2857.04
+    },
+    {
+     "m": "END_STONE",
+     "v": 3915.2
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 6137.35
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 14814.28,
+     "s": "Chaos Gem"
+    }
+   ]
+  },
+  {
+   "id": 69,
+   "numeral": "LXIX",
+   "name": "Hibernia Misty Vein",
+   "unlockRank": 69,
+   "blocks": [
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 2302.59
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 3108.49
+    },
+    {
+     "m": "END_STONE",
+     "v": 4259.78
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 6677.5
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 16118.1,
+     "s": "Chaos Gem"
+    }
+   ]
+  },
+  {
+   "id": 70,
+   "numeral": "LXX",
+   "name": "The Tartarus Gates",
+   "unlockRank": 70,
+   "blocks": [
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 2505.24
+    },
+    {
+     "m": "MAGMA_BLOCK",
+     "v": 3382.07
+    },
+    {
+     "m": "END_STONE",
+     "v": 4634.7
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 7265.2
+    },
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 17536.68,
+     "s": "Chaos Gem"
+    }
+   ]
+  },
+  {
+   "id": 71,
+   "numeral": "LXXI",
+   "name": "The Styx Crossing",
+   "unlockRank": 71,
+   "blocks": [
+    {
+     "m": "ANDESITE",
+     "v": 2725.73
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 3679.73
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 5042.59
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 7904.6
+    },
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 19080.08,
+     "s": "Titan Fragment"
+    }
+   ]
+  },
+  {
+   "id": 72,
+   "numeral": "LXXII",
+   "name": "The Lethe Watershaft",
+   "unlockRank": 72,
+   "blocks": [
+    {
+     "m": "ANDESITE",
+     "v": 2965.62
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 4003.59
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 5486.4
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 8600.3
+    },
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 20759.34,
+     "s": "Titan Fragment"
+    }
+   ]
+  },
+  {
+   "id": 73,
+   "numeral": "LXXIII",
+   "name": "The Acheron Torrent",
+   "unlockRank": 73,
+   "blocks": [
+    {
+     "m": "ANDESITE",
+     "v": 3226.62
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 4355.94
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 5969.26
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 9357.21
+    },
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 22586.37,
+     "s": "Titan Fragment"
+    }
+   ]
+  },
+  {
+   "id": 74,
+   "numeral": "LXXIV",
+   "name": "The Phlegethon Forge",
+   "unlockRank": 74,
+   "blocks": [
+    {
+     "m": "ANDESITE",
+     "v": 3510.6
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 4739.31
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 6494.61
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 10180.74
+    },
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 24574.2,
+     "s": "Titan Fragment"
+    }
+   ]
+  },
+  {
+   "id": 75,
+   "numeral": "LXXV",
+   "name": "The Elysian Fields Excavation",
+   "unlockRank": 75,
+   "blocks": [
+    {
+     "m": "ANDESITE",
+     "v": 3819.57
+    },
+    {
+     "m": "DEEPSLATE",
+     "v": 5156.42
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 7066.21
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 11076.76
+    },
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 26737,
+     "s": "Titan Fragment"
+    }
+   ]
+  },
+  {
+   "id": 76,
+   "numeral": "LXXVI",
+   "name": "The Asphodel Meadow Pit",
+   "unlockRank": 76,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 4155.74
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 5610.24
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 7688.11
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 12051.63
+    },
+    {
+     "m": "HONEYCOMB_BLOCK",
+     "v": 29090.15,
+     "s": "Ambrosia Vein"
+    }
+   ]
+  },
+  {
+   "id": 77,
+   "numeral": "LXXVII",
+   "name": "Tartarus Abyssal Shaft",
+   "unlockRank": 77,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 4521.48
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 6104
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 8364.74
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 13112.3
+    },
+    {
+     "m": "HONEYCOMB_BLOCK",
+     "v": 31650.38,
+     "s": "Ambrosia Vein"
+    }
+   ]
+  },
+  {
+   "id": 78,
+   "numeral": "LXXVIII",
+   "name": "The Erebus Vein",
+   "unlockRank": 78,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 4919.42
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 6641.22
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 9100.93
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 14266.33
+    },
+    {
+     "m": "HONEYCOMB_BLOCK",
+     "v": 34435.97,
+     "s": "Ambrosia Vein"
+    }
+   ]
+  },
+  {
+   "id": 79,
+   "numeral": "LXXIX",
+   "name": "The Nyx Caverns",
+   "unlockRank": 79,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 5352.38
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 7225.72
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 9901.91
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 15521.92
+    },
+    {
+     "m": "HONEYCOMB_BLOCK",
+     "v": 37466.69,
+     "s": "Ambrosia Vein"
+    }
+   ]
+  },
+  {
+   "id": 80,
+   "numeral": "LXXX",
+   "name": "The Stygian Abyss",
+   "unlockRank": 80,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 5823.45
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 7861.66
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 10773.38
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 16888
+    },
+    {
+     "m": "HONEYCOMB_BLOCK",
+     "v": 40764.14,
+     "s": "Ambrosia Vein"
+    }
+   ]
+  },
+  {
+   "id": 81,
+   "numeral": "LXXXI",
+   "name": "The Olympic Summit Mine",
+   "unlockRank": 81,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 6335.97
+    },
+    {
+     "m": "BASALT",
+     "v": 8553.57
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 11721.55
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 18374.33
+    },
+    {
+     "m": "SHROOMLIGHT",
+     "v": 44351.82,
+     "s": "World Ember"
+    }
+   ]
+  },
+  {
+   "id": 82,
+   "numeral": "LXXXII",
+   "name": "Temple of Jupiter Depths",
+   "unlockRank": 82,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 6893.61
+    },
+    {
+     "m": "BASALT",
+     "v": 9306.37
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 12753.17
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 19991.46
+    },
+    {
+     "m": "SHROOMLIGHT",
+     "v": 48255.25,
+     "s": "World Ember"
+    }
+   ]
+  },
+  {
+   "id": 83,
+   "numeral": "LXXXIII",
+   "name": "Neptune's Tidal Shaft",
+   "unlockRank": 83,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 7500.32
+    },
+    {
+     "m": "BASALT",
+     "v": 10125.43
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 13875.58
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 21750.92
+    },
+    {
+     "m": "SHROOMLIGHT",
+     "v": 52502.21,
+     "s": "World Ember"
+    }
+   ]
+  },
+  {
+   "id": 84,
+   "numeral": "LXXXIV",
+   "name": "The Mars War Forge",
+   "unlockRank": 84,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 8160.43
+    },
+    {
+     "m": "BASALT",
+     "v": 11016.58
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 15096.79
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 23665.24
+    },
+    {
+     "m": "SHROOMLIGHT",
+     "v": 57123,
+     "s": "World Ember"
+    }
+   ]
+  },
+  {
+   "id": 85,
+   "numeral": "LXXXV",
+   "name": "Venus's Garden Grotto",
+   "unlockRank": 85,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 8878.63
+    },
+    {
+     "m": "BASALT",
+     "v": 11986.15
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 16425.47
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 25748.03
+    },
+    {
+     "m": "SHROOMLIGHT",
+     "v": 62150.41,
+     "s": "World Ember"
+    }
+   ]
+  },
+  {
+   "id": 86,
+   "numeral": "LXXXVI",
+   "name": "Minerva's Wisdom Vault",
+   "unlockRank": 86,
+   "blocks": [
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 9660.04
+    },
+    {
+     "m": "END_STONE",
+     "v": 13041.06
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 17871.08
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 28014.12
+    },
+    {
+     "m": "PACKED_ICE",
+     "v": 67620.3,
+     "s": "Stillness Stone"
+    }
+   ]
+  },
+  {
+   "id": 87,
+   "numeral": "LXXXVII",
+   "name": "Apollo's Oracle Cavern",
+   "unlockRank": 87,
+   "blocks": [
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 10510.23
+    },
+    {
+     "m": "END_STONE",
+     "v": 14188.81
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 19443.92
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 30479.66
+    },
+    {
+     "m": "PACKED_ICE",
+     "v": 73571.6,
+     "s": "Stillness Stone"
+    }
+   ]
+  },
+  {
+   "id": 88,
+   "numeral": "LXXXVIII",
+   "name": "Diana's Moonlit Hollow",
+   "unlockRank": 88,
+   "blocks": [
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 11435.24
+    },
+    {
+     "m": "END_STONE",
+     "v": 15437.58
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 21155.2
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 33162.21
+    },
+    {
+     "m": "PACKED_ICE",
+     "v": 80046.71,
+     "s": "Stillness Stone"
+    }
+   ]
+  },
+  {
+   "id": 89,
+   "numeral": "LXXXIX",
+   "name": "Vulcan's Infernal Foundry",
+   "unlockRank": 89,
+   "blocks": [
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 12441.66
+    },
+    {
+     "m": "END_STONE",
+     "v": 16796.25
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 23017.08
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 36080.83
+    },
+    {
+     "m": "PACKED_ICE",
+     "v": 87091.65,
+     "s": "Stillness Stone"
+    }
+   ]
+  },
+  {
+   "id": 90,
+   "numeral": "XC",
+   "name": "Mercury's Vault of Speed",
+   "unlockRank": 90,
+   "blocks": [
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 13536.66
+    },
+    {
+     "m": "END_STONE",
+     "v": 18274.5
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 25042.83
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 39256.32
+    },
+    {
+     "m": "PACKED_ICE",
+     "v": 94756.64,
+     "s": "Stillness Stone"
+    }
+   ]
+  },
+  {
+   "id": 91,
+   "numeral": "XCI",
+   "name": "The Pantheon Eternal Mine",
+   "unlockRank": 91,
+   "blocks": [
+    {
+     "m": "POLISHED_ANDESITE",
+     "v": 14728.04
+    },
+    {
+     "m": "PRISMARINE",
+     "v": 19882.85
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 27246.87
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 42711.31
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 103096.26,
+     "s": "First Light"
+    }
+   ]
+  },
+  {
+   "id": 92,
+   "numeral": "XCII",
+   "name": "Mount Olympus Summit",
+   "unlockRank": 92,
+   "blocks": [
+    {
+     "m": "POLISHED_ANDESITE",
+     "v": 16024.26
+    },
+    {
+     "m": "PRISMARINE",
+     "v": 21632.75
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 29644.88
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 46470.35
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 112169.8,
+     "s": "First Light"
+    }
+   ]
+  },
+  {
+   "id": 93,
+   "numeral": "XCIII",
+   "name": "The River Lethe Source",
+   "unlockRank": 93,
+   "blocks": [
+    {
+     "m": "POLISHED_ANDESITE",
+     "v": 17434.56
+    },
+    {
+     "m": "PRISMARINE",
+     "v": 23536.66
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 32253.94
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 50560.23
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 122041.94,
+     "s": "First Light"
+    }
+   ]
+  },
+  {
+   "id": 94,
+   "numeral": "XCIV",
+   "name": "Cronus's Chains",
+   "unlockRank": 94,
+   "blocks": [
+    {
+     "m": "POLISHED_ANDESITE",
+     "v": 18968.99
+    },
+    {
+     "m": "PRISMARINE",
+     "v": 25608.14
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 35092.64
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 55010.08
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 132782.94,
+     "s": "First Light"
+    }
+   ]
+  },
+  {
+   "id": 95,
+   "numeral": "XCV",
+   "name": "The Titan Forge",
+   "unlockRank": 95,
+   "blocks": [
+    {
+     "m": "POLISHED_ANDESITE",
+     "v": 20638.46
+    },
+    {
+     "m": "PRISMARINE",
+     "v": 27861.92
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 38181.15
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 59851.54
+    },
+    {
+     "m": "GLOWSTONE",
+     "v": 144469.23,
+     "s": "First Light"
+    }
+   ]
+  },
+  {
+   "id": 96,
+   "numeral": "XCVI",
+   "name": "The Promethean Rift",
+   "unlockRank": 96,
+   "blocks": [
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 22454.86
+    },
+    {
+     "m": "COPPER_BLOCK",
+     "v": 30314.07
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 41541.5
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 65119.11
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 157184.05,
+     "s": "Godseed Ore"
+    }
+   ]
+  },
+  {
+   "id": 97,
+   "numeral": "XCVII",
+   "name": "The Olympian Throne Room",
+   "unlockRank": 97,
+   "blocks": [
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 24431.13
+    },
+    {
+     "m": "COPPER_BLOCK",
+     "v": 32982.03
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 45197.6
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 70850.29
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 171017.94,
+     "s": "Godseed Ore"
+    }
+   ]
+  },
+  {
+   "id": 98,
+   "numeral": "XCVIII",
+   "name": "The Aether Crystal Spire",
+   "unlockRank": 98,
+   "blocks": [
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 26581.33
+    },
+    {
+     "m": "COPPER_BLOCK",
+     "v": 35884.79
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 49175.46
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 77085.85
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 186069.29,
+     "s": "Godseed Ore"
+    }
+   ]
+  },
+  {
+   "id": 99,
+   "numeral": "XCIX",
+   "name": "The Chaos Nexus",
+   "unlockRank": 99,
+   "blocks": [
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 28920.77
+    },
+    {
+     "m": "COPPER_BLOCK",
+     "v": 39043.04
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 53503.43
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 83870.24
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 202445.41,
+     "s": "Godseed Ore"
+    }
+   ]
+  },
+  {
+   "id": 100,
+   "numeral": "C",
+   "name": "The Omega Sanctum — Summit of All",
+   "unlockRank": 100,
+   "blocks": [
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 31466.1
+    },
+    {
+     "m": "COPPER_BLOCK",
+     "v": 42479.24
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 58212.29
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 91251.7
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 220262.73,
+     "s": "Godseed Ore"
+    }
+   ]
+  },
+  {
+   "id": 101,
+   "numeral": "PI",
+   "name": "The Gilded Vault of Era",
+   "unlockRank": 101,
+   "blocks": [
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 34235.45
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 46217.86
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 63335.59
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 99282.82
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 239648.18,
+     "s": "Aureus Reliquary"
+    }
+   ]
+  },
+  {
+   "id": 102,
+   "numeral": "PII",
+   "name": "Emerald Sanctum",
+   "unlockRank": 102,
+   "blocks": [
+    {
+     "m": "QUARTZ_BRICKS",
+     "v": 37248.54
+    },
+    {
+     "m": "POLISHED_BLACKSTONE",
+     "v": 50285.53
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 68909.8
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 108020.77
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 260739.8,
+     "s": "Smaragdine Reliquary"
+    }
+   ]
+  },
+  {
+   "id": 103,
+   "numeral": "PIII",
+   "name": "Diamond Horizon",
+   "unlockRank": 103,
+   "blocks": [
+    {
+     "m": "POLISHED_DEEPSLATE",
+     "v": 40526.81
+    },
+    {
+     "m": "DEEPSLATE_TILES",
+     "v": 54711.19
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 74974.59
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 117527.74
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 283687.65,
+     "s": "Adamant Reliquary"
+    }
+   ]
+  },
+  {
+   "id": 104,
+   "numeral": "PIV",
+   "name": "The Amethyst Throne",
+   "unlockRank": 104,
+   "blocks": [
+    {
+     "m": "DEEPSLATE_BRICKS",
+     "v": 44093.59
+    },
+    {
+     "m": "POLISHED_BASALT",
+     "v": 59526.35
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 81573.15
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 127871.42
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 308655.15,
+     "s": "Amethystine Reliquary"
+    }
+   ]
+  },
+  {
+   "id": 105,
+   "numeral": "PV",
+   "name": "Purpur Eternity",
+   "unlockRank": 105,
+   "blocks": [
+    {
+     "m": "PURPUR_BLOCK",
+     "v": 47974.3
+    },
+    {
+     "m": "PURPUR_PILLAR",
+     "v": 64765.3
+    },
+    {
+     "m": "SEA_LANTERN",
+     "v": 88752.45
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 139125.46
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 335820.07,
+     "s": "Purpur Reliquary"
+    }
+   ]
+  },
+  {
+   "id": 106,
+   "numeral": "PVI",
+   "name": "Quartz Paradiso",
+   "unlockRank": 106,
+   "blocks": [
+    {
+     "m": "QUARTZ_BLOCK",
+     "v": 52196.54
+    },
+    {
+     "m": "QUARTZ_BRICKS",
+     "v": 70465.33
+    },
+    {
+     "m": "SMOOTH_QUARTZ",
+     "v": 96563.61
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 151369.98
+    },
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 365375.81,
+     "s": "Crystalline Reliquary"
+    }
+   ]
+  },
+  {
+   "id": 107,
+   "numeral": "PVII",
+   "name": "The Gilded Pantheon",
+   "unlockRank": 107,
+   "blocks": [
+    {
+     "m": "POLISHED_BLACKSTONE",
+     "v": 56790.4
+    },
+    {
+     "m": "CHISELED_POLISHED_BLACKSTONE",
+     "v": 76667.04
+    },
+    {
+     "m": "CHISELED_QUARTZ_BLOCK",
+     "v": 105062.23
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 164692.15
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 397532.78,
+     "s": "Pantheon Reliquary"
+    }
+   ]
+  },
+  {
+   "id": 108,
+   "numeral": "PVIII",
+   "name": "Apotheosis Core",
+   "unlockRank": 108,
+   "blocks": [
+    {
+     "m": "GILDED_BLACKSTONE",
+     "v": 61788.56
+    },
+    {
+     "m": "GOLD_BLOCK",
+     "v": 83414.55
+    },
+    {
+     "m": "DIAMOND_BLOCK",
+     "v": 114308.83
+    },
+    {
+     "m": "EMERALD_BLOCK",
+     "v": 179186.81
+    },
+    {
+     "m": "AMETHYST_BLOCK",
+     "v": 432519.89,
+     "s": "Apotheosis Seed"
+    }
+   ]
+  }
+ ]
+}

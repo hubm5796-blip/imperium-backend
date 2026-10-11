@@ -19,136 +19,120 @@ import { isLeaderboardComponent, handleLeaderboardComponent } from './commands/l
 import { errorEmbed } from './embeds.js';
 import { InteractionShim, type RawInteraction } from './interactionShim.js';
 import { recordCommand, touchUserActivity } from './analytics/log.js';
-
 const INTERACTION_TYPE = {
-  PING: 1,
-  APPLICATION_COMMAND: 2,
-  MESSAGE_COMPONENT: 3,
+ PING: 1,
+ APPLICATION_COMMAND: 2,
+ MESSAGE_COMPONENT: 3,
 } as const;
-
 /** Timeout guard: if a command never acks (bug, hang), still respond before Discord's 3s cutoff. */
 const FIRST_ACK_TIMEOUT_MS = 2_500;
-
 export const discordInteractions = new Hono();
-
 discordInteractions.post('/', async (c) => {
-  const signature = c.req.header('x-signature-ed25519');
-  const timestamp = c.req.header('x-signature-timestamp');
-  const rawBody = await c.req.text();
-
-  if (!signature || !timestamp || !env.discord.publicKey) {
-    return c.json({ error: 'Missing signature' }, 401);
-  }
-
-  const valid = await verifyKey(rawBody, signature, timestamp, env.discord.publicKey);
-  if (!valid) {
-    return c.json({ error: 'Invalid signature' }, 401);
-  }
-
-  const raw = JSON.parse(rawBody) as RawInteraction;
-
-  if (raw.type === INTERACTION_TYPE.PING) {
-    return c.json({ type: 1 }); // PONG
-  }
-
-  if (raw.type !== INTERACTION_TYPE.APPLICATION_COMMAND && raw.type !== INTERACTION_TYPE.MESSAGE_COMPONENT) {
-    return c.json({ error: 'Unsupported interaction type' }, 400);
-  }
-
-  const shim = new InteractionShim(raw, env.discord.botToken);
-
-  const run = async (): Promise<void> => {
-    try {
-      if (raw.type === INTERACTION_TYPE.MESSAGE_COMPONENT) {
-        const customId = shim.customId ?? '';
-        if (isLeaderboardComponent(customId)) {
-          await handleLeaderboardComponent(shim);
-        } else if (customId.startsWith('modconfirm:')) {
-          // V6 02-04: single-use moderation confirmations (ban/tempban).
-          const { consumeModConfirm } = await import('./commands/moderation.js');
-          await consumeModConfirm(customId.slice('modconfirm:'.length), shim);
-        } else {
-          await shim.deferUpdate();
-        }
-        return;
-      }
-
-      const command = commandMap.get(shim.commandName);
-      if (!command) {
-        await shim.reply({ embeds: [errorEmbed(`Unknown command: \`${shim.commandName}\``)], ephemeral: true });
-        return;
-      }
-      // Analytics (V6 02-09): one row per execution — discord_id + command +
-      // outcome + duration only, fire-and-forget so a Postgres blip can never
-      // affect the interaction itself.
-      const startedAt = Date.now();
-      try {
-        await command.execute(shim);
-        // Awaited (not voided): recordCommand/touchUserActivity catch their
-        // own errors, and staying inside run() keeps the insert covered by
-        // the route's waitUntil — a voided promise could be torn down with
-        // the isolate right after the reply goes out.
-        await recordCommand({
-          discordId: shim.user.id,
-          command: command.name,
-          outcome: 'ok',
-          durationMs: Date.now() - startedAt,
-          guildId: shim.guildId ?? null,
-        });
-        await touchUserActivity(shim.user.id);
-      } catch (err) {
-        await recordCommand({
-          discordId: shim.user.id,
-          command: command.name,
-          outcome: `error:${err instanceof Error ? err.message.slice(0, 60) : 'unknown'}`,
-          durationMs: Date.now() - startedAt,
-          guildId: shim.guildId ?? null,
-        });
-        throw err;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unexpected error';
-      if (shim.deferred || shim.replied) {
-        await shim.editReply({ embeds: [errorEmbed(message)] }).catch(() => undefined);
-      } else {
-        await shim.reply({ embeds: [errorEmbed(message)], ephemeral: true }).catch(() => undefined);
-      }
-      logger.error({ err, command: shim.commandName }, 'Interaction handling failed');
-    }
-  };
-
-  const executePromise = run();
-
-  // Wait for the first ack (deferReply/reply/deferUpdate) so we can return it
-  // as the direct response Discord requires within 3s; if nothing acks in
-  // time (a bug upstream), fall back to a deferred ack so the interaction
-  // doesn't just fail outright — the error handler above can still editReply
-  // once `run()` actually finishes.
-  // B-22 (C9 timer-leak class): the fallback timer is CLEARED the moment the
-  // race settles — firstAck usually wins long before 2.5s, and an uncleared
-  // setTimeout keeps firing into a dead interaction otherwise.
-  let ackTimer: ReturnType<typeof setTimeout> | undefined;
-  const ackFallback = new Promise((resolve) => {
-    ackTimer = setTimeout(() => resolve({ type: 5 }), FIRST_ACK_TIMEOUT_MS);
-  });
-  const ackPayload = await Promise.race([shim.firstAck, ackFallback]);
-  if (ackTimer !== undefined) clearTimeout(ackTimer);
-
-  // Let the rest of the handler (editReply calls, etc.) keep running after
-  // we've returned. Workers only guarantees execution continues past a
-  // returned Response when the promise is registered with waitUntil; Node
-  // has no such requirement (the process just keeps running), and Hono's
-  // executionCtx getter *throws* rather than returning undefined when no
-  // ExecutionContext exists (e.g. under @hono/node-server) — a plain
-  // optional-chained access isn't enough to guard it.
-  const backgroundWork = executePromise.catch((err) =>
-    logger.error({ err }, 'Interaction background execution failed'),
-  );
-  try {
-    c.executionCtx.waitUntil(backgroundWork);
-  } catch {
-    // No ExecutionContext (Node) — the process keeps running on its own.
-  }
-
-  return c.json(ackPayload as Record<string, unknown>);
+ const signature = c.req.header('x-signature-ed25519');
+ const timestamp = c.req.header('x-signature-timestamp');
+ const rawBody = await c.req.text();
+ if (!signature || !timestamp || !env.discord.publicKey) {
+ return c.json({ error: 'Missing signature' }, 401);
+ }
+ const valid = await verifyKey(rawBody, signature, timestamp, env.discord.publicKey);
+ if (!valid) {
+ return c.json({ error: 'Invalid signature' }, 401);
+ }
+ const raw = JSON.parse(rawBody) as RawInteraction;
+ if (raw.type === INTERACTION_TYPE.PING) {
+ return c.json({ type: 1 }); // PONG
+ }
+ if (raw.type !== INTERACTION_TYPE.APPLICATION_COMMAND && raw.type !== INTERACTION_TYPE.MESSAGE_COMPONENT) {
+ return c.json({ error: 'Unsupported interaction type' }, 400);
+ }
+ const shim = new InteractionShim(raw, env.discord.botToken);
+ const run = async (): Promise<void> => {
+ try {
+ if (raw.type === INTERACTION_TYPE.MESSAGE_COMPONENT) {
+ const customId = shim.customId ?? '';
+ if (isLeaderboardComponent(customId)) {
+ await handleLeaderboardComponent(shim);
+ } else if (customId.startsWith('modconfirm:')) {
+ // V6 02-04: single-use moderation confirmations (ban/tempban).
+ const { consumeModConfirm } = await import('./commands/moderation.js');
+ await consumeModConfirm(customId.slice('modconfirm:'.length), shim);
+ } else {
+ await shim.deferUpdate();
+ }
+ return;
+ }
+ const command = commandMap.get(shim.commandName);
+ if (!command) {
+ await shim.reply({ embeds: [errorEmbed(`Unknown command: \`${shim.commandName}\``)], ephemeral: true });
+ return;
+ }
+ // Analytics (V6 02-09): one row per execution — discord_id + command +
+ // outcome + duration only, fire-and-forget so a Postgres blip can never
+ // affect the interaction itself.
+ const startedAt = Date.now();
+ try {
+ await command.execute(shim);
+ // Awaited (not voided): recordCommand/touchUserActivity catch their
+ // own errors, and staying inside run() keeps the insert covered by
+ // the route's waitUntil — a voided promise could be torn down with
+ // the isolate right after the reply goes out.
+ await recordCommand({
+ discordId: shim.user.id,
+ command: command.name,
+ outcome: 'ok',
+ durationMs: Date.now() - startedAt,
+ guildId: shim.guildId ?? null,
+ });
+ await touchUserActivity(shim.user.id);
+ } catch (err) {
+ await recordCommand({
+ discordId: shim.user.id,
+ command: command.name,
+ outcome: `error:${err instanceof Error ? err.message.slice(0, 60) : 'unknown'}`,
+ durationMs: Date.now() - startedAt,
+ guildId: shim.guildId ?? null,
+ });
+ throw err;
+ }
+ } catch (err) {
+ const message = err instanceof Error ? err.message : 'Unexpected error';
+ if (shim.deferred || shim.replied) {
+ await shim.editReply({ embeds: [errorEmbed(message)] }).catch(() => undefined);
+ } else {
+ await shim.reply({ embeds: [errorEmbed(message)], ephemeral: true }).catch(() => undefined);
+ }
+ logger.error({ err, command: shim.commandName }, 'Interaction handling failed');
+ }
+ };
+ const executePromise = run();
+ // Wait for the first ack (deferReply/reply/deferUpdate) so we can return it
+ // as the direct response Discord requires within 3s; if nothing acks in
+ // time (a bug upstream), fall back to a deferred ack so the interaction
+ // doesn't just fail outright — the error handler above can still editReply
+ // once `run()` actually finishes.
+ // B-22 (C9 timer-leak class): the fallback timer is CLEARED the moment the
+ // race settles — firstAck usually wins long before 2.5s, and an uncleared
+ // setTimeout keeps firing into a dead interaction otherwise.
+ let ackTimer: ReturnType<typeof setTimeout> | undefined;
+ const ackFallback = new Promise((resolve) => {
+ ackTimer = setTimeout(() => resolve({ type: 5 }), FIRST_ACK_TIMEOUT_MS);
+ });
+ const ackPayload = await Promise.race([shim.firstAck, ackFallback]);
+ if (ackTimer !== undefined) clearTimeout(ackTimer);
+ // Let the rest of the handler (editReply calls, etc.) keep running after
+ // we've returned. Workers only guarantees execution continues past a
+ // returned Response when the promise is registered with waitUntil; Node
+ // has no such requirement (the process just keeps running), and Hono's
+ // executionCtx getter *throws* rather than returning undefined when no
+ // ExecutionContext exists (e.g. under @hono/node-server) — a plain
+ // optional-chained access isn't enough to guard it.
+ const backgroundWork = executePromise.catch((err) =>
+ logger.error({ err }, 'Interaction background execution failed'),
+ );
+ try {
+ c.executionCtx.waitUntil(backgroundWork);
+ } catch {
+ // No ExecutionContext (Node) — the process keeps running on its own.
+ }
+ return c.json(ackPayload as Record<string, unknown>);
 });

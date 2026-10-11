@@ -5,249 +5,225 @@
 // own id+token and are called directly from interactionShim.ts instead.
 //
 // B-41 discipline, applied to EVERY call through here:
-//   - a deadline: 8s AbortSignal.timeout unless the caller brings its own
-//     signal. The scheduler awaits sends sequentially inside 6-/5-minute
-//     war windows — one stalled call used to eat the window.
-//   - 429 is backpressure, not attrition: one retry-after-aware retry (waits
-//     the shorter of Discord's ask and 5s). A 429 that survives the retry is
-//     returned AS a 429 so callers can count it separately from real
-//     failures (the *Op helpers below expose rateLimited for exactly that).
+// - a deadline: 8s AbortSignal.timeout unless the caller brings its own
+// signal. The scheduler awaits sends sequentially inside 6-/5-minute
+// war windows — one stalled call used to eat the window.
+// - 429 is backpressure, not attrition: one retry-after-aware retry (waits
+// the shorter of Discord's ask and 5s). A 429 that survives the retry is
+// returned AS a 429 so callers can count it separately from real
+// failures (the *Op helpers below expose rateLimited for exactly that).
 const API_BASE = 'https://discord.com/api/v10';
-
 export const DISCORD_REST_TIMEOUT_MS = 8_000;
 export const MAX_429_WAIT_MS = 5_000;
-
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+ return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
 /** Discord's retry-after, in ms, unclamped; -1 = unknown. The CALLER decides
- *  whether the ask fits its patience (an ask longer than MAX_429_WAIT_MS is
- *  not retried — waiting it out inside a timed sweep is worse than counting
- *  the 429 and moving on). */
+ * whether the ask fits its patience (an ask longer than MAX_429_WAIT_MS is
+ * not retried — waiting it out inside a timed sweep is worse than counting
+ * the 429 and moving on). */
 async function retryAfterMs(res: Response): Promise<number> {
-  const header = res.headers.get('retry-after');
-  if (header !== null && header !== '') {
-    const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
-  }
-  try {
-    const body = (await res.clone().json()) as { retry_after?: number };
-    const seconds = Number(body?.retry_after);
-    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
-  } catch {
-    // non-JSON body — no machine-readable retry hint
-  }
-  return -1;
+ const header = res.headers.get('retry-after');
+ if (header !== null && header !== '') {
+ const seconds = Number(header);
+ if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+ }
+ try {
+ const body = (await res.clone().json()) as { retry_after?: number };
+ const seconds = Number(body?.retry_after);
+ if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+ } catch {
+ // non-JSON body — no machine-readable retry hint
+ }
+ return -1;
 }
-
 async function rawFetch(path: string, botToken: string, init: RequestInit): Promise<Response> {
-  return fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bot ${botToken}`,
-      ...(init.headers ?? {}),
-    },
-    // Caller signal wins; otherwise the standing 8s deadline.
-    signal: init.signal ?? AbortSignal.timeout(DISCORD_REST_TIMEOUT_MS),
-  });
+ return fetch(`${API_BASE}${path}`, {
+ ...init,
+ headers: {
+ 'Content-Type': 'application/json',
+ Authorization: `Bot ${botToken}`,
+ ...(init.headers ?? {}),
+ },
+ // Caller signal wins; otherwise the standing 8s deadline.
+ signal: init.signal ?? AbortSignal.timeout(DISCORD_REST_TIMEOUT_MS),
+ });
 }
-
 export async function discordApiFetch(
-  path: string,
-  botToken: string,
-  init: RequestInit = {},
+ path: string,
+ botToken: string,
+ init: RequestInit = {},
 ): Promise<Response> {
-  let res = await rawFetch(path, botToken, init);
-  if (res.status === 429) {
-    const waitMs = await retryAfterMs(res);
-    if (waitMs >= 0 && waitMs <= MAX_429_WAIT_MS) {
-      await sleep(waitMs);
-      res = await rawFetch(path, botToken, init);
-    }
-    // Unknown or over-long asks: return the 429 itself — callers with the
-    // status-aware ops count it as rateLimited instead of burning the window.
-  }
-  return res;
+ let res = await rawFetch(path, botToken, init);
+ if (res.status === 429) {
+ const waitMs = await retryAfterMs(res);
+ if (waitMs >= 0 && waitMs <= MAX_429_WAIT_MS) {
+ await sleep(waitMs);
+ res = await rawFetch(path, botToken, init);
+ }
+ // Unknown or over-long asks: return the 429 itself — callers with the
+ // status-aware ops count it as rateLimited instead of burning the window.
+ }
+ return res;
 }
-
 export interface DiscordMember {
-  user: { id: string; username: string; bot?: boolean };
-  roles: string[];
+ user: { id: string; username: string; bot?: boolean };
+ roles: string[];
 }
-
 /** GET /guilds/{guild}/members/{user}. Returns null if the member isn't found. */
 export async function fetchGuildMember(
-  guildId: string,
-  userId: string,
-  botToken: string,
+ guildId: string,
+ userId: string,
+ botToken: string,
 ): Promise<DiscordMember | null> {
-  const res = await discordApiFetch(`/guilds/${guildId}/members/${userId}`, botToken);
-  if (!res.ok) {
-    if (res.status === 403 || res.status === 401) {
-      // Bot kicked/missing perms — without this log it's indistinguishable
-      // from "member left" and every dependent feature just degrades.
-      console.error(`[discordRest] member fetch ${res.status} for guild ${guildId} — bot credentials/permissions broken?`);
-    }
-    return null;
-  }
-  return (await res.json()) as DiscordMember;
+ const res = await discordApiFetch(`/guilds/${guildId}/members/${userId}`, botToken);
+ if (!res.ok) {
+ if (res.status === 403 || res.status === 401) {
+ // Bot kicked/missing perms — without this log it's indistinguishable
+ // from "member left" and every dependent feature just degrades.
+ console.error(`[discordRest] member fetch ${res.status} for guild ${guildId} — bot credentials/permissions broken?`);
+ }
+ return null;
+ }
+ return (await res.json()) as DiscordMember;
 }
-
 // ── status-aware role ops (B-41: 429 must be countable, not "attrition") ──
-
 export interface DiscordOpResult {
-  ok: boolean;
-  /** Terminal HTTP status (0 = the call threw/timed out). */
-  status: number;
-  /** True when the terminal status is 429 — backpressure, not breakage. */
-  rateLimited: boolean;
+ ok: boolean;
+ /** Terminal HTTP status (0 = the call threw/timed out). */
+ status: number;
+ /** True when the terminal status is 429 — backpressure, not breakage. */
+ rateLimited: boolean;
 }
-
 function opResult(res: Response): DiscordOpResult {
-  return { ok: res.ok, status: res.status, rateLimited: res.status === 429 };
+ return { ok: res.ok, status: res.status, rateLimited: res.status === 429 };
 }
-
 const opFallback: DiscordOpResult = { ok: false, status: 0, rateLimited: false };
-
 async function runOp(path: string, botToken: string, init: RequestInit): Promise<DiscordOpResult> {
-  try {
-    return opResult(await discordApiFetch(path, botToken, init));
-  } catch {
-    // Network/timeout — status 0 so it never reads as a Discord verdict.
-    return opFallback;
-  }
+ try {
+ return opResult(await discordApiFetch(path, botToken, init));
+ } catch {
+ // Network/timeout — status 0 so it never reads as a Discord verdict.
+ return opFallback;
+ }
 }
-
 /** PUT a member role, status-aware (idempotent, no error if already held). */
 export function addGuildMemberRoleOp(
-  guildId: string,
-  userId: string,
-  roleId: string,
-  botToken: string,
+ guildId: string,
+ userId: string,
+ roleId: string,
+ botToken: string,
 ): Promise<DiscordOpResult> {
-  return runOp(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, botToken, { method: 'PUT' });
+ return runOp(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, botToken, { method: 'PUT' });
 }
-
 /** DELETE a member role, status-aware (idempotent, no error if not held). */
 export function removeGuildMemberRoleOp(
-  guildId: string,
-  userId: string,
-  roleId: string,
-  botToken: string,
+ guildId: string,
+ userId: string,
+ roleId: string,
+ botToken: string,
 ): Promise<DiscordOpResult> {
-  return runOp(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, botToken, { method: 'DELETE' });
+ return runOp(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, botToken, { method: 'DELETE' });
 }
-
 /** PUT /guilds/{guild}/members/{user}/roles/{role} — idempotent, no error if already held. */
 export async function addGuildMemberRole(
-  guildId: string,
-  userId: string,
-  roleId: string,
-  botToken: string,
+ guildId: string,
+ userId: string,
+ roleId: string,
+ botToken: string,
 ): Promise<boolean> {
-  return (await addGuildMemberRoleOp(guildId, userId, roleId, botToken)).ok;
+ return (await addGuildMemberRoleOp(guildId, userId, roleId, botToken)).ok;
 }
-
 /** DELETE /guilds/{guild}/members/{user}/roles/{role} — idempotent, no error if not held. */
 export async function removeGuildMemberRole(
-  guildId: string,
-  userId: string,
-  roleId: string,
-  botToken: string,
+ guildId: string,
+ userId: string,
+ roleId: string,
+ botToken: string,
 ): Promise<boolean> {
-  return (await removeGuildMemberRoleOp(guildId, userId, roleId, botToken)).ok;
+ return (await removeGuildMemberRoleOp(guildId, userId, roleId, botToken)).ok;
 }
-
 /** POST /channels/{id}/messages — a notification-channel send (V6 02-05).
- *  `allowedMentionRoles` limits pings to exactly the roles named in the
- *  content — without it a stray @everyone in copy would wall-paper the guild. */
+ * `allowedMentionRoles` limits pings to exactly the roles named in the
+ * content — without it a stray @everyone in copy would wall-paper the guild. */
 export async function sendChannelMessage(
-  channelId: string,
-  botToken: string,
-  message: { content: string; allowedMentionRoles?: string[] },
+ channelId: string,
+ botToken: string,
+ message: { content: string; allowedMentionRoles?: string[] },
 ): Promise<boolean> {
-  const res = await discordApiFetch(`/channels/${channelId}/messages`, botToken, {
-    method: 'POST',
-    body: JSON.stringify({
-      content: message.content,
-      allowed_mentions: message.allowedMentionRoles
-        ? { roles: message.allowedMentionRoles }
-        : { parse: [] },
-    }),
-  });
-  return res.ok;
+ const res = await discordApiFetch(`/channels/${channelId}/messages`, botToken, {
+ method: 'POST',
+ body: JSON.stringify({
+ content: message.content,
+ allowed_mentions: message.allowedMentionRoles
+ ? { roles: message.allowedMentionRoles }
+ : { parse: [] },
+ }),
+ });
+ return res.ok;
 }
-
 /** POST /users/@me/channels then POST to its messages — a DM send (V6 02-05).
- *  Returns false when either step fails (blocked DMs 403 — the sweep logs it
- *  per-user and continues). */
+ * Returns false when either step fails (blocked DMs 403 — the sweep logs it
+ * per-user and continues). */
 export async function sendDirectMessage(
-  botToken: string,
-  userId: string,
-  message: { content: string },
+ botToken: string,
+ userId: string,
+ message: { content: string },
 ): Promise<boolean> {
-  const channel = await discordApiFetch('/users/@me/channels', botToken, {
-    method: 'POST',
-    body: JSON.stringify({ recipient_id: userId }),
-  });
-  if (!channel.ok) return false;
-  const channelId = ((await channel.json()) as { id?: string }).id;
-  if (!channelId) return false;
-  const res = await discordApiFetch(`/channels/${channelId}/messages`, botToken, {
-    method: 'POST',
-    body: JSON.stringify({ content: message.content, allowed_mentions: { parse: [] } }),
-  });
-  return res.ok;
+ const channel = await discordApiFetch('/users/@me/channels', botToken, {
+ method: 'POST',
+ body: JSON.stringify({ recipient_id: userId }),
+ });
+ if (!channel.ok) return false;
+ const channelId = ((await channel.json()) as { id?: string }).id;
+ if (!channelId) return false;
+ const res = await discordApiFetch(`/channels/${channelId}/messages`, botToken, {
+ method: 'POST',
+ body: JSON.stringify({ content: message.content, allowed_mentions: { parse: [] } }),
+ });
+ return res.ok;
 }
-
 // ── V6 02-06: ticket thread management ─────────────────────────────────────
-
 export interface DiscordThread {
-  id: string;
-  name: string;
+ id: string;
+ name: string;
 }
-
 /** POST /channels/{parent}/threads — a private ticket thread under the configured category. */
 export async function createPrivateThread(
-  parentChannelId: string,
-  name: string,
-  botToken: string,
+ parentChannelId: string,
+ name: string,
+ botToken: string,
 ): Promise<DiscordThread | null> {
-  const res = await discordApiFetch(`/channels/${parentChannelId}/threads`, botToken, {
-    method: 'POST',
-    body: JSON.stringify({ name: name.slice(0, 100), type: 12, auto_archive_duration: 1440 }), // 12 = private thread
-  });
-  if (!res.ok) return null;
-  const t = (await res.json()) as DiscordThread;
-  return t?.id ? t : null;
+ const res = await discordApiFetch(`/channels/${parentChannelId}/threads`, botToken, {
+ method: 'POST',
+ body: JSON.stringify({ name: name.slice(0, 100), type: 12, auto_archive_duration: 1440 }), // 12 = private thread
+ });
+ if (!res.ok) return null;
+ const t = (await res.json()) as DiscordThread;
+ return t?.id ? t : null;
 }
-
 /** PUT /channels/{thread}/thread-members/{user} — add the opener so they can see it. */
 export async function addThreadMember(threadId: string, userId: string, botToken: string): Promise<boolean> {
-  const res = await discordApiFetch(`/channels/${threadId}/thread-members/${userId}`, botToken, { method: 'PUT' });
-  return res.ok || res.status === 204;
+ const res = await discordApiFetch(`/channels/${threadId}/thread-members/${userId}`, botToken, { method: 'PUT' });
+ return res.ok || res.status === 204;
 }
-
 /** POST /channels/{thread}/messages inside the thread (reuse of the channel send shape). */
 export async function sendThreadMessage(
-  threadId: string,
-  botToken: string,
-  message: { content: string },
+ threadId: string,
+ botToken: string,
+ message: { content: string },
 ): Promise<boolean> {
-  const res = await discordApiFetch(`/channels/${threadId}/messages`, botToken, {
-    method: 'POST',
-    body: JSON.stringify({ content: message.content, allowed_mentions: { parse: [] } }),
-  });
-  return res.ok;
+ const res = await discordApiFetch(`/channels/${threadId}/messages`, botToken, {
+ method: 'POST',
+ body: JSON.stringify({ content: message.content, allowed_mentions: { parse: [] } }),
+ });
+ return res.ok;
 }
-
 /** PATCH /channels/{thread} — archive (or unarchive) a thread. */
 export async function setThreadArchived(threadId: string, archived: boolean, botToken: string): Promise<boolean> {
-  const res = await discordApiFetch(`/channels/${threadId}`, botToken, {
-    method: 'PATCH',
-    body: JSON.stringify({ archived, locked: archived }),
-  });
-  return res.ok;
+ const res = await discordApiFetch(`/channels/${threadId}`, botToken, {
+ method: 'PATCH',
+ body: JSON.stringify({ archived, locked: archived }),
+ });
+ return res.ok;
 }

@@ -12,86 +12,78 @@ import type { RESTPostAPIApplicationCommandsJSONBody } from 'discord-api-types/v
 import { addGuildMemberRole, removeGuildMemberRole, type DiscordMember } from '../discordRest.js';
 import { getBotConfig } from '../config.js';
 import type { InteractionShim } from '../interactionShim.js';
-
 export interface BotCommand {
-  /** Slash command name — must match the builder's name. */
-  name: string;
-  /** Serialized JSON for registration via the Discord REST API. */
-  toJSON(): RESTPostAPIApplicationCommandsJSONBody;
-  /** Handle an incoming interaction for this command. */
-  execute(interaction: InteractionShim): Promise<void>;
+ /** Slash command name — must match the builder's name. */
+ name: string;
+ /** Serialized JSON for registration via the Discord REST API. */
+ toJSON(): RESTPostAPIApplicationCommandsJSONBody;
+ /** Handle an incoming interaction for this command. */
+ execute(interaction: InteractionShim): Promise<void>;
 }
-
 /** Re-export the builder so each command file only needs one import line. */
 export { SlashCommandBuilder };
-
 /**
  * Grant the configured "linked" role to a member, if set.
  * Failures are non-fatal — we just log and continue.
  */
 export async function grantLinkedRole(interaction: InteractionShim): Promise<boolean> {
-  const { linkedRoleId, token } = getBotConfig();
-  if (!linkedRoleId || !interaction.guildId || !token) return false;
-  try {
-    const member = await interaction.guild?.members.fetch(interaction.user.id);
-    if (member?.roles.includes(linkedRoleId)) return true;
-    return await addGuildMemberRole(interaction.guildId, interaction.user.id, linkedRoleId, token);
-  } catch (err) {
-    // Missing permissions or role — surface nothing to the user, but leave
-    // an operator trace: role sync can otherwise be broken for weeks.
-    console.error(`[bot] linked-role grant failed for ${interaction.user.id}:`, err);
-    return false;
-  }
+ const { linkedRoleId, token } = getBotConfig();
+ if (!linkedRoleId || !interaction.guildId || !token) return false;
+ try {
+ const member = await interaction.guild?.members.fetch(interaction.user.id);
+ if (member?.roles.includes(linkedRoleId)) return true;
+ return await addGuildMemberRole(interaction.guildId, interaction.user.id, linkedRoleId, token);
+ } catch (err) {
+ // Missing permissions or role — surface nothing to the user, but leave
+ // an operator trace: role sync can otherwise be broken for weeks.
+ console.error(`[bot] linked-role grant failed for ${interaction.user.id}:`, err);
+ return false;
+ }
 }
-
 /** Remove the configured "linked" role from a member, if set. */
 export async function removeLinkedRole(interaction: InteractionShim): Promise<void> {
-  const { linkedRoleId, token } = getBotConfig();
-  if (!linkedRoleId || !interaction.guildId || !token) return;
-  try {
-    await removeGuildMemberRole(interaction.guildId, interaction.user.id, linkedRoleId, token);
-  } catch (err) {
-    console.error(`[bot] linked-role remove failed for ${interaction.user.id}:`, err);
-  }
+ const { linkedRoleId, token } = getBotConfig();
+ if (!linkedRoleId || !interaction.guildId || !token) return;
+ try {
+ await removeGuildMemberRole(interaction.guildId, interaction.user.id, linkedRoleId, token);
+ } catch (err) {
+ console.error(`[bot] linked-role remove failed for ${interaction.user.id}:`, err);
+ }
 }
-
 /** Fetch the calling user's member record in the interaction's guild, if any. */
 export async function getAuthorMember(interaction: InteractionShim): Promise<DiscordMember | null> {
-  if (!interaction.guild) return null;
-  return interaction.guild.members.fetch(interaction.user.id);
+ if (!interaction.guild) return null;
+ return interaction.guild.members.fetch(interaction.user.id);
 }
-
 /** Optional `user` command option value (Snowflake or undefined). */
 export function getTargetUserOption(interaction: InteractionShim): string | undefined {
-  return interaction.options.getUser('user', false)?.id ?? undefined;
+ return interaction.options.getUser('user', false)?.id ?? undefined;
 }
-
 /**
  * Resolves the lookup target for stat commands. Accepts BOTH:
- *  - `player` (string): a Minecraft username, passed straight through
- *  - `user` (Discord user): a linked Discord account
+ * - `player` (string): a Minecraft username, passed straight through
+ * - `user` (Discord user): a linked Discord account
  *
  * Returns getProfile() kwargs — whichever was provided wins, `player` first
  * (an explicit MC name is more specific than a Discord lookup).
  */
 export function getTargetKwargs(
-  interaction: InteractionShim,
+ interaction: InteractionShim,
 ): { discordId?: string; username?: string } {
-  const mcName = interaction.options.getString('player', false);
-  if (mcName && mcName.trim()) return { username: mcName.trim() };
-  const discordId = getTargetUserOption(interaction);
-  if (discordId && discordId !== interaction.user.id) return { discordId };
-  if (discordId === interaction.user.id) return { discordId };
-  return {}; // self — getProfile with no kwargs reads the linked self
+ const mcName = interaction.options.getString('player', false);
+ if (mcName && mcName.trim()) return { username: mcName.trim() };
+ const discordId = getTargetUserOption(interaction);
+ if (discordId && discordId !== interaction.user.id) return { discordId };
+ if (discordId === interaction.user.id) return { discordId };
+ return {}; // self — getProfile with no kwargs reads the linked self
 }
-
 /** Standard option builders for stat commands (player OR user). */
 export function addTargetOptions(builder: SlashCommandBuilder): SlashCommandBuilder {
-  return builder
-    .addStringOption((o) =>
-      o.setName('player').setDescription('Minecraft username to look up'),
-    )
-    .addUserOption((o) =>
-      o.setName('user').setDescription('A Discord user (linked account)'),
-    ) as SlashCommandBuilder;
+ return builder
+ .addStringOption((o) =>
+ o.setName('player').setDescription('Minecraft username to look up'),
+ )
+ .addUserOption((o) =>
+ o.setName('user').setDescription('A Discord user (linked account)'),
+ ) as SlashCommandBuilder;
 }

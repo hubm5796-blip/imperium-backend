@@ -26,6 +26,7 @@ import { readRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
 import { requireServiceToken } from '../../middleware/serviceToken.js';
 import { parseMcUuid } from '../../middleware/gates.js';
 import { recordAction } from '../../db/actionLog.js';
+import { recordChangelogPost, listChangelogPosts } from '../../db/changelogStore.js';
 import { resolveAuditActor } from '../../utils/auditActor.js';
 import { logger } from '../../utils/logger.js';
 import { env } from '../../env.js';
@@ -216,7 +217,27 @@ dmApi.post('/notifications/dm', writeRateLimit, async (c) => {
 // ── Changelog posting ──────────────────────────────────────────────────────
 export const changelogApi = new Hono<ApiEnv>();
 
-changelogApi.use('/changelog*', readRateLimit, requireServiceToken);
+/**
+ * GET /api/v2/changelog/list?limit=5 — public, cacheable read of the posted
+ * changelog record (D1 store; see db/changelogStore.ts). The service-token
+ * guard below is mounted on /changelog/post paths only — this list is what
+ * the /changelog bot command and any future site consumer read.
+ */
+changelogApi.get('/changelog/list', readRateLimit, async (c) => {
+  const limit = Number(c.req.query('limit') ?? 5);
+  const posts = await listChangelogPosts(Number.isFinite(limit) ? limit : 5);
+  c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+  return c.json({
+    posts: posts.map((p) => ({
+      title: p.title,
+      lead: p.lead,
+      postedAt: new Date(p.ts).toISOString(),
+      sections: p.body?.sections ?? (p.body?.changes?.length ? [{ name: 'Changes', changes: p.body.changes }] : []),
+    })),
+  });
+});
+
+changelogApi.use('/changelog/post*', readRateLimit, requireServiceToken);
 
 /**
  * POST /api/v2/changelog/post
@@ -313,6 +334,9 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
       target: title.slice(0, 120),
       detail: `channel=${channelId}`,
     });
+    // Durable record for /api/v2/changelog/list + the /changelog bot command
+    // (write-after-action; a store failure never fails the delivered post).
+    await recordChangelogPost({ title, lead: description, sections: sections.map((s) => ({ name: s.name, changes: s.changes })), changes });
     return c.json({ posted: true, actor: actor.id });
   } catch (err) {
     logger.error({ err: String(err) }, 'changelog post crashed');
