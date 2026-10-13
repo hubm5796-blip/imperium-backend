@@ -138,6 +138,16 @@ export async function ensureChangelogSchema(): Promise<void> {
       await d1.batch(stmts);
       logger.info({ seeded: SEED.length }, 'changelog_post: seeded October 2026 backfill');
     }
+    // Re-post hygiene (2026-10-13): replacing a Discord post (delete + repost through
+    // this route) records a second row for the same title. Keep the newest row per
+    // title so /changelog and the list API never show a duplicate.
+    await d1
+      .prepare(
+        'DELETE FROM changelog_post WHERE id IN (' +
+          'SELECT p.id FROM changelog_post p WHERE p.ts < ' +
+          '(SELECT MAX(p2.ts) FROM changelog_post p2 WHERE p2.title = p.title))',
+      )
+      .run();
     schemaReady = true;
   } catch (err) {
     logger.error({ err: String(err) }, 'changelog_post schema/seed failed');
