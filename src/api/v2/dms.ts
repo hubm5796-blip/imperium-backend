@@ -244,7 +244,7 @@ changelogApi.use('/changelog/post*', readRateLimit, requireServiceToken);
  * same hygiene ensure() runs per isolate; the operator's manual lever when a
  * replaced post's stale row lingers, e.g. after an offline re-post).
  */
-changelogApi.post('/changelog/prune', writeRateLimit, async (c) => {
+changelogApi.post('/changelog/prune', writeRateLimit, requireServiceToken, async (c) => {
   const removed = await pruneDuplicateChangelogPosts();
   return c.json({ pruned: removed });
 });
