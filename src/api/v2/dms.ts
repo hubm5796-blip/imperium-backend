@@ -26,7 +26,7 @@ import { readRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
 import { requireServiceToken } from '../../middleware/serviceToken.js';
 import { parseMcUuid } from '../../middleware/gates.js';
 import { recordAction } from '../../db/actionLog.js';
-import { recordChangelogPost, listChangelogPosts } from '../../db/changelogStore.js';
+import { recordChangelogPost, listChangelogPosts, pruneDuplicateChangelogPosts } from '../../db/changelogStore.js';
 import { resolveAuditActor } from '../../utils/auditActor.js';
 import { logger } from '../../utils/logger.js';
 import { env } from '../../env.js';
@@ -238,6 +238,16 @@ changelogApi.get('/changelog/list', readRateLimit, async (c) => {
 });
 
 changelogApi.use('/changelog/post*', readRateLimit, requireServiceToken);
+
+/**
+ * POST /api/v2/changelog/prune - service-token-gated on-demand dedup pass (the
+ * same hygiene ensure() runs per isolate; the operator's manual lever when a
+ * replaced post's stale row lingers, e.g. after an offline re-post).
+ */
+changelogApi.post('/changelog/prune', writeRateLimit, async (c) => {
+  const removed = await pruneDuplicateChangelogPosts();
+  return c.json({ pruned: removed });
+});
 
 /**
  * POST /api/v2/changelog/post
