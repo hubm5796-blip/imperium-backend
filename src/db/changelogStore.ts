@@ -173,6 +173,26 @@ export async function recordChangelogPost(entry: {
   }
 }
 
+/** Explicit same-title dedup pass (the ensure() hygiene, runnable on demand).
+ *  Returns the number of stale rows removed. */
+export async function pruneDuplicateChangelogPosts(): Promise<number> {
+  try {
+    const d1 = getD1();
+    await d1.prepare(SCHEMA).run();
+    const res = await d1
+      .prepare(
+        'DELETE FROM changelog_post WHERE id IN (' +
+          'SELECT p.id FROM changelog_post p WHERE p.ts < ' +
+          '(SELECT MAX(p2.ts) FROM changelog_post p2 WHERE p2.title = p.title))',
+      )
+      .run();
+    return res.meta?.changes ?? 0;
+  } catch (err) {
+    logger.error({ err: String(err) }, 'changelog_post prune failed');
+    return -1;
+  }
+}
+
 /** Latest posts, newest first. */
 export async function listChangelogPosts(limit = 5): Promise<ChangelogPostRow[]> {
   try {
