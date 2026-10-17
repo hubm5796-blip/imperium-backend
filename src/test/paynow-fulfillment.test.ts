@@ -811,7 +811,8 @@ describe('B-09: isSubscriptionCacheStale + GET /store/subscription staleness', (
   });
 
   function d1DateString(msAgo: number): string {
-    const d = new Date(NOW - msAgo);
+    // Real clock, not NOW: the route checks staleness against Date.now().
+    const d = new Date(Date.now() - msAgo);
     return d.toISOString().slice(0, 19).replace('T', ' ');
   }
 
