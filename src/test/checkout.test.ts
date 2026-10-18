@@ -15,9 +15,11 @@ import {
   AUREUS_PACKS,
   CRATE_KEY_PACKS,
   RANK_UPGRADES,
+  STARTER_PACK_PRODUCT_ID,
   findAureusPack,
   findRankUpgrade,
   isDonorSubscriptionProduct,
+  isGiftableProduct,
   isLifetimeProduct,
   isOneTimeStoreProduct,
 } from '../paynow/constants.js';
@@ -115,7 +117,7 @@ describe('B-C17: one-time store product set includes Aureus packs and rank upgra
     }
   });
 
-  it('Aureus packs and rank upgrades are NOT giftable lifetime products (gift gate unchanged)', () => {
+  it('Aureus packs and rank upgrades are not lifetime rank products', () => {
     for (const pack of AUREUS_PACKS) {
       expect(isLifetimeProduct(pack.paynowProductId)).toBe(false);
     }
@@ -132,6 +134,29 @@ describe('B-C17: one-time store product set includes Aureus packs and rank upgra
     const up = findRankUpgrade('587789661796048896');
     expect(up).toMatchObject({ toTier: 'IMPERATOR' });
     expect(findRankUpgrade('nope')).toBeNull();
+  });
+});
+
+describe('gifting matches the PayNow gift-enabled set', () => {
+  it('lifetimes, Aureus packs and crate-key bundles are giftable', () => {
+    for (const id of LIFETIME_PRODUCT_IDS) expect(isGiftableProduct(id)).toBe(true);
+    for (const p of AUREUS_PACKS) expect(isGiftableProduct(p.paynowProductId)).toBe(true);
+    for (const p of CRATE_KEY_PACKS) expect(isGiftableProduct(p.paynowProductId)).toBe(true);
+  });
+
+  it('subscriptions, upgrades and the starter pack are not', () => {
+    for (const id of SUBSCRIPTION_PRODUCT_IDS) expect(isGiftableProduct(id)).toBe(false);
+    for (const u of RANK_UPGRADES) expect(isGiftableProduct(u.paynowProductId)).toBe(false);
+    expect(isGiftableProduct(STARTER_PACK_PRODUCT_ID)).toBe(false);
+  });
+});
+
+describe('Centurion Starter Pack is a checkout-valid one-time product', () => {
+  it('passes one-time validation but is neither a lifetime rank nor a subscription', () => {
+    expect(STARTER_PACK_PRODUCT_ID).toBe('603072663803396096');
+    expect(isOneTimeStoreProduct(STARTER_PACK_PRODUCT_ID)).toBe(true);
+    expect(isLifetimeProduct(STARTER_PACK_PRODUCT_ID)).toBe(false);
+    expect(isDonorSubscriptionProduct(STARTER_PACK_PRODUCT_ID)).toBe(false);
   });
 });
 
@@ -197,6 +222,25 @@ describe('B-C17: POST /api/store/cart-checkout accepts Aureus pack lines', () =>
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: string };
     expect(body.error).toMatch(/not a valid one-time purchase/);
+  });
+
+  it('a gift line on a non-giftable product (upgrade) is rejected with 400', async () => {
+    const res = await postCart([{ productId: '587789607240728576', quantity: 1, giftRecipient: 'Notch' }]);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toMatch(/cannot be gifted/);
+  });
+
+  it('a gift line with a malformed recipient is rejected before any lookup', async () => {
+    const res = await postCart([{ productId: '588822585022619648', quantity: 1, giftRecipient: 'bad name!' }]);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toMatch(/invalid gift recipient/);
+  });
+
+  it('the starter pack passes product validation', async () => {
+    const res = await postCart([{ productId: STARTER_PACK_PRODUCT_ID, quantity: 1, subscription: false }]);
+    expect(res.status).not.toBe(400);
   });
 
   it('a subscription line with a non-subscription product is still rejected with 400', async () => {

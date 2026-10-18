@@ -80,7 +80,7 @@ import {
   PaynowApiError,
   previewTierChange,
 } from '../paynow/client.js';
-import { DONOR_TIERS, isDonorSubscriptionProduct, isLifetimeProduct, isOneTimeStoreProduct } from '../paynow/constants.js';
+import { DONOR_TIERS, isDonorSubscriptionProduct, isGiftableProduct, isOneTimeStoreProduct } from '../paynow/constants.js';
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
 import { fulfillPaynowOrder, normalizePaynowEventType, resolveCustomerUuid } from '../paynow/fulfillment.js';
 import type { AppContextVariables } from '../types/index.js';
@@ -2213,12 +2213,12 @@ api.get('/player/lookup', lookupRateLimit, async (c) => {
 });
 
 /**
- * POST /api/store/gift-checkout — create a checkout session for a one-time
- * lifetime product, delivered to a *different* player's Minecraft account.
+ * POST /api/store/gift-checkout — create a checkout session for a giftable
+ * one-time product, delivered to a *different* player's Minecraft account.
  * The caller pays (redirected to the returned checkout URL); the PayNow
  * customer — and therefore the delivery target — is resolved from the
- * recipient's username, not the caller's own account. Lifetime products
- * only: see isLifetimeProduct() for why subscriptions aren't giftable.
+ * recipient's username, not the caller's own account. See isGiftableProduct()
+ * for which products qualify.
  */
 api.post('/store/gift-checkout', storeAuth, async (c) => {
   const buyerUuid = c.var.mcUuid!;
@@ -2228,12 +2228,15 @@ api.post('/store/gift-checkout', storeAuth, async (c) => {
   } catch {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
-  if (!body.productId || !isLifetimeProduct(body.productId)) {
-    return c.json({ error: 'Invalid or unknown productId — gifting only supports lifetime ranks' }, 400);
+  if (!body.productId || !isGiftableProduct(body.productId)) {
+    return c.json({ error: 'Invalid or unknown productId — that product cannot be gifted' }, 400);
   }
   const recipientUsername = (body.recipientUsername ?? '').trim();
   if (!recipientUsername) {
     return c.json({ error: 'Missing recipientUsername' }, 400);
+  }
+  if (!MC_USERNAME_SCHEMA.test(recipientUsername)) {
+    return c.json({ error: 'Invalid recipient username' }, 400);
   }
 
   const recipientUuid = await getUuidByUsername(recipientUsername);
@@ -2261,8 +2264,10 @@ api.post('/store/gift-checkout', storeAuth, async (c) => {
         ? 'PayNow did not respond in time. Please try again shortly.'
         : err.status === 400
         ? 'PayNow rejected the checkout request. The product ID may be invalid.'
-        : err.status === 401 || err.status === 403
+        : err.status === 401
         ? 'PayNow authentication failed. Please contact an administrator.'
+        : err.status === 403
+        ? `PayNow refused the gift: ${err.message}`
         : err.status === 404
         ? 'Product or customer not found in PayNow.'
         : `PayNow error (${err.status}). Please try again or contact support.`;
@@ -2307,8 +2312,14 @@ api.post('/store/cart-checkout', storeAuth, async (c) => {
     const qty = Math.max(1, Math.min(99, Math.floor(item.quantity ?? 1)));
     const isSub = item.subscription === true;
 
-    // Gifts are lifetime-only and resolve the recipient's PayNow customer.
+    // Gifts resolve the recipient's PayNow customer; validate before any lookup.
     if (item.giftRecipient) {
+      if (!isGiftableProduct(item.productId)) {
+        return c.json({ error: `Item ${i + 1}: that product cannot be gifted` }, 400);
+      }
+      if (!MC_USERNAME_SCHEMA.test(item.giftRecipient.trim())) {
+        return c.json({ error: `Item ${i + 1}: invalid gift recipient username` }, 400);
+      }
       const recipientUuid = await getUuidByUsername(item.giftRecipient.trim());
       if (!recipientUuid) {
         return c.json(
@@ -2318,9 +2329,6 @@ api.post('/store/cart-checkout', storeAuth, async (c) => {
       }
       if (recipientUuid === buyerUuid) {
         return c.json({ error: `Item ${i + 1}: can't gift to yourself — use the normal checkout` }, 400);
-      }
-      if (!isLifetimeProduct(item.productId)) {
-        return c.json({ error: `Item ${i + 1}: gifts must be lifetime products` }, 400);
       }
       const giftCustomerId = await resolvePaynowCustomerId(recipientUuid);
       lines.push({ productId: item.productId, quantity: qty, subscription: false, giftToCustomerId: giftCustomerId });
