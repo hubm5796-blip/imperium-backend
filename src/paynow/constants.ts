@@ -69,12 +69,7 @@ export function isDonorSubscriptionProduct(productId: string): boolean {
   return SUBSCRIPTION_PRODUCT_IDS.has(productId);
 }
 
-/**
- * True if `productId` is one of the 7 one-time lifetime rank products. Gifting is
- * restricted to these — a gifted subscription would recur against the buyer's
- * checkout session but deliver to the recipient's PayNow customer, with no payment
- * method on file for the renewal. Lifetime purchases have no such problem.
- */
+/** True if `productId` is one of the 7 one-time lifetime rank products. */
 export function isLifetimeProduct(productId: string): boolean {
   return LIFETIME_PRODUCT_IDS.has(productId);
 }
@@ -168,6 +163,11 @@ export const CRATE_KEY_PACKS: readonly CrateKeyPackProduct[] = Object.freeze([
   { paynowProductId: '602731496293269504', priceUsd: 24.99, crateId: 'mythic', keyAmount: 1 },
 ]);
 
+/** Centurion Starter Pack ($19.99, one per customer, not giftable). Delivered by
+ * the PayNow product's own commands (lifetime donor_plebeian, 500 Aureus, 3 rare
+ * keys, 2h x2 sell booster) — it needs no order_completed dispatch mapping. */
+export const STARTER_PACK_PRODUCT_ID = '603072663803396096';
+
 /** A real-money booster pack (one-time). */
 export interface BoosterPackProduct {
   paynowProductId: string;
@@ -194,9 +194,8 @@ const BOOSTER_PACK_PRODUCT_IDS = new Set(BOOSTER_PACKS.map((p) => p.paynowProduc
 /**
  * True for ANY product that can appear as a non-subscription line in a checkout:
  * lifetime donor ranks, rank upgrades, Aureus packs, crate-key bundles (B-C30),
- * or booster packs (B-C33). This is the cart's one-time validation set —
- * `isLifetimeProduct` deliberately stays narrower because gifting is
- * restricted to lifetime rank products only.
+ * booster packs (B-C33), or the starter pack. This is the cart's one-time
+ * validation set; `isGiftableProduct` is the narrower gift set.
  */
 export function isOneTimeStoreProduct(productId: string): boolean {
   return (
@@ -204,7 +203,23 @@ export function isOneTimeStoreProduct(productId: string): boolean {
     AUREUS_PACK_PRODUCT_IDS.has(productId) ||
     RANK_UPGRADE_PRODUCT_IDS.has(productId) ||
     CRATE_KEY_PACK_PRODUCT_IDS.has(productId) ||
-    BOOSTER_PACK_PRODUCT_IDS.has(productId)
+    BOOSTER_PACK_PRODUCT_IDS.has(productId) ||
+    productId === STARTER_PACK_PRODUCT_ID
+  );
+}
+
+/**
+ * True for products that can be bought as a gift for another player: lifetime
+ * ranks, Aureus packs and crate-key bundles — the set with gifting enabled in
+ * PayNow. Subscriptions (no payment method on the recipient for renewals),
+ * upgrades (require the recipient to own the lower lifetime) and the starter
+ * pack (first-purchase offer) stay self-purchase only.
+ */
+export function isGiftableProduct(productId: string): boolean {
+  return (
+    LIFETIME_PRODUCT_IDS.has(productId) ||
+    AUREUS_PACK_PRODUCT_IDS.has(productId) ||
+    CRATE_KEY_PACK_PRODUCT_IDS.has(productId)
   );
 }
 
