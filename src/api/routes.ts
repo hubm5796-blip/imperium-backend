@@ -50,6 +50,7 @@ import {
   getNameByUuid,
   getWaveLeaderboard,
   isAlreadyLinked,
+  isFloodgateUuid,
   isSubscriptionCacheStale,
   playerQuery,
   query,
@@ -1869,7 +1870,10 @@ async function resolvePaynowCustomerId(uuid: string): Promise<string> {
   // Source of truth regardless of cache state: PayNow's own lookup-by-uuid
   // (inside findOrCreatePaynowCustomer) finds an existing customer even if
   // our cache never had it or just failed to read.
-  const customerId = await findOrCreatePaynowCustomer(uuid);
+  const bedrockName = isFloodgateUuid(uuid)
+    ? await dbReadOrNull('getNameByUuid', () => getNameByUuid(uuid))
+    : null;
+  const customerId = await findOrCreatePaynowCustomer(uuid, bedrockName);
   dbWriteBestEffort('setPaynowCustomerId', () => setPaynowCustomerId(uuid, customerId));
   return customerId;
 }

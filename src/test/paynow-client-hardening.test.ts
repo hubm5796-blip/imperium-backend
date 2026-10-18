@@ -54,7 +54,7 @@ vi.mock('../db/pool.js', async (importOriginal) => {
 });
 
 import { __resetEnvForTests, initEnvFromBindings } from '../env.js';
-import { PaynowApiError, createCustomerToken, getPaynowCustomer } from '../paynow/client.js';
+import { PaynowApiError, createCustomerToken, findOrCreatePaynowCustomer, getPaynowCustomer } from '../paynow/client.js';
 
 const realFetch = globalThis.fetch;
 
@@ -195,5 +195,28 @@ describe('B-21: route-level status mapping (504 timeouts answer 504)', () => {
     });
     expect(res.status).toBe(504);
     expect(await res.json()).toMatchObject({ error: expect.stringMatching(/did not respond in time/i) });
+  });
+});
+
+describe('findOrCreatePaynowCustomer create body', () => {
+  async function createBody(uuid: string, bedrockName?: string | null): Promise<unknown> {
+    const calls: Array<{ url: string; body?: string }> = [];
+    globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      calls.push({ url: String(url), body: init?.body as string | undefined });
+      return String(url).includes('/customers/lookup') ? jsonRes({ message: 'nf' }, 404) : jsonRes({ id: 'cus_new' });
+    }) as unknown as typeof fetch;
+    expect(await findOrCreatePaynowCustomer(uuid, bedrockName)).toBe('cus_new');
+    return JSON.parse(calls.at(-1)!.body!);
+  }
+
+  it('Java players are created by UUID', async () => {
+    expect(await createBody('a25a17ce-bca1-4894-92c9-00d7ab5b7875')).toEqual({
+      minecraft_uuid: 'a25a17ce-bca1-4894-92c9-00d7ab5b7875',
+    });
+  });
+
+  it('Bedrock players are created by the dot-prefixed gamertag', async () => {
+    expect(await createBody('00000000-0000-0000-0009-c1381381a817', 'mstudboy')).toEqual({ name: '.mstudboy' });
+    expect(await createBody('00000000-0000-0000-0009-c1381381a817', '.mstudboy')).toEqual({ name: '.mstudboy' });
   });
 });

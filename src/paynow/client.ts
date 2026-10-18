@@ -143,7 +143,7 @@ function storefrontRequest<T>(
  * `minecraft_uuid` — the store's game is minecraft_geyser, so this is the
  * stable identity key across Java/Bedrock.
  */
-export async function findOrCreatePaynowCustomer(uuid: string): Promise<string> {
+export async function findOrCreatePaynowCustomer(uuid: string, bedrockName?: string | null): Promise<string> {
   const lookup = await managementRequest<{ id: string } | null>(
     `/v1/stores/${env.paynow.storeId}/customers/lookup?minecraft_uuid=${encodeURIComponent(uuid)}`,
   ).catch((err: unknown) => {
@@ -152,11 +152,16 @@ export async function findOrCreatePaynowCustomer(uuid: string): Promise<string> 
   });
   if (lookup?.id) return lookup.id;
 
+  // PayNow cannot index a Floodgate UUID directly; given the '.'-prefixed
+  // gamertag (the store's Bedrock prefix) it resolves the XUID and UUID itself.
+  const body = bedrockName
+    ? { name: bedrockName.startsWith('.') ? bedrockName : `.${bedrockName}` }
+    : { minecraft_uuid: uuid };
   const created = await managementRequest<{ id: string }>(
     `/v1/stores/${env.paynow.storeId}/customers`,
     {
       method: 'POST',
-      body: JSON.stringify({ minecraft_uuid: uuid }),
+      body: JSON.stringify(body),
     },
   );
   logger.info({ uuid, customerId: created.id }, 'Created PayNow customer');
