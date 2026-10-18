@@ -32,11 +32,16 @@ describe('mines snapshot (/mine command data)', () => {
     }
   });
 
-  it('mines 41 and 48 are marked live (unfrozen 2026-10-11)', () => {
-    for (const id of [41, 48]) {
-      const m = snap.mines.find((x) => x.id === id);
-      expect(m?.autoGenerate).toBe(true);
+  it('snapshot reflects the live yml: every mine frozen for the 2026-10-17 restoration', () => {
+    // Mines 41/48 were unfrozen 2026-10-11, then the WHOLE ladder froze 2026-10-17
+    // while the owner rebuilds every mine by hand (auto_generate: false, 109/109 on
+    // the live server). The snapshot is generated from the live yml, so all entries
+    // read frozen — /mine honestly reports "not live" during the restoration. FLIP
+    // THIS PIN BACK at unfreeze time (restore per-band autoGenerate expectations).
+    for (const m of snap.mines) {
+      expect(m.autoGenerate).toBe(false);
     }
+    expect(snap.mines.length).toBe(109);
   });
 
   it('carries no emoji (house rule for anything rendered to Discord)', () => {

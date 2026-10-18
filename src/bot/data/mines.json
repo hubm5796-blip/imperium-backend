@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-11T18:03:14.821Z",
+ "generatedAt": "2026-10-18T19:41:52.319Z",
  "contentCap": 50,
  "mines": [
   {
@@ -7,6 +7,7 @@
    "numeral": "I",
    "name": "Silvanna Quarry",
    "unlockRank": 1,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "STONE",
@@ -35,6 +36,7 @@
    "numeral": "II",
    "name": "Aethelwood Quarry",
    "unlockRank": 2,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "GRANITE",
@@ -63,6 +65,7 @@
    "numeral": "III",
    "name": "Palatinus Quarry",
    "unlockRank": 3,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "DIORITE",
@@ -91,6 +94,7 @@
    "numeral": "IV",
    "name": "Aurelian Quarry",
    "unlockRank": 4,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "ANDESITE",
@@ -119,6 +123,7 @@
    "numeral": "V",
    "name": "Romulus Quarry",
    "unlockRank": 5,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "TUFF",
@@ -147,6 +152,7 @@
    "numeral": "VI",
    "name": "Caesar's Quarry",
    "unlockRank": 6,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "DEEPSLATE",
@@ -175,6 +181,7 @@
    "numeral": "VII",
    "name": "Locus Aeterna",
    "unlockRank": 7,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "CALCITE",
@@ -203,6 +210,7 @@
    "numeral": "VIII",
    "name": "Flora Quirinalis",
    "unlockRank": 8,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SCULK",
@@ -231,6 +239,7 @@
    "numeral": "IX",
    "name": "Campus Martius",
    "unlockRank": 9,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "BASALT",
@@ -259,6 +268,7 @@
    "numeral": "X",
    "name": "Rubrum Quarry",
    "unlockRank": 10,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "BLACKSTONE",
@@ -287,6 +297,7 @@
    "numeral": "XI",
    "name": "The Praetorian Bastion",
    "unlockRank": 11,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "END_STONE",
@@ -316,6 +327,7 @@
    "numeral": "XII",
    "name": "Castra Hiberna",
    "unlockRank": 12,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "AMETHYST_BLOCK",
@@ -345,6 +357,7 @@
    "numeral": "XIII",
    "name": "The Teutoburg Bastion",
    "unlockRank": 13,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_BASALT",
@@ -374,6 +387,7 @@
    "numeral": "XIV",
    "name": "The Gardens of Sallust",
    "unlockRank": 14,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "DEEPSLATE",
@@ -403,6 +417,7 @@
    "numeral": "XV",
    "name": "The Palatine Terraces",
    "unlockRank": 15,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "QUARTZ_BLOCK",
@@ -432,6 +447,7 @@
    "numeral": "XVI",
    "name": "Curia Julia",
    "unlockRank": 16,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "CALCITE",
@@ -461,6 +477,7 @@
    "numeral": "XVII",
    "name": "Grove of Picus",
    "unlockRank": 17,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_SANDSTONE",
@@ -490,6 +507,7 @@
    "numeral": "XVIII",
    "name": "The Tartarus Chasm",
    "unlockRank": 18,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "RED_SANDSTONE",
@@ -519,6 +537,7 @@
    "numeral": "XIX",
    "name": "The Lucus Capitolina",
    "unlockRank": 19,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "STONE_BRICKS",
@@ -548,6 +567,7 @@
    "numeral": "XX",
    "name": "Viminalis Frost Veins",
    "unlockRank": 20,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_ANDESITE",
@@ -577,6 +597,7 @@
    "numeral": "XXI",
    "name": "The Palmyrene Basin",
    "unlockRank": 21,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "GILDED_BLACKSTONE",
@@ -606,6 +627,7 @@
    "numeral": "XXII",
    "name": "Vicus Gallia",
    "unlockRank": 22,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_BLOCK",
@@ -635,6 +657,7 @@
    "numeral": "XXIII",
    "name": "The Tuscan Enclave",
    "unlockRank": 23,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -664,6 +687,7 @@
    "numeral": "XXIV",
    "name": "The Pontine Marshes",
    "unlockRank": 24,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_PILLAR",
@@ -693,6 +717,7 @@
    "numeral": "XXV",
    "name": "The Alpine Fief",
    "unlockRank": 25,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "WAXED_OXIDIZED_COPPER",
@@ -722,7 +747,7 @@
    "numeral": "XXVI",
    "name": "Praeneste Shaft",
    "unlockRank": 26,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SCULK",
@@ -752,7 +777,7 @@
    "numeral": "XXVII",
    "name": "The Sabine Ridge",
    "unlockRank": 27,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SCULK",
@@ -782,7 +807,7 @@
    "numeral": "XXVIII",
    "name": "Etruscan Tomb Depths",
    "unlockRank": 28,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SCULK",
@@ -812,7 +837,7 @@
    "numeral": "XXIX",
    "name": "The Volscian Trench",
    "unlockRank": 29,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SCULK",
@@ -842,7 +867,7 @@
    "numeral": "XXX",
    "name": "Samnite War Tunnels",
    "unlockRank": 30,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SCULK",
@@ -872,7 +897,7 @@
    "numeral": "XXXI",
    "name": "The Rubicon Crossing",
    "unlockRank": 31,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "QUARTZ_BLOCK",
@@ -902,7 +927,7 @@
    "numeral": "XXXII",
    "name": "Gallia Transalpina Mine",
    "unlockRank": 32,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "QUARTZ_BLOCK",
@@ -932,7 +957,7 @@
    "numeral": "XXXIII",
    "name": "The Helvetii Shaft",
    "unlockRank": 33,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "QUARTZ_BLOCK",
@@ -962,7 +987,7 @@
    "numeral": "XXXIV",
    "name": "Britannia Clay Pit",
    "unlockRank": 34,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "QUARTZ_BLOCK",
@@ -992,7 +1017,7 @@
    "numeral": "XXXV",
    "name": "The Aventine Pits",
    "unlockRank": 35,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "QUARTZ_BLOCK",
@@ -1022,7 +1047,7 @@
    "numeral": "XXXVI",
    "name": "Carthage Salt Flats",
    "unlockRank": 36,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1052,7 +1077,7 @@
    "numeral": "XXXVII",
    "name": "Numidian Quartz Vein",
    "unlockRank": 37,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1082,7 +1107,7 @@
    "numeral": "XXXVIII",
    "name": "The Corinth Canal",
    "unlockRank": 38,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1112,7 +1137,7 @@
    "numeral": "XXXIX",
    "name": "Athens Marble Gallery",
    "unlockRank": 39,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1142,7 +1167,7 @@
    "numeral": "XL",
    "name": "Alexandria Deep Harbor",
    "unlockRank": 40,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1172,7 +1197,7 @@
    "numeral": "XLI",
    "name": "The Augustan Forum Mine",
    "unlockRank": 41,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "NETHERRACK",
@@ -1202,7 +1227,7 @@
    "numeral": "XLII",
    "name": "Campus Martius Excavation",
    "unlockRank": 42,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "NETHERRACK",
@@ -1232,7 +1257,7 @@
    "numeral": "XLIII",
    "name": "The Flavian Amphitheater Pit",
    "unlockRank": 43,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "NETHERRACK",
@@ -1262,7 +1287,7 @@
    "numeral": "XLIV",
    "name": "Trajan's Market Cellar",
    "unlockRank": 44,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "NETHERRACK",
@@ -1292,7 +1317,7 @@
    "numeral": "XLV",
    "name": "The Palatine Vaults",
    "unlockRank": 45,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "NETHERRACK",
@@ -1322,7 +1347,7 @@
    "numeral": "XLVI",
    "name": "Hadrian's Villa Caverns",
    "unlockRank": 46,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_BLACKSTONE",
@@ -1352,7 +1377,7 @@
    "numeral": "XLVII",
    "name": "The Antonine Bath Springs",
    "unlockRank": 47,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_BLACKSTONE",
@@ -1382,7 +1407,7 @@
    "numeral": "XLVIII",
    "name": "Marcus Aurelius Memorial",
    "unlockRank": 48,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_BLACKSTONE",
@@ -1412,7 +1437,7 @@
    "numeral": "XLIX",
    "name": "The Septimius Tunnel",
    "unlockRank": 49,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_BLACKSTONE",
@@ -1442,7 +1467,7 @@
    "numeral": "L",
    "name": "The Golden Milestone",
    "unlockRank": 50,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_BLACKSTONE",
@@ -1472,7 +1497,7 @@
    "numeral": "LI",
    "name": "The Claudian Aquifer",
    "unlockRank": 51,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -1502,7 +1527,7 @@
    "numeral": "LII",
    "name": "Nero's Domus Aura",
    "unlockRank": 52,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -1532,7 +1557,7 @@
    "numeral": "LIII",
    "name": "The Flavian Obsidian Pit",
    "unlockRank": 53,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -1562,7 +1587,7 @@
    "numeral": "LIV",
    "name": "Trajan's Dacian Spoils",
    "unlockRank": 54,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -1592,7 +1617,7 @@
    "numeral": "LV",
    "name": "The Quirinal Lapis Beds",
    "unlockRank": 55,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -1622,7 +1647,7 @@
    "numeral": "LVI",
    "name": "The Viminal Iron Cascade",
    "unlockRank": 56,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1652,7 +1677,7 @@
    "numeral": "LVII",
    "name": "The Esquiline Grand Vein",
    "unlockRank": 57,
-   "autoGenerate": true,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1682,6 +1707,7 @@
    "numeral": "LVIII",
    "name": "Caelian Diamond Cathedral",
    "unlockRank": 58,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1711,6 +1737,7 @@
    "numeral": "LIX",
    "name": "The Aventine Emerald Grotto",
    "unlockRank": 59,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1740,6 +1767,7 @@
    "numeral": "LX",
    "name": "The Field of Mars Crystal Pit",
    "unlockRank": 60,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -1769,6 +1797,7 @@
    "numeral": "LXI",
    "name": "Constantine's Cross Mine",
    "unlockRank": 61,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SEA_LANTERN",
@@ -1798,6 +1827,7 @@
    "numeral": "LXII",
    "name": "The Eastern Capital Shaft",
    "unlockRank": 62,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SEA_LANTERN",
@@ -1827,6 +1857,7 @@
    "numeral": "LXIII",
    "name": "Ravenna Marsh Pits",
    "unlockRank": 63,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SEA_LANTERN",
@@ -1856,6 +1887,7 @@
    "numeral": "LXIV",
    "name": "The Danube Limes Trench",
    "unlockRank": 64,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SEA_LANTERN",
@@ -1885,6 +1917,7 @@
    "numeral": "LXV",
    "name": "The Rhine Frontier Dig",
    "unlockRank": 65,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SEA_LANTERN",
@@ -1914,6 +1947,7 @@
    "numeral": "LXVI",
    "name": "The Euphrates Crossing",
    "unlockRank": 66,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_PILLAR",
@@ -1943,6 +1977,7 @@
    "numeral": "LXVII",
    "name": "The Sahara Salt Road",
    "unlockRank": 67,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_PILLAR",
@@ -1972,6 +2007,7 @@
    "numeral": "LXVIII",
    "name": "The Atlas Mountain Cut",
    "unlockRank": 68,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_PILLAR",
@@ -2001,6 +2037,7 @@
    "numeral": "LXIX",
    "name": "Hibernia Misty Vein",
    "unlockRank": 69,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_PILLAR",
@@ -2030,6 +2067,7 @@
    "numeral": "LXX",
    "name": "The Tartarus Gates",
    "unlockRank": 70,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_PILLAR",
@@ -2059,6 +2097,7 @@
    "numeral": "LXXI",
    "name": "The Styx Crossing",
    "unlockRank": 71,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "ANDESITE",
@@ -2088,6 +2127,7 @@
    "numeral": "LXXII",
    "name": "The Lethe Watershaft",
    "unlockRank": 72,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "ANDESITE",
@@ -2117,6 +2157,7 @@
    "numeral": "LXXIII",
    "name": "The Acheron Torrent",
    "unlockRank": 73,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "ANDESITE",
@@ -2146,6 +2187,7 @@
    "numeral": "LXXIV",
    "name": "The Phlegethon Forge",
    "unlockRank": 74,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "ANDESITE",
@@ -2175,6 +2217,7 @@
    "numeral": "LXXV",
    "name": "The Elysian Fields Excavation",
    "unlockRank": 75,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "ANDESITE",
@@ -2204,6 +2247,7 @@
    "numeral": "LXXVI",
    "name": "The Asphodel Meadow Pit",
    "unlockRank": 76,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -2233,6 +2277,7 @@
    "numeral": "LXXVII",
    "name": "Tartarus Abyssal Shaft",
    "unlockRank": 77,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -2262,6 +2307,7 @@
    "numeral": "LXXVIII",
    "name": "The Erebus Vein",
    "unlockRank": 78,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -2291,6 +2337,7 @@
    "numeral": "LXXIX",
    "name": "The Nyx Caverns",
    "unlockRank": 79,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -2320,6 +2367,7 @@
    "numeral": "LXXX",
    "name": "The Stygian Abyss",
    "unlockRank": 80,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -2349,6 +2397,7 @@
    "numeral": "LXXXI",
    "name": "The Olympic Summit Mine",
    "unlockRank": 81,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -2378,6 +2427,7 @@
    "numeral": "LXXXII",
    "name": "Temple of Jupiter Depths",
    "unlockRank": 82,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -2407,6 +2457,7 @@
    "numeral": "LXXXIII",
    "name": "Neptune's Tidal Shaft",
    "unlockRank": 83,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -2436,6 +2487,7 @@
    "numeral": "LXXXIV",
    "name": "The Mars War Forge",
    "unlockRank": 84,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -2465,6 +2517,7 @@
    "numeral": "LXXXV",
    "name": "Venus's Garden Grotto",
    "unlockRank": 85,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -2494,6 +2547,7 @@
    "numeral": "LXXXVI",
    "name": "Minerva's Wisdom Vault",
    "unlockRank": 86,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_BLOCK",
@@ -2523,6 +2577,7 @@
    "numeral": "LXXXVII",
    "name": "Apollo's Oracle Cavern",
    "unlockRank": 87,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_BLOCK",
@@ -2552,6 +2607,7 @@
    "numeral": "LXXXVIII",
    "name": "Diana's Moonlit Hollow",
    "unlockRank": 88,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_BLOCK",
@@ -2581,6 +2637,7 @@
    "numeral": "LXXXIX",
    "name": "Vulcan's Infernal Foundry",
    "unlockRank": 89,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_BLOCK",
@@ -2610,6 +2667,7 @@
    "numeral": "XC",
    "name": "Mercury's Vault of Speed",
    "unlockRank": 90,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_BLOCK",
@@ -2639,6 +2697,7 @@
    "numeral": "XCI",
    "name": "The Pantheon Eternal Mine",
    "unlockRank": 91,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_ANDESITE",
@@ -2668,6 +2727,7 @@
    "numeral": "XCII",
    "name": "Mount Olympus Summit",
    "unlockRank": 92,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_ANDESITE",
@@ -2697,6 +2757,7 @@
    "numeral": "XCIII",
    "name": "The River Lethe Source",
    "unlockRank": 93,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_ANDESITE",
@@ -2726,6 +2787,7 @@
    "numeral": "XCIV",
    "name": "Cronus's Chains",
    "unlockRank": 94,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_ANDESITE",
@@ -2755,6 +2817,7 @@
    "numeral": "XCV",
    "name": "The Titan Forge",
    "unlockRank": 95,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_ANDESITE",
@@ -2784,6 +2847,7 @@
    "numeral": "XCVI",
    "name": "The Promethean Rift",
    "unlockRank": 96,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "GILDED_BLACKSTONE",
@@ -2813,6 +2877,7 @@
    "numeral": "XCVII",
    "name": "The Olympian Throne Room",
    "unlockRank": 97,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "GILDED_BLACKSTONE",
@@ -2842,6 +2907,7 @@
    "numeral": "XCVIII",
    "name": "The Aether Crystal Spire",
    "unlockRank": 98,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "GILDED_BLACKSTONE",
@@ -2871,6 +2937,7 @@
    "numeral": "XCIX",
    "name": "The Chaos Nexus",
    "unlockRank": 99,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "GILDED_BLACKSTONE",
@@ -2900,6 +2967,7 @@
    "numeral": "C",
    "name": "The Omega Sanctum — Summit of All",
    "unlockRank": 100,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "GILDED_BLACKSTONE",
@@ -2929,6 +2997,7 @@
    "numeral": "PI",
    "name": "The Gilded Vault of Era",
    "unlockRank": 101,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "SMOOTH_QUARTZ",
@@ -2958,6 +3027,7 @@
    "numeral": "PII",
    "name": "Emerald Sanctum",
    "unlockRank": 102,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "QUARTZ_BRICKS",
@@ -2987,6 +3057,7 @@
    "numeral": "PIII",
    "name": "Diamond Horizon",
    "unlockRank": 103,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_DEEPSLATE",
@@ -3016,6 +3087,7 @@
    "numeral": "PIV",
    "name": "The Amethyst Throne",
    "unlockRank": 104,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "DEEPSLATE_BRICKS",
@@ -3045,6 +3117,7 @@
    "numeral": "PV",
    "name": "Purpur Eternity",
    "unlockRank": 105,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "PURPUR_BLOCK",
@@ -3074,6 +3147,7 @@
    "numeral": "PVI",
    "name": "Quartz Paradiso",
    "unlockRank": 106,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "QUARTZ_BLOCK",
@@ -3103,6 +3177,7 @@
    "numeral": "PVII",
    "name": "The Gilded Pantheon",
    "unlockRank": 107,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "POLISHED_BLACKSTONE",
@@ -3132,6 +3207,7 @@
    "numeral": "PVIII",
    "name": "Apotheosis Core",
    "unlockRank": 108,
+   "autoGenerate": false,
    "blocks": [
     {
      "m": "GILDED_BLACKSTONE",
@@ -3155,6 +3231,14 @@
      "s": "Apotheosis Seed"
     }
    ]
+  },
+  {
+   "id": 200,
+   "numeral": "T",
+   "name": "Test Mine",
+   "unlockRank": 1,
+   "autoGenerate": false,
+   "blocks": []
   }
  ]
 }
