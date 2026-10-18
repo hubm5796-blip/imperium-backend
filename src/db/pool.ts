@@ -482,14 +482,29 @@ export async function getPlayerProfile(uuid: string): Promise<PlayerProfile | nu
  */
 export async function getUuidByUsername(
   username: string,
-  opts: { external?: boolean } = {},
+  opts: { external?: boolean; strictPlatform?: boolean } = {},
 ): Promise<string | null> {
   const external = opts.external !== false;
-  const result = await query<{ uuid: string }>(
-    'SELECT uuid FROM player_names WHERE LOWER(username) = LOWER($1)',
-    [username],
-  );
-  if (result.rows[0]?.uuid) return result.rows[0].uuid;
+  if (opts.strictPlatform) {
+    // Checkout: the store UI prefixes Bedrock names with '.', so a bare name is
+    // Java and a dot-name is Bedrock. The same string can be both a Java name
+    // and a Bedrock gamertag, and the registry may hold the gamertag without
+    // the dot — pick the row whose platform matches instead of the first row.
+    const isBedrockName = username.startsWith('.');
+    const rows = await query<{ uuid: string }>(
+      'SELECT uuid FROM player_names WHERE LOWER(username) = LOWER($1) OR LOWER(username) = LOWER($2)',
+      [username, isBedrockName ? username.slice(1) : username],
+    );
+    const match = rows.rows.find((r) => isFloodgateUuid(r.uuid) === isBedrockName);
+    if (match) return match.uuid;
+    if (isBedrockName) return null;
+  } else {
+    const result = await query<{ uuid: string }>(
+      'SELECT uuid FROM player_names WHERE LOWER(username) = LOWER($1)',
+      [username],
+    );
+    if (result.rows[0]?.uuid) return result.rows[0].uuid;
+  }
 
   if (!external) return null;
 
@@ -515,6 +530,11 @@ export async function getUuidByUsername(
     // Non-fatal — the UUID is resolved even if the cache write fails.
   }
   return resolved.uuid;
+}
+
+/** Floodgate encodes a Bedrock player's XUID in the low 64 bits of an otherwise-zero UUID. */
+export function isFloodgateUuid(uuid: string): boolean {
+  return /^00000000-0000-0000-/i.test(uuid);
 }
 
 /**

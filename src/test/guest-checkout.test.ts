@@ -121,7 +121,7 @@ describe('B-C25: storeAuth guest checkout via guestUsername', () => {
     const res = await postGuestCart({ items: guestItems(), guestUsername: 'Steve' });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ url: 'https://checkout.paynow.gg/s/test' });
-    expect(getUuidByUsernameMock).toHaveBeenCalledWith('Steve');
+    expect(getUuidByUsernameMock).toHaveBeenCalledWith('Steve', { strictPlatform: true });
     expect(findOrCreatePaynowCustomerMock).toHaveBeenCalledWith(JAVA_UUID);
     expect(createCheckoutSessionMock).toHaveBeenCalledWith(expect.objectContaining({
       customerId: 'cus_guest_new',
