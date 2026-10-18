@@ -53,6 +53,7 @@ vi.mock('../db/pool.js', async (importOriginal) => {
     setPaynowCustomerId: setPaynowCustomerIdMock,
     upsertCachedSubscription: vi.fn(),
     getCachedSubscription: vi.fn(),
+    getNameByUuid: vi.fn(async () => 'Steve'),
   };
 });
 
@@ -122,7 +123,7 @@ describe('B-C25: storeAuth guest checkout via guestUsername', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ url: 'https://checkout.paynow.gg/s/test' });
     expect(getUuidByUsernameMock).toHaveBeenCalledWith('Steve', { strictPlatform: true });
-    expect(findOrCreatePaynowCustomerMock).toHaveBeenCalledWith(JAVA_UUID);
+    expect(findOrCreatePaynowCustomerMock).toHaveBeenCalledWith(JAVA_UUID, null);
     expect(createCheckoutSessionMock).toHaveBeenCalledWith(expect.objectContaining({
       customerId: 'cus_guest_new',
       lines: [expect.objectContaining({ productId: AUREUS_50, quantity: 2 })],
@@ -144,7 +145,8 @@ describe('B-C25: storeAuth guest checkout via guestUsername', () => {
     getUuidByUsernameMock.mockResolvedValue(floodgateUuid);
     const res = await postGuestCart({ items: guestItems(), guestUsername: '.Steve' });
     expect(res.status).toBe(200);
-    expect(findOrCreatePaynowCustomerMock).toHaveBeenCalledWith(floodgateUuid);
+    // PayNow can only create a Bedrock customer from the gamertag.
+    expect(findOrCreatePaynowCustomerMock).toHaveBeenCalledWith(floodgateUuid, 'Steve');
   });
 
   it('a Bedrock .name never seen derives the plugin-identical offline v3 UUID so the purchase still proceeds', async () => {
@@ -153,7 +155,7 @@ describe('B-C25: storeAuth guest checkout via guestUsername', () => {
     expect(res.status).toBe(200);
     // Byte-identical to UUID.nameUUIDFromBytes("OfflinePlayer:.Steve") — the
     // exact value the plugin's UuidMigrationService.offlineUuid produces.
-    expect(findOrCreatePaynowCustomerMock).toHaveBeenCalledWith(BEDROCK_STEVE_OFFLINE_UUID);
+    expect(findOrCreatePaynowCustomerMock).toHaveBeenCalledWith(BEDROCK_STEVE_OFFLINE_UUID, null);
     expect(createCheckoutSessionMock).toHaveBeenCalledWith(expect.objectContaining({ customerId: 'cus_guest_new' }));
   });
 
@@ -188,7 +190,7 @@ describe('B-C25: storeAuth guest checkout via guestUsername', () => {
       { 'x-mc-uuid': headerUuid },
     );
     expect(res.status).toBe(200);
-    expect(findOrCreatePaynowCustomerMock).toHaveBeenCalledWith(headerUuid);
+    expect(findOrCreatePaynowCustomerMock).toHaveBeenCalledWith(headerUuid, null);
     expect(getUuidByUsernameMock).not.toHaveBeenCalled();
   });
 
