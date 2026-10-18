@@ -1756,7 +1756,7 @@ async function resolveGuestBuyerUuid(username: string): Promise<string | null> {
   const name = username.trim();
   const isBedrock = /^\.[a-zA-Z0-9_]{3,16}$/.test(name);
   if (!isBedrock && !/^[a-zA-Z0-9_]{3,16}$/.test(name)) return null; // reject anything name-shaped wrong
-  const known = await getUuidByUsername(name).catch(() => null);
+  const known = await getUuidByUsername(name, { strictPlatform: true }).catch(() => null);
   if (known) return known;
   if (isBedrock) return bedrockOfflineUuid(name);
   return null; // Java name unknown to player_names AND Mojang/PlayerDB
@@ -1880,9 +1880,14 @@ async function resolvePaynowCustomerId(uuid: string): Promise<string> {
  * honest "gateway timed out, safe to retry" answer, not a generic 500/502.
  * Returns [body, status].
  */
-function paynowErrorReply(err: PaynowApiError): [{ error: string }, 502 | 504] {
+function paynowErrorReply(err: PaynowApiError): [{ error: string }, 400 | 502 | 504] {
   if (err.status === 504) {
     return [{ error: 'PayNow did not respond in time. Please try again shortly.' }, 504];
+  }
+  // PayNow refusing the request itself (limits, unknown player, gifting rules)
+  // is the buyer's to fix; a 401 means our own API key is broken.
+  if (err.status >= 400 && err.status < 500 && err.status !== 401) {
+    return [{ error: err.message }, 400];
   }
   return [{ error: err.message }, 502];
 }
@@ -2239,7 +2244,7 @@ api.post('/store/gift-checkout', storeAuth, async (c) => {
     return c.json({ error: 'Invalid recipient username' }, 400);
   }
 
-  const recipientUuid = await getUuidByUsername(recipientUsername);
+  const recipientUuid = await getUuidByUsername(recipientUsername, { strictPlatform: true });
   if (!recipientUuid) {
     return c.json({ error: `No player found with username "${recipientUsername}" — they must have joined the server at least once, or be a valid Java Edition account.` }, 404);
   }
@@ -2320,7 +2325,7 @@ api.post('/store/cart-checkout', storeAuth, async (c) => {
       if (!MC_USERNAME_SCHEMA.test(item.giftRecipient.trim())) {
         return c.json({ error: `Item ${i + 1}: invalid gift recipient username` }, 400);
       }
-      const recipientUuid = await getUuidByUsername(item.giftRecipient.trim());
+      const recipientUuid = await getUuidByUsername(item.giftRecipient.trim(), { strictPlatform: true });
       if (!recipientUuid) {
         return c.json(
           { error: `Item ${i + 1}: could not find a Minecraft account named "${item.giftRecipient}". Have they joined the server, or is the username spelled correctly?` },
