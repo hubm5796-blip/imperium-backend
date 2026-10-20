@@ -519,6 +519,35 @@ merges the two). Mutating actions deliberately do NOT exist here.
   `leaderboard_stats` category `KOTH_WINS`, ALL_TIME) — both cached in the
   same 15s envelope.
 
+### v2: client crash reports (launcher intake)
+
+`POST /api/v2/client/crash-report` — anonymous (the launcher can crash
+before sign-in), 5/hour per IP. Body over 256 KB → 413; `logTail` /
+`crashReport` are hard-truncated server-side to 32 KB / 64 KB. `GET
+/api/v2/client/crash-report/:id` and `GET /api/v2/client/crash-reports?
+limit=` are staff-only (helper+, enveloped). Rows carry an HMAC prefix of
+the client IP (`ip_hash`), never the raw address.
+
+```sh
+curl -X POST https://api.imperiummc.net/api/v2/client/crash-report \
+  -H 'content-type: application/json' \
+  -d '{
+        "launcher": "imperium-launcher",
+        "launcherVersion": "0.1.2",
+        "clientVersion": "1.2.3",
+        "mcVersion": "1.21.4",
+        "platform": "windows-x64",
+        "cause": "Java heap space",
+        "mod": "sodium",
+        "logTail": "<tail of launcher/game log>",
+        "crashReport": "<contents of crash-reports/crash-2026-10-18_..txt>"
+      }'
+```
+
+Response: `{ "data": { "id": "1f2e3d4c5b6a7988", "url":
+"/api/v2/client/crash-report/1f2e3d4c5b6a7988", "truncated": { "logTail":
+false, "crashReport": true } } }`.
+
 ## The `web_queue` table + HMAC scheme
 
 A durable queue in the shared Supabase Postgres. Backend INSERTs; the plugin

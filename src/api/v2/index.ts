@@ -14,6 +14,7 @@ import { guidesV2 } from './guides.js';
 import { galleryV2 } from './gallery.js';
 import { adminPanelV2 } from './adminPanel.js';
 import { guideCommentsV2 } from './guideComments.js';
+import { crashReportsV2 } from './crashReports.js';
 import { dmApi, changelogApi } from './dms.js';
 import type { AppContextVariables } from '../../types/index.js';
 
@@ -34,5 +35,6 @@ v2Api.route('/', guidesV2);
 v2Api.route('/', galleryV2);
 v2Api.route('/', adminPanelV2);
 v2Api.route('/', guideCommentsV2);
+v2Api.route('/', crashReportsV2);
 v2Api.route('/', dmApi);
 v2Api.route('/', changelogApi);

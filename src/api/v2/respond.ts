@@ -16,6 +16,7 @@ export const ERROR_CODES = [
   'FORBIDDEN',
   'LINK_REQUIRED',
   'RATE_LIMITED',
+  'PAYLOAD_TOO_LARGE',
   'PLUGIN_UNREACHABLE',
   'REGISTRY_UNAVAILABLE',
 ] as const;
@@ -30,7 +31,7 @@ export function ok<T>(c: Context, data: T, meta?: PageMeta): Response {
   return c.json(meta ? { data, meta } : { data });
 }
 
-export function fail(c: Context, status: 400 | 401 | 403 | 404 | 409 | 429 | 503, code: ErrorCode, message: string, details?: unknown): Response {
+export function fail(c: Context, status: 400 | 401 | 403 | 404 | 409 | 413 | 429 | 503, code: ErrorCode, message: string, details?: unknown): Response {
   return c.json({ error: { code, message, ...(details !== undefined ? { details } : {}) } }, status);
 }
 
