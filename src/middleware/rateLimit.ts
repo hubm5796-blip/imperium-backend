@@ -170,3 +170,10 @@ export const shopWriteRateLimit = rateLimit(5, 60_000, 'shop');
  * on username-enumeration scraping (404s still consume budget).
  */
 export const publicProfileRateLimit = rateLimit(30, 60_000, 'public-profile');
+
+/**
+ * ImperiumMC#3 launcher crash-report intake: 5/hour per IP. The launcher has
+ * no user token (it may crash before sign-in), so the per-IP window through
+ * the shared D1 limiter is the whole abuse bound on this anonymous write.
+ */
+export const crashReportRateLimit = rateLimit(5, 3_600_000, 'crash-report');

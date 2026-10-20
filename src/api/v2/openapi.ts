@@ -38,7 +38,7 @@ const SPEC = {
     description:
       'The versioned API surface — with an honest account of who keeps the contract (B-42).\n' +
       'KEPT by the v2 scaffold routes (ping, leaderboards, openapi.json, keys, tickets, ' +
-      'moderation, store-orders, guides, gallery, comments): enveloped responses ' +
+      'moderation, store-orders, guides, gallery, comments, client crash-reports): enveloped responses ' +
       '({data, meta?} / {error:{code,message}}), closed error-code enum, opaque keyset ' +
       'cursors, unknown query params rejected.\n' +
       'NOT KEPT by the v2 RESIDENTS mounted from the expansion set (/api/v2/public/player/*, ' +
@@ -257,6 +257,73 @@ const SPEC = {
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 } },
         ],
         responses: { '200': { description: 'Delivery rows' }, '401': { description: 'UNAUTHORIZED', content: { 'application/json': { schema: jsonError(['UNAUTHORIZED']) } } } },
+      },
+    },
+    '/api/v2/client/crash-report': {
+      post: {
+        summary: 'Launcher crash-report intake (anonymous, 5/hour/IP)',
+        description:
+          'The launcher\'s crash screen uploads here — no user token (it may crash ' +
+          'before sign-in), so the per-IP D1 window is the whole abuse bound. Bodies ' +
+          'over 256 KB are refused with 413 before parsing; logTail / crashReport are ' +
+          'hard-truncated server-side to 32 KB / 64 KB. Rows store an HMAC prefix of ' +
+          'the client IP, never the raw address. Returns { id, url, truncated } where ' +
+          'url is the staff-gated view path of this API (no panel surface exists yet).',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['launcher', 'launcherVersion', 'platform', 'cause', 'logTail'],
+                properties: {
+                  launcher: { type: 'string', maxLength: 64 },
+                  launcherVersion: { type: 'string', maxLength: 64 },
+                  clientVersion: { type: 'string', maxLength: 64 },
+                  mcVersion: { type: 'string', maxLength: 64 },
+                  platform: { type: 'string', maxLength: 64 },
+                  cause: { type: 'string', maxLength: 200 },
+                  mod: { type: 'string', maxLength: 200 },
+                  logTail: { type: 'string', description: 'Hard-truncated to 32 KB' },
+                  crashReport: { type: 'string', description: 'Hard-truncated to 64 KB' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Stored — { id, url, truncated }', content: { 'application/json': { schema: okData({ type: 'object', properties: { id: { type: 'string' }, url: { type: 'string' }, truncated: { type: 'object', properties: { logTail: { type: 'boolean' }, crashReport: { type: 'boolean' } } } } }) } } },
+          '400': { description: 'INVALID_PARAM', content: { 'application/json': { schema: jsonError(['INVALID_PARAM']) } } },
+          '413': { description: 'PAYLOAD_TOO_LARGE (body over 256 KB)', content: { 'application/json': { schema: jsonError(['PAYLOAD_TOO_LARGE']) } } },
+          '503': { description: 'REGISTRY_UNAVAILABLE', content: { 'application/json': { schema: jsonError(['REGISTRY_UNAVAILABLE']) } } },
+        },
+      },
+    },
+    '/api/v2/client/crash-report/{id}': {
+      get: {
+        summary: 'Crash-report record (staff helper+)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{16}$' } }],
+        responses: {
+          '200': { description: 'Full record (logTail + crashReport included)' },
+          '400': { description: 'INVALID_PARAM', content: { 'application/json': { schema: jsonError(['INVALID_PARAM']) } } },
+          '401': { description: 'UNAUTHORIZED', content: { 'application/json': { schema: jsonError(['UNAUTHORIZED']) } } },
+          '403': { description: 'FORBIDDEN', content: { 'application/json': { schema: jsonError(['FORBIDDEN']) } } },
+          '404': { description: 'NOT_FOUND', content: { 'application/json': { schema: jsonError(['NOT_FOUND']) } } },
+        },
+      },
+    },
+    '/api/v2/client/crash-reports': {
+      get: {
+        summary: 'Crash-report triage list (staff helper+; newest first)',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 } },
+        ],
+        responses: {
+          '200': { description: '{ reports, total, countsByCause } — list rows exclude the two text blobs' },
+          '400': { description: 'UNKNOWN_PARAM', content: { 'application/json': { schema: jsonError(['UNKNOWN_PARAM']) } } },
+          '401': { description: 'UNAUTHORIZED', content: { 'application/json': { schema: jsonError(['UNAUTHORIZED']) } } },
+          '403': { description: 'FORBIDDEN', content: { 'application/json': { schema: jsonError(['FORBIDDEN']) } } },
+        },
       },
     },
   },
