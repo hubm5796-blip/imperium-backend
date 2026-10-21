@@ -19,6 +19,10 @@ export const ERROR_CODES = [
   'PAYLOAD_TOO_LARGE',
   'PLUGIN_UNREACHABLE',
   'REGISTRY_UNAVAILABLE',
+  // Issue #2 (client auth): the Mojang sessionserver could not be reached or
+  // answered unexpectedly — distinct from UNAUTHORIZED so the client knows to
+  // retry with a fresh challenge rather than treat the player as unverified.
+  'SESSIONSERVER_UNAVAILABLE',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

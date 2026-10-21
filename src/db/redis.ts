@@ -45,6 +45,13 @@ export const LOGIN_CODE_PREFIX = 'ImperiumMC:login_code:';
  */
 export const SESSION_CODE_PREFIX = 'ImperiumMC:session:';
 /**
+ * Redis key prefix for Imperium Client sign-in challenges (issue #2). The
+ * backend mints a random Mojang-style serverId under this prefix (60s TTL,
+ * single-use via GETDEL); the client joins Mojang's session server with it and
+ * proves ownership at /api/client/auth/verify, which consumes it.
+ */
+export const CLIENT_AUTH_CHALLENGE_PREFIX = 'ImperiumMC:client_auth:';
+/**
  * Redis key prefix for short-TTL response caches on hot, read-heavy backend
  * routes (currently /api/player/profile). Postgres compute-hours are the
  * tighter free-tier constraint than Upstash's request count, so caching a
@@ -542,6 +549,49 @@ export async function consumeSessionCode(code: string): Promise<SessionHandoff |
     };
   } catch (err) {
     logger.warn({ err: String(err), key }, 'session code record corrupt — code consumed but unusable');
+    return null;
+  }
+}
+
+/* ── Issue #2: Imperium Client sign-in challenges ────────────────────────────
+ * Same store + consume discipline as the link/login/session codes above. */
+
+/**
+ * Mint a fresh client sign-in challenge: 20 random bytes as lowercase hex
+ * (the shape Mojang's serverId field accepts), stored single-use for
+ * `ttlSeconds` (60 per issue #2). Returns the serverId the client passes to
+ * MinecraftSessionService.joinServer.
+ */
+export async function createClientAuthChallenge(ttlSeconds = 60): Promise<string> {
+  const serverId = crypto.randomBytes(20).toString('hex');
+  const key = `${CLIENT_AUTH_CHALLENGE_PREFIX}${serverId}`;
+  const record = JSON.stringify({ createdAt: Date.now() });
+  if (usePgBus()) {
+    await busKvPut(key, record, ttlSeconds);
+    return serverId;
+  }
+  await redisCommand(socketConfig(), ['SET', key, record, 'EX', String(ttlSeconds)]);
+  return serverId;
+}
+
+/**
+ * Atomically consume (single-use GETDEL) a client sign-in challenge. Returns
+ * the stored record, or null when the serverId was never issued, has expired,
+ * or was already consumed (replay). Throws when the store itself is
+ * unreachable — callers must distinguish that (503) from a dead challenge
+ * (401), unlike the miss path which is an ordinary auth failure.
+ */
+export async function consumeClientAuthChallenge(
+  serverId: string,
+): Promise<{ createdAt: number } | null> {
+  const key = `${CLIENT_AUTH_CHALLENGE_PREFIX}${serverId}`;
+  const raw = usePgBus() ? await busKvConsume(key) : await atomicGetDel(key);
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw) as { createdAt?: number };
+    return { createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : 0 };
+  } catch (err) {
+    logger.warn({ err: String(err), key }, 'client auth challenge record corrupt — consumed but unusable');
     return null;
   }
 }
