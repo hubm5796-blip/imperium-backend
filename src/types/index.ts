@@ -12,15 +12,19 @@ export interface DiscordUser {
 }
 
 /**
- * Decoded JWT payload stored in the auth cookie. Two session shapes:
+ * Decoded JWT payload stored in the auth cookie. Three token shapes:
  * - `authMethod: 'discord'` — signed in via Discord OAuth. `discordId` etc. are
  *   set; `mcUuid` is resolved on each request via the discord_links table.
  * - `authMethod: 'mc_code'` — signed in via the in-game 6-digit code. `mcUuid`
  *   is baked into the token directly (no DB lookup needed); `discordId` is set
  *   only if that Minecraft account happens to already be linked to Discord.
+ * - `authMethod: 'mc_client'` — the Imperium Client launcher token (issue #2).
+ *   NEVER accepted from the session cookie (verifyJwt rejects it); it verifies
+ *   only as `Authorization: Bearer` via verifyClientJwt, is confined to the
+ *   client-token route allowlist (gates.ts), and carries aud imperium-client.
  */
 export interface JwtPayload {
-  authMethod: 'discord' | 'mc_code';
+  authMethod: 'discord' | 'mc_code' | 'mc_client';
   discordId?: string;
   discordUsername?: string;
   discordAvatar?: string | null;

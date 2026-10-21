@@ -14,6 +14,23 @@ export const JWT_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
 const EXPECTED_JWT_ISSUERS = new Set(['imperium-backend', 'imperium-frontend']);
 const EXPECTED_JWT_AUDIENCE = 'imperium-api';
 
+/**
+ * Issue #2 — the Imperium Client (game launcher) token family. A client token
+ * proves Minecraft-account ownership via the Mojang hasJoined handshake and is
+ * presented as `Authorization: Bearer …` — never as a cookie. It carries its
+ * OWN audience so the two families are not replayable cross-context:
+ *   - verifyJwt (sessions)      rejects aud !== 'imperium-api' — a client
+ *     token in the auth cookie dies at the audience check (and at the
+ *     authMethod check before it);
+ *   - verifyClientJwt (client)  REQUIRES aud === 'imperium-client' and
+ *     authMethod === 'mc_client' — a website session presented as a bearer
+ *     client token dies there.
+ */
+export const CLIENT_JWT_AUDIENCE = 'imperium-client';
+/** Client token lifetime (24h, per issue #2) — shorter than sessions on purpose. */
+export const CLIENT_JWT_EXPIRY_SECONDS = 24 * 60 * 60;
+const CLIENT_JWT_ISSUER = 'imperium-backend';
+
 type SignPayload = Omit<JwtPayload, 'iat' | 'exp'>;
 
 const encoder = new TextEncoder();
@@ -53,6 +70,10 @@ export async function verifyJwt(token: string | undefined | null): Promise<JwtPa
     // authMethod is required on every token we sign; a token missing it was
     // signed before this field existed (or is malformed) — treat as invalid
     // rather than guessing a default that could mis-authorize a request.
+    // 'mc_client' (issue #2) is deliberately ABSENT from this list: this is
+    // the SESSION verifier, and a client token must never establish a
+    // website session even if its audience claim were stripped — client
+    // tokens verify only through verifyClientJwt.
     if (decoded.authMethod !== 'discord' && decoded.authMethod !== 'mc_code') {
       return null;
     }
@@ -94,6 +115,67 @@ export async function verifyJwt(token: string | undefined | null): Promise<JwtPa
         decoded.staffRole === 'helper' || decoded.staffRole === 'mod' || decoded.staffRole === 'admin'
           ? decoded.staffRole
           : undefined,
+      iat: decoded.iat,
+      exp: decoded.exp,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/* ── Issue #2: the client (launcher) token family ───────────────────────────
+ * Signed with the same HS256 secret but a distinct audience + authMethod, so
+ * the session verifier and the client verifier each reject the other's
+ * family. 24h lifetime, returned in the verify response body (never a cookie).
+ */
+
+/** Payload of a client token — mcUuid is mandatory (it IS the identity). */
+export interface ClientJwtPayload {
+  authMethod: 'mc_client';
+  mcUuid: string;
+  discordId?: string;
+  iat: number;
+  exp: number;
+}
+
+type ClientSignPayload = Omit<ClientJwtPayload, 'iat' | 'exp'>;
+
+/** Sign a client token (24h, iss imperium-backend, aud imperium-client). */
+export async function signClientJwt(payload: ClientSignPayload): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({ ...payload })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt(now)
+    .setExpirationTime(now + CLIENT_JWT_EXPIRY_SECONDS)
+    .setIssuer(CLIENT_JWT_ISSUER)
+    .setAudience(CLIENT_JWT_AUDIENCE)
+    .sign(secretKey());
+}
+
+/**
+ * Verify a client bearer token. Strict where verifyJwt is lenient-for-legacy:
+ * there are no "legacy" client tokens (the family is new), so BOTH iss and aud
+ * are REQUIRED (jose enforces them via the options below; a session token
+ * carrying aud imperium-api fails the audience check). Same X-01-style
+ * lifetime discipline as sessions, capped at 24h instead of 7d. Returns null
+ * on anything invalid — callers treat that as "no user".
+ */
+export async function verifyClientJwt(token: string | undefined | null): Promise<ClientJwtPayload | null> {
+  if (!token) return null;
+  try {
+    const { payload: decoded } = await jwtVerify<JWTPayload & ClientSignPayload>(token, secretKey(), {
+      algorithms: ['HS256'],
+      issuer: CLIENT_JWT_ISSUER,
+      audience: CLIENT_JWT_AUDIENCE,
+    });
+    if (decoded.authMethod !== 'mc_client' || typeof decoded.mcUuid !== 'string') return null;
+    if (typeof decoded.iat !== 'number' || typeof decoded.exp !== 'number') return null;
+    if (decoded.exp - decoded.iat > CLIENT_JWT_EXPIRY_SECONDS) return null;
+    if (Math.floor(Date.now() / 1000) - decoded.iat > CLIENT_JWT_EXPIRY_SECONDS) return null;
+    return {
+      authMethod: 'mc_client',
+      mcUuid: decoded.mcUuid,
+      discordId: typeof decoded.discordId === 'string' ? decoded.discordId : undefined,
       iat: decoded.iat,
       exp: decoded.exp,
     };
