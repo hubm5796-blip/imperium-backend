@@ -2892,7 +2892,7 @@ api.get('/player/privacy/export/download', readRateLimit, requireMcIdentity, asy
     }
     return c.body(body, 200, {
       'Content-Type': 'application/json; charset=utf-8',
-      'Content-Disposition': `attachment; filename="imperiummc-data-export-${mcUuid.slice(0, 8)}-${staged.date}.json"`,
+      'Content-Disposition': `attachment; filename="romanica-data-export-${mcUuid.slice(0, 8)}-${staged.date}.json"`,
       'Cache-Control': 'no-store',
     });
   } catch (err) {

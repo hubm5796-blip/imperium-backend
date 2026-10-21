@@ -297,7 +297,7 @@ export function serverStatusEmbed(status: ServerStatus): EmbedBuilder {
 export function storeEmbed(): EmbedBuilder {
  return chrome(
  new EmbedBuilder()
- .setTitle(`Imperium Store`)
+ .setTitle(`Romanica Store`)
  .setDescription(
  `Support the empire and unlock ranks, keys, and ${CURRENCIES.aureus.name}.\n\n**[${BRANDING.storeUrl}](${BRANDING.storeUrl})**`,
  )

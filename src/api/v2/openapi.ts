@@ -33,7 +33,7 @@ const okData = (dataSchema: unknown, withMeta = false) => ({
 const SPEC = {
   openapi: '3.1.0',
   info: {
-    title: 'ImperiumMC API v2',
+    title: 'Romanica API v2',
     version: '1.1.0',
     description:
       'The versioned API surface — with an honest account of who keeps the contract (B-42).\n' +

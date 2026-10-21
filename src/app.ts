@@ -72,7 +72,7 @@ export function createApp() {
   });
 
   app.get('/', (c) =>
-    c.json({ name: 'ImperiumMC API', status: 'ok', version: '1.0.0' }),
+    c.json({ name: 'Romanica API', status: 'ok', version: '1.0.0' }),
   );
   // /health (FIX 2026-08-22 review): was decorative — hardcoded version, deployedAt = now(),
   // and always-ok regardless of DB reachability. Now PROBES the database (1s budget) and

@@ -19,7 +19,7 @@ export const changelogCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('changelog')
- .setDescription('The latest ImperiumMC updates - fixes, improvements and announcements')
+ .setDescription('The latest Romanica updates - fixes, improvements and announcements')
  .toJSON();
  },
  async execute(interaction) {

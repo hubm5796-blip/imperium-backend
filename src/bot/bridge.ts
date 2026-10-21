@@ -111,7 +111,7 @@ async function sendChat(e: Extract<BridgeEvent, { kind: 'chat' | 'system' }>): P
  }, health.chat, 'chat');
  }
  return postWebhook(env.bridgeWebhookUrl!, {
- username: 'ImperiumMC',
+ username: 'Romanica',
  content: e.message.slice(0, 1900),
  }, health.chat, 'chat');
 }
@@ -124,7 +124,7 @@ async function sendEvent(e: BridgeEvent): Promise<boolean> {
  if (eventTimestamps.length >= EVENT_CEILING) return false;
  eventTimestamps.push(now);
  return postWebhook(env.bridgeEventsWebhookUrl, {
- username: 'Imperium Events',
+ username: 'Romanica Events',
  embeds: [
  {
  color: EVENT_EMBED_COLORS[e.kind] ?? 0xd4af37,

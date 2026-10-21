@@ -7,14 +7,14 @@ export const factionsCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('factions')
- .setDescription('View the eight ImperiumMC factions and reputation perks')
+ .setDescription('View the eight Romanica factions and reputation perks')
  .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
  .toJSON();
  },
  async execute(interaction) {
  await interaction.deferReply();
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC Factions')
+ .setTitle('Romanica Factions')
  .setColor(COLORS.gold)
  .setDescription(
  [
