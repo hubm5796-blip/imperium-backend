@@ -306,6 +306,6 @@ export async function seedInternalBotSubscriber(url: string, secret: string): Pr
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET url = excluded.url, secret = excluded.secret`,
     )
-    .bind('discord-bot', 'ImperiumMC Discord bot (role sync + pushes)', url, secret, JSON.stringify(['subscription.updated', 'player.prestige', 'player.rankup', 'test.ping']), 'internal', null, 'active', Date.now())
+    .bind('discord-bot', 'Romanica Discord bot (role sync + pushes)', url, secret, JSON.stringify(['subscription.updated', 'player.prestige', 'player.rankup', 'test.ping']), 'internal', null, 'active', Date.now())
     .run();
 }

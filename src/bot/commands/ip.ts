@@ -7,13 +7,13 @@ export const ipCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('ip')
- .setDescription('How to join Imperium MC - Java and Bedrock connection info')
+ .setDescription('How to join Romanica - Java and Bedrock connection info')
  .toJSON();
  },
  async execute(interaction) {
  // No defer needed - this replies instantly from static facts.
  const embed = new EmbedBuilder()
- .setTitle('Join Imperium MC')
+ .setTitle('Join Romanica')
  .setColor(COLORS.gold)
  .setDescription('The Rome-themed OP Prison server. Free to play, live now.')
  .addFields(

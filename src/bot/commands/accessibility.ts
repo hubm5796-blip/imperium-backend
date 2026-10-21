@@ -7,17 +7,17 @@ export const accessibilityCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('accessibility')
- .setDescription('View ImperiumMC accessibility features and how to toggle them')
+ .setDescription('View Romanica accessibility features and how to toggle them')
  .toJSON();
  },
  async execute(interaction) {
  await interaction.deferReply();
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC Accessibility')
+ .setTitle('Romanica Accessibility')
  .setColor(COLORS.green)
  .setDescription(
  [
- 'ImperiumMC ships with built-in accessibility options to make the empire playable for everyone. Toggle any of them in-game with `/accessibility`.',
+ 'Romanica ships with built-in accessibility options to make the empire playable for everyone. Toggle any of them in-game with `/accessibility`.',
  ].join('\n'),
  )
  .addFields(

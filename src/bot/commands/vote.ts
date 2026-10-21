@@ -16,7 +16,7 @@ export const voteCommand: BotCommand = {
  },
  async execute(interaction) {
  const embed = new EmbedBuilder()
- .setTitle('Vote for Imperium MC')
+ .setTitle('Vote for Romanica')
  .setColor(COLORS.gold)
  .setDescription(
  'Voting keeps the server visible on the lists, and every vote pays you directly - plus fills the server-wide vote party bar.',

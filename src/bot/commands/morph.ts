@@ -14,7 +14,7 @@ export const morphCommand: BotCommand = {
  async execute(interaction) {
  await interaction.deferReply();
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC Beast Morphs')
+ .setTitle('Romanica Beast Morphs')
  .setColor(COLORS.gold)
  .setDescription(
  [

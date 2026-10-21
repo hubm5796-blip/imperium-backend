@@ -7,7 +7,7 @@ export const storeCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('store')
- .setDescription('Get the link to the ImperiumMC store')
+ .setDescription('Get the link to the Romanica store')
  .toJSON();
  },
  async execute(interaction) {

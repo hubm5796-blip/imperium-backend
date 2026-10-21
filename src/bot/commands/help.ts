@@ -7,12 +7,12 @@ export const helpCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('help')
- .setDescription('View all ImperiumMC bot commands and how to get started')
+ .setDescription('View all Romanica bot commands and how to get started')
  .toJSON();
  },
  async execute(interaction) {
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC - Command Guide')
+ .setTitle('Romanica - Command Guide')
  .setColor(COLORS.gold)
  .setDescription('A Roman-themed OP Prison MMORPG. Mine, enchant, prestige, and ascend to godhood!')
  .addFields(
@@ -78,7 +78,7 @@ export const helpCommand: BotCommand = {
  inline: false,
  },
  )
- .setFooter({ text: 'ImperiumMC — Roma Aeterna | Support all versions 1.8-26.2+' })
+ .setFooter({ text: 'Romanica — Roma Aeterna | Support all versions 1.8-26.2+' })
  .setTimestamp();
  await interaction.reply({ embeds: [embed] });
  },

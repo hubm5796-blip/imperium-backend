@@ -51,6 +51,6 @@ process.on('uncaughtException', (err) => {
 serve(
   { fetch: app.fetch, port: env.port },
   (info) => {
-    logger.info({ port: info.port, env: env.nodeEnv }, 'ImperiumMC API listening');
+    logger.info({ port: info.port, env: env.nodeEnv }, 'Romanica API listening');
   },
 );

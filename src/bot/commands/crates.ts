@@ -7,14 +7,14 @@ export const cratesCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('crates')
- .setDescription('View all available ImperiumMC crate types')
+ .setDescription('View all available Romanica crate types')
  .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
  .toJSON();
  },
  async execute(interaction) {
  await interaction.deferReply();
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC Crates')
+ .setTitle('Romanica Crates')
  .setColor(COLORS.gold)
  .setDescription('Open crates to win Denarius, Auctoritas, Civitas, pets, cosmetics, and more!')
  .addFields(
