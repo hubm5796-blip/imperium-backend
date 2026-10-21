@@ -17,6 +17,7 @@ import {
 import { attachUser, botTokenMatches, requireAuth, requireLinked } from '../middleware/auth.js';
 import {
   attachPrincipal,
+  clientTokenAllowlist,
   parseMcUuid,
   requireMcIdentity,
   requireStaffRole,
@@ -111,6 +112,11 @@ export const api = new Hono<ApiEnv>();
 
 // Attach the current user (if any) to every request.
 api.use('*', attachUser);
+// Issue #2: client tokens (bearer, authMethod 'mc_client') are confined to
+// their route allowlist — directly after attachUser and before any principal
+// resolution or route gate, so every non-allowlisted route 403s
+// CLIENT_TOKEN_NOT_ALLOWED before its own gates even run.
+api.use('*', clientTokenAllowlist);
 // Resolve the principal ONCE per request (B-05) — gates read the cached value.
 api.use('*', attachPrincipal);
 // Apply a default sliding-window limit to everything.
