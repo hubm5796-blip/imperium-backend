@@ -147,6 +147,10 @@ export async function getPrincipal(c: Context): Promise<Principal> {
 export const ALLOWED_BROWSER_ORIGINS = new Set<string>([
   'https://imperiummc.net',
   'https://www.imperiummc.net',
+  // Rebrand cutover 2026-10: romanica.net allowed ALONGSIDE imperiummc.net until
+  // DNS/zone cutover completes — then remove the two imperiummc.net entries above.
+  'https://romanica.net',
+  'https://www.romanica.net',
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
