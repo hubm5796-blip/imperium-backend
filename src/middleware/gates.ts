@@ -34,7 +34,7 @@ import type { AppContextVariables, JwtPayload } from '../types/index.js';
 type AuthEnv = { Variables: AppContextVariables };
 
 export type Principal =
-  | { kind: 'session'; mcUuid: string | null; discordId: string | null; authMethod: 'discord' | 'mc_code' }
+  | { kind: 'session'; mcUuid: string | null; discordId: string | null; authMethod: 'discord' | 'mc_code' | 'mc_client' }
   | { kind: 'bot' }
   | { kind: 'delegated'; mcUuid: string }
   | { kind: 'api_key'; keyId: string; scopes: Scope[]; ownerUuid: string | null }
@@ -256,6 +256,53 @@ export const requireScope = (scope: Scope): MiddlewareHandler<AuthEnv> => async 
   await next();
 };
 
+/* ─────────── Issue #2: client-token route allowlist ───────────────────────── */
+
+/**
+ * The ONLY routes an Imperium Client token (authMethod 'mc_client') may reach
+ * (issue #2): the launcher's own cosmetics read/equip, legion read + invite,
+ * changelog list for the title screen, the player's own profile + balances,
+ * and server status. Exact `METHOD /path` pairs — no wildcards, no prefixes,
+ * because an allowlist glob is how unintended surface creeps in.
+ *
+ * Everything else answers 403 CLIENT_TOKEN_NOT_ALLOWED: client tokens satisfy
+ * requireMcIdentity/requireLinked (the identity IS the proven account) but
+ * never staff, bot, admin, store or any other session surface.
+ */
+export const CLIENT_TOKEN_ALLOWED_ROUTES = new Set<string>([
+  'GET /api/player/profile',
+  'GET /api/player/balances',
+  'GET /api/player/cosmetics',
+  'POST /api/player/cosmetics/equip',
+  'GET /api/player/legion',
+  'POST /api/legion/invite',
+  'GET /api/v2/changelog/list',
+  'GET /api/server/status',
+]);
+
+/**
+ * Client-token confinement. Must run AFTER attachUser (it reads the resolved
+ * user) and BEFORE any route-level gate, so register it immediately after
+ * attachUser on every surface that runs one (the `api` mount and the v2
+ * sub-app root — the same double registration attachUser itself uses, B-49).
+ * A no-op for every other principal.
+ */
+export const clientTokenAllowlist: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  const user = c.get('user');
+  if (!user || user.authMethod !== 'mc_client') {
+    await next();
+    return;
+  }
+  const route = `${c.req.method.toUpperCase()} ${c.req.path}`;
+  if (!CLIENT_TOKEN_ALLOWED_ROUTES.has(route)) {
+    return c.json(
+      { error: 'Client tokens may not access this endpoint', code: 'CLIENT_TOKEN_NOT_ALLOWED' },
+      403,
+    );
+  }
+  await next();
+};
+
 /* ───────────────── Staff principal (B-01 + X-04, Phase 1 trust boundary) ── */
 
 export type StaffRole = 'helper' | 'mod' | 'admin';
@@ -413,7 +460,14 @@ export async function resolveStaffActor(c: Context): Promise<StaffActor> {
   }
 
   const user = c.get('user') ?? null;
-  const authenticated = user !== null || botOrServiceTokenValid(c);
+  // Issue #2: a client token is NOT an authenticating credential for staff
+  // purposes — it proves Minecraft ownership, nothing more. It must not make
+  // a bare X-Staff-Role header "authenticated" (branch 2), and it must never
+  // resolve a staff role through the linked account's LuckPerms group in the
+  // session fallback (branch 3) — a staff player's launcher token would
+  // otherwise carry their panel powers.
+  const authenticated =
+    (user !== null && user.authMethod !== 'mc_client') || botOrServiceTokenValid(c);
 
   // 2. X-Staff-Role claim — authenticated requests only. THE PROTOCOL: a
   //    bare header from an unauthenticated caller means nothing.
@@ -432,8 +486,13 @@ export async function resolveStaffActor(c: Context): Promise<StaffActor> {
   }
 
   // 3. Session claim fallback — the session's own linkage keeps sessions
-  //    working when the header is absent.
+  // working when the header is absent.
   if (user) {
+    if (user.authMethod === 'mc_client') {
+      // Issue #2: a client token is never a staff principal (see the
+      // `authenticated` note above) — deny, never the LuckPerms fallback.
+      return { name: 'anonymous', role: 'none', rank: 0, source: 'anonymous' };
+    }
     const claimed = sessionStaffClaim(user);
     const role = claimed ?? (await linkedStaffRole(c.get('mcUuid')));
     if (role) {

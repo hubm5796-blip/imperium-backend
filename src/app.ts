@@ -19,7 +19,8 @@ import { bridgeApi } from './bot/bridge.js';
 import { logger } from './utils/logger.js';
 import { rateLimitV2 } from './middleware/rateLimitV2.js';
 import { attachUser } from './middleware/auth.js';
-import { ALLOWED_BROWSER_ORIGINS, attachPrincipal, sessionCsrfGuard } from './middleware/gates.js';
+import { ALLOWED_BROWSER_ORIGINS, attachPrincipal, clientTokenAllowlist, sessionCsrfGuard } from './middleware/gates.js';
+import { clientAuthApi } from './api/clientAuth.js';
 import { alertError } from './utils/errorAlerts.js';
 import type { AppContextVariables } from './types/index.js';
 
@@ -51,6 +52,11 @@ export function createApp() {
   // idempotent, so the expansion residents under /api/v2 that also run it
   // via the `api` mount do no double work.
   app.use('/api/v2/*', attachUser);
+  // Issue #2: client tokens (authMethod 'mc_client', bearer-presented) are
+  // confined to their route allowlist — registered directly after attachUser
+  // (same double registration as attachUser itself: the v1 `api` mount below
+  // registers it too) so it runs BEFORE any route-level gate.
+  app.use('/api/v2/*', clientTokenAllowlist);
   app.use('/api/v2/*', attachPrincipal);
   app.use('/api/v2/*', sessionCsrfGuard);
 
@@ -109,6 +115,12 @@ export function createApp() {
   // Registered first, /api/v2/admin/licenses/* is claimed here and never dispatches into
   // v2Api. The mount-order test in src/test/license.test.ts pins this.
   app.route('/api/v2/admin/licenses', licenseAdminApi);
+  // ISSUE #2 (client auth): mounted BEFORE `api` so /api/client/* is claimed
+  // here and never dispatches into the v1 sub-app — the anonymous challenge
+  // and verify endpoints must not run the session stack at all (the same
+  // mount-order claim licenseAdminApi uses above; pinned by
+  // src/test/client-auth.test.ts).
+  app.route('/api/client', clientAuthApi);
   app.route('/api', api);
   // V6 05-01: the versioned contract surface (envelope + cursors + openapi.json).
   app.route('/api/v2', v2Api);
