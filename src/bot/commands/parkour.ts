@@ -7,14 +7,14 @@ export const parkourCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('parkour')
- .setDescription('View ImperiumMC parkour courses and the best-time leaderboard')
+ .setDescription('View Romanica parkour courses and the best-time leaderboard')
  .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
  .toJSON();
  },
  async execute(interaction) {
  await interaction.deferReply();
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC Parkour')
+ .setTitle('Romanica Parkour')
  .setColor(COLORS.gold)
  .setDescription(
  [

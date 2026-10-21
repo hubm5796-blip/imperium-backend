@@ -96,6 +96,20 @@ describe('B-49 — v2 sub-app attaches the user', () => {
     expect(res.status).toBe(400);
   });
 
+  it('a session-cookie mutation from the romanica.net origin is not CSRF-blocked (rebrand cutover)', async () => {
+    const res = await app.request('/api/v2/keys', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: await linkedSessionCookie(),
+        Origin: 'https://romanica.net',
+      },
+      // scopes missing -> the route's own 400, NOT the CSRF 403
+      body: JSON.stringify({ name: 'x' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it('non-cookie mutations are untouched by the CSRF guard (bot token, no Origin)', async () => {
     const res = await app.request('/api/v2/tickets', {
       method: 'POST',

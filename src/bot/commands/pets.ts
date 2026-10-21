@@ -7,14 +7,14 @@ export const petsCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('pets')
- .setDescription('View all available ImperiumMC pets')
+ .setDescription('View all available Romanica pets')
  .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
  .toJSON();
  },
  async execute(interaction) {
  await interaction.deferReply();
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC Pets')
+ .setTitle('Romanica Pets')
  .setColor(COLORS.green)
  .setDescription('Unlock pets by completing enchant categories, opening crates, and defeating bosses. Each pet provides unique mining bonuses!')
  .addFields(

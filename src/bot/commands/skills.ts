@@ -7,14 +7,14 @@ export const skillsCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('skills')
- .setDescription('View the ImperiumMC skill tree (Virtus, Mercatura, Divinitas)')
+ .setDescription('View the Romanica skill tree (Virtus, Mercatura, Divinitas)')
  .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
  .toJSON();
  },
  async execute(interaction) {
  await interaction.deferReply();
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC Skill Tree')
+ .setTitle('Romanica Skill Tree')
  .setColor(COLORS.gold)
  .setDescription(
  [

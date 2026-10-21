@@ -44,7 +44,7 @@ export const CURRENCIES = {
  aureus: { name: 'Aureus', emoji: '', blurb: 'Premium' },
 } as const;
 export const BRANDING = {
- serverName: 'ImperiumMC',
+ serverName: 'Romanica',
  serverIp: 'imperiummc.net',
  storeUrl: 'https://imperiummc.net/store',
  siteUrl: 'https://imperiummc.net',

@@ -8,7 +8,7 @@ export const onlineCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('online')
- .setDescription('Check the live ImperiumMC server status')
+ .setDescription('Check the live Romanica server status')
  .toJSON();
  },
  async execute(interaction) {

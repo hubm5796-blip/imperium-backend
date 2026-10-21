@@ -132,7 +132,7 @@ async function sendDm(botToken: string, discordId: string, notif: DmNotification
           title: `${icon} ${notif.title}`,
           description: notif.message,
           color,
-          footer: { text: 'ImperiumMC - imperiummc.net' },
+          footer: { text: 'Romanica - imperiummc.net' },
           timestamp: new Date().toISOString(),
         }],
       }),
@@ -317,7 +317,7 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
     title: title,
     description: (lead + (sectionText || flatText)).slice(0, 4000),
     color: 0xcea464,
-    footer: { text: 'ImperiumMC • imperiummc.net' },
+    footer: { text: 'Romanica • imperiummc.net' },
     timestamp: new Date().toISOString(),
   };
 

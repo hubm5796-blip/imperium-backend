@@ -7,14 +7,14 @@ export const dungeonsCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('dungeons')
- .setDescription('View all ImperiumMC dungeons and their requirements')
+ .setDescription('View all Romanica dungeons and their requirements')
  .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
  .toJSON();
  },
  async execute(interaction) {
  await interaction.deferReply();
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC Dungeons')
+ .setTitle('Romanica Dungeons')
  .setColor(COLORS.red)
  .setDescription('Challenge dungeons solo or with up to 4 party members. Defeat bosses for massive rewards!')
  .addFields(

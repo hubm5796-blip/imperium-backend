@@ -7,14 +7,14 @@ export const gadgetsCommand: BotCommand = {
  toJSON() {
  return new SlashCommandBuilder()
  .setName('gadgets')
- .setDescription('View the ten ImperiumMC cosmetic gadgets')
+ .setDescription('View the ten Romanica cosmetic gadgets')
  .addStringOption((o) => o.setName('player').setDescription('Minecraft username to look up'))
  .toJSON();
  },
  async execute(interaction) {
  await interaction.deferReply();
  const embed = new EmbedBuilder()
- .setTitle('ImperiumMC Gadgets')
+ .setTitle('Romanica Gadgets')
  .setColor(COLORS.gold)
  .setDescription(
  [

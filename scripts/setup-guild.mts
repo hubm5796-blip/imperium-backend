@@ -66,7 +66,7 @@ async function postOnce(channelId: string, content: string, marker: string): Pro
 
 // ── content ─────────────────────────────────────────────────────────────────
 
-const WELCOME = `# Welcome to ImperiumMC
+const WELCOME = `# Welcome to Romanica
 
 We're a Roman-themed OP prison server. Mine your way up the rank ladder, prestige, and climb from a nameless prisoner to Imperator.
 
@@ -157,9 +157,9 @@ We read everything. Stuff that gets implemented tends to come from this channel.
 // ── run ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  console.log('Setting up ImperiumMC guild...');
+  console.log('Setting up Romanica guild...');
 
-  const info = await ensureCategory('IMPERIUMMC');
+  const info = await ensureCategory('ROMANICA');
   const welcomeId = await ensureText('welcome', info, 'Start here — IP, basics, linking guide');
   const rulesId = await ensureText('rules', info, 'Read before playing. Breaking these = punishment.');
   const announceId = await ensureText('announcements', info, 'Server news, events, downtime. Rare @everyone pings.', 3600);
@@ -176,7 +176,7 @@ async function main(): Promise<void> {
   await ensureText('support', support, 'Use /ticket to open a support ticket. Staff respond fast.', 60);
   await ensureText('bug-reports', support, 'Found something broken? Describe it + how to reproduce.', 120);
 
-  await postOnce(welcomeId, WELCOME, 'Welcome to ImperiumMC');
+  await postOnce(welcomeId, WELCOME, 'Welcome to Romanica');
   await postOnce(rulesId, RULES, 'Server Rules');
   await postOnce(linkId, LINK_INFO, 'Account Linking');
   await postOnce(announceId, ANNOUNCE, 'Announcements');
