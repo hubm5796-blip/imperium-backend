@@ -1726,7 +1726,7 @@ api.delete('/link', async (c) => {
 // initEnvFromProcess()/initEnvFromBindings() runs, which happens after this
 // module's own top-level code has already been evaluated.
 function frontendUrl(): string {
-  return env.isProduction ? 'https://imperiummc.net' : 'http://localhost:3000';
+  return env.isProduction ? 'https://romanica.net' : 'http://localhost:3000';
 }
 
 /**

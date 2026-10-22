@@ -27,7 +27,7 @@ export const ipCommand: BotCommand = {
  },
  {
  name: 'First time?',
- value: 'Type `/guide` in game, follow the warp at the end of the intro, and your first two rank-ups are free. Beginner guide: https://imperiummc.net/blog/how-to-start',
+ value: 'Type `/guide` in game, follow the warp at the end of the intro, and your first two rank-ups are free. Beginner guide: https://romanica.net/blog/how-to-start',
  },
  )
  .setFooter({ text: 'imperiummc.net' });

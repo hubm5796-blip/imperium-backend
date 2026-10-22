@@ -87,7 +87,7 @@ export const mineCommand: BotCommand = {
  },
  {
  name: 'See it yourself',
- value: `In game: \`/mine\` menu or warp to Mine ${mine.numeral}. Ladder overview: https://imperiummc.net/progression`,
+ value: `In game: \`/mine\` menu or warp to Mine ${mine.numeral}. Ladder overview: https://romanica.net/progression`,
  },
  )
  .setFooter({ text: `Mine ${mine.id} of the ladder - imperiummc.net` });
