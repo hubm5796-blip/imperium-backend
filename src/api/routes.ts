@@ -1459,7 +1459,7 @@ api.get('/server/status', async (c) => {
         const pgNames = await withAttemptTimeout(
           query<{ username: string | null }>(
             `SELECT pn.username FROM online_players op
-              LEFT JOIN player_names pn ON op.uuid = op.uuid
+              LEFT JOIN player_names pn ON pn.uuid = op.uuid
              ORDER BY op.uuid
              LIMIT 100`,
             [],
@@ -1474,7 +1474,7 @@ api.get('/server/status', async (c) => {
         const mysqlNames = await withAttemptTimeout(
           gameQuery<{ username: string | null }>(
             `SELECT pn.username FROM online_players op
-              LEFT JOIN player_names pn ON op.uuid = op.uuid
+              LEFT JOIN player_names pn ON pn.uuid = op.uuid
              ORDER BY op.uuid
              LIMIT 100`,
             [],
