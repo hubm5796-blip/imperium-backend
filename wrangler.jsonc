@@ -6,9 +6,9 @@
 	"triggers": {
 		"crons": ["* * * * *"]
 	},
-	// Matches the existing "imperium-backend-prod" Worker (dashboard name) so
+	// Matches the existing "romanica-backend" Worker (dashboard name, renamed from imperium-backend-prod 2026-10-22) so
 	// Cloudflare's Git integration deploys new commits to that same Worker.
-	"name": "imperium-backend-prod",
+	"name": "romanica-backend",
 	"compatibility_date": "2026-08-01",
 	"compatibility_flags": [
 		"nodejs_compat"
