@@ -3,7 +3,7 @@ import { isSafeArtifactName } from '../api/expansion/aiGallery.js';
 
 /**
  * The artifact-name whitelist is the only thing keeping ?name= inside
- * plugins/ImperiumMC/ai — these tests pin the traversal vectors shut.
+ * plugins/Romanica/ai — these tests pin the traversal vectors shut.
  */
 describe('isSafeArtifactName', () => {
   it('accepts the artifacts the aidev tools actually write', () => {

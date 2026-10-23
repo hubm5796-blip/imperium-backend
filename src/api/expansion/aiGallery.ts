@@ -1,6 +1,6 @@
 // AIDEV artifact gallery (2026-08-27) — staff-facing window into the /aidev
 // vision tools' output directory on the live game server:
-//   GET /api/admin/ai-artifacts                (list plugins/ImperiumMC/ai/)
+//   GET /api/admin/ai-artifacts                (list plugins/Romanica/ai/)
 //   GET /api/admin/ai-artifacts/content?name=  (one artifact: png bytes or text)
 //
 // Auth: bot token only — consumed by the frontend's server-side edge proxy
@@ -21,7 +21,7 @@ type ApiEnv = { Variables: AppContextVariables };
 export const aiGalleryApi = new Hono<ApiEnv>();
 
 /** The one directory this API is allowed to see. */
-const AI_DIR = '/plugins/ImperiumMC/ai';
+const AI_DIR = '/plugins/Romanica/ai';
 
 /** Flat whitelisted artifact name — no separators, no traversal, known ext. */
 export function isSafeArtifactName(name: string | undefined): boolean {

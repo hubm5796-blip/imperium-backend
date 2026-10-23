@@ -90,7 +90,7 @@ export interface EnvShape {
   rlV2PrincipalBudget: number;
   /**
    * Pterodactyl panel access for the aidev artifact gallery (renders the
-   * /aidev vision tools write to plugins/ImperiumMC/ai/ on the game server).
+   * /aidev vision tools write to plugins/Romanica/ai/ on the game server).
    * Optional — unset = the gallery endpoints answer configured:false and the
    * frontend shows a setup hint instead of failing.
    */
