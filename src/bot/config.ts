@@ -45,9 +45,9 @@ export const CURRENCIES = {
 } as const;
 export const BRANDING = {
  serverName: 'Romanica',
- serverIp: 'imperiummc.net',
- storeUrl: 'https://imperiummc.net/store',
- siteUrl: 'https://imperiummc.net',
+ serverIp: 'romanica.net',
+ storeUrl: 'https://romanica.net/store',
+ siteUrl: 'https://romanica.net',
  inviteBlurb: 'Forge your empire.',
 } as const;
 /** Roman numeral conversion for rank display (supports I..XXV+). */

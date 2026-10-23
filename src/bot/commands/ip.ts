@@ -19,18 +19,18 @@ export const ipCommand: BotCommand = {
  .addFields(
  {
  name: 'Java Edition',
- value: '```\nplay.imperiummc.net\n```\nAny client version from the last decade works.',
+ value: '```\nplay.romanica.net\n```\nAny client version from the last decade works.',
  },
  {
  name: 'Bedrock (phone / console / Windows)',
- value: '```\nplay.imperiummc.net port 19132\n```\nNo Java account needed - cross-play with everyone.',
+ value: '```\nplay.romanica.net port 19132\n```\nNo Java account needed - cross-play with everyone.',
  },
  {
  name: 'First time?',
- value: 'Type `/guide` in game, follow the warp at the end of the intro, and your first two rank-ups are free. Beginner guide: https://imperiummc.net/blog/how-to-start',
+ value: 'Type `/guide` in game, follow the warp at the end of the intro, and your first two rank-ups are free. Beginner guide: https://romanica.net/blog/how-to-start',
  },
  )
- .setFooter({ text: 'imperiummc.net' });
+ .setFooter({ text: 'romanica.net' });
  await interaction.reply({ embeds: [embed] });
  },
 };

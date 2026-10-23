@@ -2,13 +2,13 @@
  * API client for the ImperiumMC backend.
  *
  * The bot never talks to the Minecraft plugin or the database directly.
- * All data is fetched over HTTP from the backend API (default api.imperiummc.net).
+ * All data is fetched over HTTP from the backend API (default api.romanica.net).
  */
 import { getBotConfig } from './config.js';
 import { createApp } from '../app.js';
 // The backend used to be a separate service the bot called over HTTP; now
 // both live in the same Worker, and BACKEND_API_BASE points at this Worker's
-// own routed domain (api.imperiummc.net). A real fetch() to your own zone
+// own routed domain (api.romanica.net). A real fetch() to your own zone
 // gets blocked/hangs (Cloudflare's same-zone loopback protection) — that's
 // what caused /online and friends to spin on "thinking..." forever. Routing
 // through Hono's in-process app.request() instead skips the network hop

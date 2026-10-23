@@ -49,9 +49,9 @@ is used for followups and cron notifications.)
 1. Create an application at https://discord.com/developers/applications
 2. Copy the Client ID, Client Secret, and (for the interactions route) the public key
    into `.env`
-3. Set the redirect URI to `https://imperiummc.net/auth/callback`
+3. Set the redirect URI to `https://romanica.net/auth/callback`
 4. Enable the `applications.commands` scope; point an Interactions Endpoint URL at
-   `https://api.imperiummc.net/discord/interactions`
+   `https://api.romanica.net/discord/interactions`
 5. Register commands: `npm run register-commands`
 6. Required bot permissions (if you also invite the bot user): Send Messages,
    Embed Links, Read Message History

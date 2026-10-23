@@ -65,7 +65,7 @@ export const mineCommand: BotCommand = {
  .setDescription(
  `No mine matches "${query.slice(0, 60)}". Try a numeral like \`XLI\`, a name like \`Augustan Forum\`, or a number 1-${CONTENT_CAP}.`,
  )
- .setFooter({ text: 'imperiummc.net/progression' });
+ .setFooter({ text: 'romanica.net/progression' });
  await interaction.editReply({ embeds: [embed] });
  return;
  }
@@ -87,10 +87,10 @@ export const mineCommand: BotCommand = {
  },
  {
  name: 'See it yourself',
- value: `In game: \`/mine\` menu or warp to Mine ${mine.numeral}. Ladder overview: https://imperiummc.net/progression`,
+ value: `In game: \`/mine\` menu or warp to Mine ${mine.numeral}. Ladder overview: https://romanica.net/progression`,
  },
  )
- .setFooter({ text: `Mine ${mine.id} of the ladder - imperiummc.net` });
+ .setFooter({ text: `Mine ${mine.id} of the ladder - romanica.net` });
  await interaction.editReply({ embeds: [embed] });
  },
 };

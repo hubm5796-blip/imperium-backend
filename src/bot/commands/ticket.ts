@@ -33,7 +33,7 @@ function ticketCard(title: string, lines: string[]): EmbedBuilder {
  .setTitle(`${title}`)
  .setDescription(lines.join('\n'))
  .setColor(COLORS.gold)
- .setFooter({ text: 'imperiummc.net • Forge your empire.' })
+ .setFooter({ text: 'romanica.net • Forge your empire.' })
  .setTimestamp();
 }
 /** The ticket id for in-thread staff commands: parsed from the thread name (`#<id>-user`). */

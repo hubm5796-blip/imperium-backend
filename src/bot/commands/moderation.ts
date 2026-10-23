@@ -152,7 +152,7 @@ export const lookupCommand: BotCommand = {
  { name: 'Blocks', value: formatNumber(Number(p.blocksMined ?? 0)), inline: true },
  { name: 'Playtime', value: `${Math.round(Number(p.playtimeSeconds ?? 0) / 3600)}h`, inline: true },
  )
- .setFooter({ text: 'imperiummc.net • Forge your empire.' })
+ .setFooter({ text: 'romanica.net • Forge your empire.' })
  .setTimestamp();
  await interaction.editReply({ embeds: [embed] });
  });

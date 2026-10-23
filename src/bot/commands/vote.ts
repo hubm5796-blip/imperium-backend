@@ -24,7 +24,7 @@ export const voteCommand: BotCommand = {
  .addFields(
  {
  name: 'Vote pages',
- value: 'https://imperiummc.net/vote - all list links in one place, with your claim status',
+ value: 'https://romanica.net/vote - all list links in one place, with your claim status',
  },
  {
  name: 'What you get',
@@ -35,7 +35,7 @@ export const voteCommand: BotCommand = {
  value: 'Rewards arrive in game automatically after each vote. If one ever goes missing, `/vote` in game shows your pending claims.',
  },
  )
- .setFooter({ text: 'imperiummc.net' });
+ .setFooter({ text: 'romanica.net' });
  await interaction.reply({ embeds: [embed] });
  },
 };

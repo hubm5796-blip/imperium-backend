@@ -231,7 +231,7 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
     // B-C21: this is a browser flow — the user came from the frontend, so send
     // them back there with a machine-readable error instead of raw JSON they'd
-    // stare at on a bare api.imperiummc.net page (same shape as the sibling
+    // stare at on a bare api.romanica.net page (same shape as the sibling
     // oauth_denied / missing_code branches below).
     return c.redirect(`${frontendUrl()}/login?error=state_mismatch`, 302);
   }
@@ -253,7 +253,7 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     // Code-exchange handoff: store the resolved Discord identity under a one-time
     // code in Redis, then redirect to the FRONTEND's callback with that code. The
     // frontend exchanges it (POST /api/auth/exchange) and signs its own session
-    // cookie on imperiummc.net. The backend owns the OAuth + Discord secret; the
+    // cookie on romanica.net. The backend owns the OAuth + Discord secret; the
     // frontend owns the browser session — neither cookie domain nor secret leaks.
     const sessionCode = await createSessionCode({
       discordId: discordUser.id,
@@ -368,7 +368,7 @@ api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
  * No bot-token gate: the session code is itself a single-use capability token
  * (60s TTL, consumed on read), so possession of it IS the authorization. Only
  * imperium-frontend's edge callback calls this to sign its own session cookie on
- * imperiummc.net after the backend completed the Discord OAuth. Single-use.
+ * romanica.net after the backend completed the Discord OAuth. Single-use.
  */
 api.post('/auth/exchange', exchangeRateLimit, async (c) => {
   let body: { code?: string };
@@ -1726,7 +1726,7 @@ api.delete('/link', async (c) => {
 // initEnvFromProcess()/initEnvFromBindings() runs, which happens after this
 // module's own top-level code has already been evaluated.
 function frontendUrl(): string {
-  return env.isProduction ? 'https://imperiummc.net' : 'http://localhost:3000';
+  return env.isProduction ? 'https://romanica.net' : 'http://localhost:3000';
 }
 
 /**

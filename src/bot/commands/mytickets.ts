@@ -31,7 +31,7 @@ export const myTicketsCommand: BotCommand = {
  const embed = new EmbedBuilder()
  .setTitle('Your tickets')
  .setColor(COLORS.gold)
- .setFooter({ text: 'imperiummc.net • Forge your empire.' })
+ .setFooter({ text: 'romanica.net • Forge your empire.' })
  .setTimestamp();
  if (mine.length === 0) {
  embed.setDescription('No tickets yet. Open one with `/ticket open`.');
