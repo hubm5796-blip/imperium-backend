@@ -356,6 +356,74 @@ describe('POST /client/crash-report — rate limit', () => {
   });
 });
 
+describe('POST /client/crash-report — redaction (defense in depth)', () => {
+  // An old launcher build that predates the client-side scrub (or anything
+  // else that can POST) must not be able to land a username, a profile path
+  // or a credential in D1: the same shared rule set as the launcher's
+  // app/main/redact.js runs here on receipt, before storage.
+  it('scrubs usernames, profile paths and tokens from a fixture report before storing it', async () => {
+    const res = await post({
+      ...VALID,
+      cause: 'java.io.FileNotFoundException: C:\\Users\\MylesThePro\\Romanica\\config.json (no such file)',
+      logTail: [
+        '[main/INFO]: natives at C:\\Users\\MylesThePro\\AppData\\Roaming\\Romanica\\natives',
+        '[main/ERROR]: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+        '[main/ERROR]: renewal failed, refresh_token=8f14e45fceea167a5a36dedd4bea2543ca9a',
+        '\tat org.lwjgl.system.Library.loadSystem(Library.java:177)',
+      ].join('\n'),
+      crashReport: [
+        '---- Minecraft Crash Report ----',
+        'Game Dir: C:\\Users\\MylesThePro\\AppData\\Roaming\\Romanica',
+        'Mod Path: %APPDATA%\\Romanica\\instances\\main\\mods\\sodium.jar',
+        'at net.minecraft.client.main.Main.main(Main.java:1291)',
+      ].join('\n'),
+    });
+    expect(res.status).toBe(200);
+    expect(rows).toHaveLength(1);
+
+    const stored = `${rows[0]!.cause}\n${rows[0]!.log_tail}\n${rows[0]!.crash_report}`;
+    // None of the sensitive material reaches D1.
+    expect(stored).not.toContain('MylesThePro');
+    expect(stored).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+    expect(stored).not.toContain('8f14e45fceea167a5a36dedd4bea2543ca9a');
+    expect(stored).not.toContain('%APPDATA%');
+    // The redacted forms, and the diagnostics, do.
+    expect(rows[0]!.cause).toBe('java.io.FileNotFoundException: C:\\Users\\REDACTED\\Romanica\\config.json (no such file)');
+    expect(rows[0]!.log_tail).toContain('C:\\Users\\REDACTED\\AppData\\Roaming\\Romanica\\natives');
+    expect(rows[0]!.log_tail).toContain('Authorization: Bearer [REDACTED]');
+    expect(rows[0]!.log_tail).toContain('refresh_token=[REDACTED]');
+    expect(rows[0]!.log_tail).toContain('\tat org.lwjgl.system.Library.loadSystem(Library.java:177)');
+    expect(rows[0]!.crash_report).toContain('C:\\Users\\REDACTED\\AppData\\Roaming\\Romanica');
+    expect(rows[0]!.crash_report).toContain('%REDACTED%\\Romanica\\instances\\main\\mods\\sodium.jar');
+    expect(rows[0]!.crash_report).toContain('at net.minecraft.client.main.Main.main(Main.java:1291)');
+  });
+
+  it('reports truncated:false when only redaction changed the text', async () => {
+    const res = await post({
+      ...VALID,
+      logTail: 'short C:\\Users\\MylesThePro\\tail with no size clamp',
+      crashReport: 'one C:\\Users\\MylesThePro\\liner',
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { truncated: { logTail: boolean; crashReport: boolean } } };
+    // Redaction is not truncation — the flags must not lie to the launcher.
+    expect(body.data.truncated).toEqual({ logTail: false, crashReport: false });
+    expect(rows[0]!.log_tail).toContain('C:\\Users\\REDACTED\\tail');
+  });
+
+  it('redacts BEFORE truncating, so a token cut by the size clamp never partially survives', async () => {
+    // A 40 KB run whose first bytes are a labelled secret: the scrub must see
+    // the whole field, and the stored 32 KB must contain the redaction marker
+    // at the front, not a partial token.
+    const secret = 'token=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const res = await post({ ...VALID, logTail: `${secret}\n${'x'.repeat(40 * 1024)}` });
+    expect(res.status).toBe(200);
+    expect(rows[0]!.log_tail.startsWith('token=[REDACTED]')).toBe(true);
+    expect(rows[0]!.log_tail).not.toContain('ABCDEFGHIJKLMNOPQRST');
+    expect(Buffer.byteLength(rows[0]!.log_tail, 'utf8')).toBe(32 * 1024);
+  });
+});
+
 describe('GET /client/crash-report/:id — staff gate', () => {
   it('401 without any credentials, 403 with a token but no staff role', async () => {
     const seeded = (await (await post(VALID)).json()) as { data: { id: string } };
