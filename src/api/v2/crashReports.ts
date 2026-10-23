@@ -19,7 +19,13 @@
  * PRIVACY: rows store an HMAC prefix of the client IP (keyed by JWT_SECRET —
  * keyed, because a bare SHA-256 of the IPv4 space is a rainbow table away),
  * never the raw address, and no player identity is attached (the launcher
- * sends none).
+ * sends none). The free-text fields (cause, logTail, crashReport) are also
+ * scrubbed on receipt with the shared rule set (src/utils/crashTextRedaction.ts
+ * — mirrored in the launcher's app/main/redact.js) BEFORE truncation and
+ * storage: usernames in profile paths, %APPDATA%-style env refs and echoed
+ * credentials never reach D1, even from an old launcher build that predates
+ * the client-side scrub. Stack traces, mod ids and error text pass through
+ * untouched — that is the diagnostic value of the report.
  *
  * Degradation: D1 unavailable → 503 REGISTRY_UNAVAILABLE, never a crash
  * (same posture as gallery). There is no panel HTML surface for this table
@@ -34,6 +40,7 @@ import { crashReportRateLimit, clientIp, readRateLimit } from '../../middleware/
 import { env } from '../../env.js';
 import { logger } from '../../utils/logger.js';
 import { ok, fail } from './respond.js';
+import { scrubCrashText } from '../../utils/crashTextRedaction.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -184,8 +191,15 @@ crashReportsV2.post('/client/crash-report', crashReportRateLimit, async (c) => {
   if (!launcherVersion) return fail(c, 400, 'INVALID_PARAM', '`launcherVersion` must be a non-empty string (max 64 chars).');
   const platform = short('platform', 64);
   if (!platform) return fail(c, 400, 'INVALID_PARAM', '`platform` must be a non-empty string (max 64 chars).');
-  const cause = short('cause', 200);
-  if (!cause) return fail(c, 400, 'INVALID_PARAM', '`cause` must be a non-empty string (max 200 chars).');
+  // The cause is free text parsed from the log (a FileNotFoundException
+  // carries the sender's profile path) — validate like the other short
+  // strings, but scrub the FULL raw line before the 200-char clamp:
+  // slicing first could cut a credential in half and leave an unscrubbable
+  // partial in storage.
+  if (typeof b.cause !== 'string' || b.cause.trim().length === 0) {
+    return fail(c, 400, 'INVALID_PARAM', '`cause` must be a non-empty string (max 200 chars).');
+  }
+  const cause = scrubCrashText(b.cause).trim().slice(0, 200);
 
   // Optional short strings: absent/empty → null.
   const optShort = (key: string, max: number): string | null => {
@@ -205,16 +219,20 @@ crashReportsV2.post('/client/crash-report', crashReportRateLimit, async (c) => {
   const mcVersion = optShort('mcVersion', 64);
   const mod = optShort('mod', 200);
 
-  // The blobs: type-checked, then hard-truncated server-side.
+  // The blobs: type-checked, then scrubbed, then hard-truncated server-side.
+  // Scrub BEFORE truncating — a truncated token is a partial leak, and the
+  // byte budget must apply to the form that is actually stored.
   if (typeof b.logTail !== 'string') {
     return fail(c, 400, 'INVALID_PARAM', '`logTail` must be a string.');
   }
   if (b.crashReport !== undefined && b.crashReport !== null && typeof b.crashReport !== 'string') {
     return fail(c, 400, 'INVALID_PARAM', '`crashReport` must be a string when present.');
   }
-  const logTail = truncateToBytes(b.logTail, MAX_LOG_TAIL_BYTES);
+  const logTailScrubbed = scrubCrashText(b.logTail);
+  const logTail = truncateToBytes(logTailScrubbed, MAX_LOG_TAIL_BYTES);
   const crashReportRaw = typeof b.crashReport === 'string' ? b.crashReport : null;
-  const crashReport = crashReportRaw === null ? null : truncateToBytes(crashReportRaw, MAX_CRASH_REPORT_BYTES);
+  const crashReportScrubbed = crashReportRaw === null ? null : scrubCrashText(crashReportRaw);
+  const crashReport = crashReportScrubbed === null ? null : truncateToBytes(crashReportScrubbed, MAX_CRASH_REPORT_BYTES);
 
   try {
     await ensureSchema();
@@ -259,8 +277,10 @@ crashReportsV2.post('/client/crash-report', crashReportRateLimit, async (c) => {
     id,
     url: `/api/v2/client/crash-report/${id}`,
     truncated: {
-      logTail: logTail !== b.logTail,
-      crashReport: crashReportRaw !== null && crashReport !== crashReportRaw,
+      // Redaction alone must not read as truncation — compare the stored
+      // form against the scrubbed input, not the raw request text.
+      logTail: logTail !== logTailScrubbed,
+      crashReport: crashReportScrubbed !== null && crashReport !== crashReportScrubbed,
     },
   });
 });
