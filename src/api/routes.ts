@@ -91,6 +91,7 @@ import { logger } from '../utils/logger.js';
 import { alertError } from '../utils/errorAlerts.js';
 import { expansionApi } from './expansion/index.js';
 import { licenseStatusApi } from './license.js';
+import { microsoftAuthApi } from './microsoftAuth.js';
 import { fetchExpansionBoard, isExpansionBoard } from './expansion/leaderboards.js';
 import { swrJson } from './expansion/cache.js';
 import { emit } from '../webhooks/deliver.js';
@@ -392,9 +393,12 @@ api.post('/auth/exchange', exchangeRateLimit, async (c) => {
 
   return c.json({
     ok: true,
-    discordId: session.discordId,
+    discordId: session.discordId ?? null,
     discordUsername: session.discordUsername,
     discordAvatar: session.discordAvatar,
+    // Microsoft (Minecraft) sign-in handoffs carry the proven account instead
+    // of a Discord identity (absent fields are omitted by JSON serialization).
+    ...(session.mcUuid ? { mcUuid: session.mcUuid, mcUsername: session.mcUsername ?? null } : {}),
   });
 });
 
@@ -3524,3 +3528,8 @@ api.route('/', expansionApi);
 // 4-8h. Revocation status is not secret — the Ed25519 token is the proof; this only says
 // whether its id (or the global kill switch) has been revoked. See src/api/license.ts.
 api.route('/', licenseStatusApi);
+// MICROSOFT (MINECRAFT) WEBSITE SIGN-IN: the client's Azure app + MS->Xbox->XSTS->
+// Minecraft chain run server-side; hands the resolved account to the frontend
+// exactly like the Discord OAuth flow (one-time session code). Azure prerequisite:
+// redirect URI https://api.romanica.net/api/auth/ms/callback on the app.
+api.route('/', microsoftAuthApi);
