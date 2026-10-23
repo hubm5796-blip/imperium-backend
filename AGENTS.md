@@ -10,7 +10,7 @@ Every PR that fixes a bug or adds behaviour includes **evidence from a real run*
 - a screenshot of the changed UI from a CI artifact (gametest screenshots) or a website preview
 - a `curl` against the deployed or preview endpoint with its status and body
 
-**Never launch Minecraft, or the launcher's game, on the agent machine.** In-game evidence comes from the GitHub Actions workflows (start them with `workflow_dispatch` when they don't run on push). If something can only be checked on a real PC, such as performance numbers, Microsoft sign-in or a GPU-specific bug, list it under "Not verified" with exact steps for the owner.
+**Never launch Minecraft, or the launcher's game, on the agent machine.** Only Claude, running on the owner's PC, launches Minecraft. In-game evidence comes from the GitHub Actions workflows (start them with `workflow_dispatch` when they don't run on push). If something can only be checked on a real PC, such as performance numbers, Microsoft sign-in, the installer or a GPU-specific bug, list it under "Not verified" with exact steps. Claude on the owner's PC runs those checks and reports back on the PR.
 
 If you couldn't verify something, write **"Not verified: <what and why>"** in the PR. Never write "fixed" for something you haven't seen fixed. A wrong "fixed" costs the owner more than an honest "not verified".
 
