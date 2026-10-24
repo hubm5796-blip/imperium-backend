@@ -63,6 +63,7 @@
 	// Every one of these was previously an un-padlocked "Variable" in the
 	// dashboard (not a "Secret") — same wipe risk applied to all of them.
 	"vars": {
+    "BUS_TRANSPORT": "redis",
 		"BACKEND_API_BASE": "https://api.romanica.net",
 		"DISCORD_CLIENT_ID": "1520285608906330293",
 		"DISCORD_PUBLIC_KEY": "2340504d65c62d22bab9f1150577536a0fc79d42019247dc9815bca349b45594",
