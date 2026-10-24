@@ -112,7 +112,7 @@ async function start(state = 'a'.repeat(43)): Promise<{ location: string; verifi
 /** Drive /auth/ms/callback for a state whose verifier we already hold. */
 async function callback(state: string, verifier: string | null, code = 'authcode-1'): Promise<Response> {
   const qs = new URLSearchParams({ state, code });
-  return app.request(`/api/auth/ms/callback?${qs.toString()}`);
+  return app.request(`/api/auth/microsoft/callback?${qs.toString()}`);
 }
 
 /** The error code a 302 callback landed the user on. */
@@ -195,13 +195,17 @@ describe('Microsoft sign-in — start', () => {
     const { location, verifier } = await start('Stat3-abc123_abc123_abc123_xy');
     const u = new URL(location);
     expect(u.hostname).toBe('login.microsoftonline.com');
-    expect(u.pathname).toContain('/oauth2/v2_0/authorize');
-    expect(u.searchParams.get('client_id')).toBe('938592fc-8e01-4c6d-b56d-428c7d9cf5ea');
+    // Exact values: the first version shipped v2_0 and upstream's app id, and
+    // mocked tests that only checked 'contains' let both reach production.
+    expect(u.origin + u.pathname).toBe('https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize');
+    expect(u.searchParams.get('client_id')).toBe('8b0c9e33-b6ce-40ec-ac30-c85a35dd8163');
+    // Must match the URI registered on the Azure app byte for byte.
+    expect(new URL(u.searchParams.get('redirect_uri')!).pathname).toBe('/api/auth/microsoft/callback');
     expect(u.searchParams.get('response_type')).toBe('code');
     expect(u.searchParams.get('scope')).toBe('XboxLive.signin');
     expect(u.searchParams.get('state')).toBe('Stat3-abc123_abc123_abc123_xy');
     expect(u.searchParams.get('code_challenge_method')).toBe('S256');
-    expect(u.searchParams.get('redirect_uri')).toBe('http://localhost/api/auth/ms/callback');
+    expect(u.searchParams.get('redirect_uri')).toBe('http://localhost/api/auth/microsoft/callback');
     // The verifier is parked under the state, single-use, and the challenge is
     // its S256 digest (43-char base64url both sides).
     expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);

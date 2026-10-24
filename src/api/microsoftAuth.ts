@@ -6,7 +6,7 @@
  *
  * Chain (all server-side, each hop time-boxed):
  *   authorize (PKCE, scopes XboxLive.signin)
- *     -> login.microsoftonline.com/consumers/oauth2/v2_0/token
+ *     -> login.microsoftonline.com/consumers/oauth2/v2.0/token
  *     -> user.auth.xboxlive.com/user/authenticate          (XBL, RPS ticket)
  *     -> xsts.auth.xboxlive.com/xsts/authorize             (XSTS, RETAIL sandbox)
  *     -> api.minecraftservices.com/authentication/login_with_xbox
@@ -22,7 +22,7 @@
  * URL, and the callback echoes it back — the frontend gets the full
  * exact-match state check, not just cookie-presence.
  *
- * Azure prerequisite (owner): https://api.romanica.net/api/auth/ms/callback
+ * Azure prerequisite (owner, done 2026-10-23): https://api.romanica.net/api/auth/microsoft/callback
  * must be registered as a redirect URI on the app below (Web or SPA platform,
  * public client + PKCE — no secret).
  */
@@ -34,14 +34,14 @@ import { createSessionCode, consumeMsOauthState, storeMsOauthState } from '../db
 import { getDiscordIdByUuid } from '../db/pool.js';
 
 /**
- * The AxolotlClient MSA app the client and launcher sign in with. The id
- * ships inside the client jar, so it is public by construction; the env
- * override exists for tests and for rotating the app without a code change.
+ * Romanica's own Azure app (the launcher signs players in with it; the owner
+ * registered this callback on it). 938592fc-… is AxolotlClient upstream's app:
+ * we can't register redirects there, so never point this at it.
  */
-const MS_CLIENT_ID = process.env.MS_CLIENT_ID || '938592fc-8e01-4c6d-b56d-428c7d9cf5ea';
+const MS_CLIENT_ID = process.env.MS_CLIENT_ID || '8b0c9e33-b6ce-40ec-ac30-c85a35dd8163';
 
-const AUTHORIZE_URL = 'https://login.microsoftonline.com/consumers/oauth2/v2_0/authorize';
-const TOKEN_URL = 'https://login.microsoftonline.com/consumers/oauth2/v2_0/token';
+export const AUTHORIZE_URL = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize';
+export const TOKEN_URL = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token';
 const XBL_URL = 'https://user.auth.xboxlive.com/user/authenticate';
 const XSTS_URL = 'https://xsts.auth.xboxlive.com/xsts/authorize';
 const MC_AUTH_URL = 'https://api.minecraftservices.com/authentication/login_with_xbox';
@@ -61,7 +61,7 @@ function frontendUrl(): string {
  * api.romanica.net or anywhere else the worker is bound.
  */
 function redirectUri(requestUrl: string): string {
-  return new URL('/api/auth/ms/callback', new URL(requestUrl).origin).toString();
+  return new URL('/api/auth/microsoft/callback', new URL(requestUrl).origin).toString();
 }
 
 function randomBytes(n: number): Uint8Array {
@@ -170,7 +170,9 @@ microsoftAuthApi.get('/auth/ms/start', msAuthRateLimit, async (c) => {
 
 /** GET /api/auth/ms/callback — the Microsoft hop lands here; run the Xbox ->
  *  Minecraft chain and hand the resolved identity to the frontend. */
-microsoftAuthApi.get('/auth/ms/callback', msAuthRateLimit, async (c) => {
+// /auth/microsoft/callback is the URI registered on the Azure app; /auth/ms/callback
+// stays for any flow started before the switch.
+microsoftAuthApi.on('GET', ['/auth/microsoft/callback', '/auth/ms/callback'], msAuthRateLimit, async (c) => {
   const login = (code: string) => c.redirect(`${frontendUrl()}/login?error=${code}`, 302);
 
   const oauthError = c.req.query('error');
@@ -195,6 +197,9 @@ microsoftAuthApi.get('/auth/ms/callback', msAuthRateLimit, async (c) => {
       code,
       redirect_uri: redirectUri(c.req.url),
       code_verifier: verifier,
+      // A redirect registered under Azure's "Web" platform makes this a
+      // confidential client, which must also send its secret.
+      ...(process.env.MS_CLIENT_SECRET ? { client_secret: process.env.MS_CLIENT_SECRET } : {}),
     }).catch(() => null)) as { access_token?: string } | null;
     if (!tokenRes?.access_token) return login('ms_token_failed');
 
