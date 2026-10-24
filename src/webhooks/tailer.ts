@@ -63,11 +63,27 @@ export interface TailerReport {
 /** One tailer pass (called from the cron). Never throws. */
 export async function runEventsTailer(): Promise<TailerReport> {
   const report: TailerReport = { scanned: 0, emitted: 0 };
-  let cursor: string | null = null;
+  let cursor: string | null;
   try {
     cursor = await getState(CURSOR_KEY);
-  } catch {
-    cursor = null; // fresh start — first pass emits nothing new beyond the window
+  } catch (err) {
+    // Unknown position: skip the tick rather than reseed and drop events.
+    logger.warn({ err: String(err) }, 'webhook tailer: cursor read failed');
+    return report;
+  }
+  // web_events.id is BIGSERIAL: compare numerically. The cursor stays a
+  // string so ids past 2^53 keep full precision.
+  if (cursor === null || !/^\d+$/.test(cursor)) {
+    // Fresh start: begin at the head (like the SSE poller) so a lost cursor
+    // never replays the whole feed as "new" webhooks.
+    try {
+      const head = await query<{ max: string | null }>('SELECT MAX(id)::text AS max FROM web_events', []);
+      const max = head.rows[0]?.max ?? null;
+      if (max !== null) await setState(CURSOR_KEY, max);
+    } catch (err) {
+      logger.warn({ err: String(err) }, 'webhook tailer: fresh-start cursor seed failed');
+    }
+    return report;
   }
 
   let rows: FeedRow[];
@@ -75,7 +91,7 @@ export async function runEventsTailer(): Promise<TailerReport> {
     rows = await query<FeedRow>(
       `SELECT id, event_type, uuid, message, at
          FROM web_events
-        WHERE ($1::text IS NULL OR id::text > $1)
+        WHERE id > $1::bigint
         ORDER BY id ASC
         LIMIT 200`,
       [cursor],
