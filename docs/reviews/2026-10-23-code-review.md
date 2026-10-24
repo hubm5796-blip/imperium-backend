@@ -46,3 +46,57 @@ Strong. 71 test files / 633 tests, all green (verified run, ~20s), `tsc --noEmit
 4. **Normalize the webhook-embedded UUID** through `parseMcUuid` in `resolveCustomerUuid` (`src/paynow/fulfillment.ts:222`).
 5. **Extend `sessionCsrfGuard` to the v1 mount** (one `app.use('/api/*', …)` next to the v2 registration) so the origin allowlist is uniformly enforced as `gates.ts` intends.
 6. **Add minimal session revocation** (jti + D1 denylist checked in `verifyJwt`, or simply shorten to 24h with a refresh) — the last gap between this codebase and a textbook session design.
+
+---
+
+## Deep-Dive Addendum — romanica-backend (2026-10-23, pass 2)
+
+### Verification runs
+
+- `npx tsc --noEmit`: **exit 0, no errors.**
+- `npm test`: **71 files / 633 tests, all passed** (18.0s).
+- Grep audits completed for `INTERNAL_SERVICE_TOKEN` (backend + frontend), `secureTransport`, `CREATE TABLE IF NOT EXISTS`, `err.message`-in-response.
+
+### Root-cause analysis of pass-1 findings
+
+**[P1] INTERNAL_SERVICE_TOKEN.** Every backend code path that reads it:
+- `src/env.ts:213` — `internalServiceToken: optional('INTERNAL_SERVICE_TOKEN') || (production ? required('BOT_API_TOKEN') : ...)`. **The fallback is a hazard**: deleting the var without setting a secret silently re-merges the delegated principal with the shared `BOT_API_TOKEN` — worse than today.
+- `src/middleware/serviceToken.ts:27` — guards DM enqueue (`dms.ts:150`), changelog post/prune (`dms.ts:240,247`), license kill-switch (`license.ts:92`).
+- `src/middleware/gates.ts:104` — delegated branch: service token + `X-Mc-Uuid` asserts **any** player identity; `:181` (`requireBot`), `:391-397` (`botOrServiceTokenValid` → the 401 boundary of every v2 `requireStaffRole` route).
+- The actual admin escalation is branch 2 of `resolveStaffActor` (`gates.ts:465-482`): bare service token + unauthenticated-in-practice `X-Staff-Role: admin` header yields rank 3 — and `X-Admin-Uuid` (474-481) sets audit attribution with **no verification**. `routes.ts:1789-1796` (`storeAuth`) and `bot/adminRegisterRoute.ts:53` also accept it.
+- **Root cause of the commit**: `wrangler.jsonc:56-64` documents Workers Builds wiping dashboard-only vars on Git deploys — but the file's own comment (lines 91-99) states **secrets DO survive Git deploys**; the premise is wrong. Rotation runbook: (1) `wrangler secret put INTERNAL_SERVICE_TOKEN` on `romanica-backend`; (2) same on the frontend worker (reads it via binding in `storeAuth.ts:19`, plaintext at its `wrangler.jsonc:77`); (3) only then remove the var from both `wrangler.jsonc` files (a secret and var can't share a name) and redeploy. Breakage window: delegated X-Mc-Uuid calls, DMs, changelog, kill-switch fail closed until both workers carry the new secret. Never remove the var before both secrets exist (env.ts:213 fallback).
+
+**[P2] Game-MySQL TLS — flipping `secureTransport` is NOT enough and is a silent no-op as-is.** `mysqlWire.ts` has zero TLS plumbing: no `CLIENT_SSL` (0x800) capability, no SSLRequest packet, no `socket.startTls()`, no stream re-acquisition. A correct fix needs, in `wireQuery` (`mysqlWire.ts:372-461`): (1) after `parseHandshake`, check server caps for CLIENT_SSL; (2) send a 32-byte SSLRequest packet (caps|CLIENT_SSL, max-packet size, charset, 23 filler) instead of `HandshakeResponse41`; (3) `await socket.startTls()` and rebuild `WireStream`/writer from the upgraded streams; (4) then send `HandshakeResponse41` and continue (AuthSwitch path 391-402 unchanged). Independently the **Node path is also plaintext**: `gameMysql.ts:47-55` `mysql.createPool` has no `ssl` option. (`gameMysql.ts:558` is only the TCP reachability probe — no data, harmless.)
+
+**[P2] ensureSchema vs migrations — full runtime-DDL inventory: 11 D1 tables, only 1 has a migration file.**
+`license_revocations` (license.ts:38-43), `web_dashboard_prefs` (routes.ts:2991), `gallery_posts`+idx (gallery.ts:42-54), `client_crash_reports` (crashReports.ts:58 — dual-sourced with migrations/d1_0003), `dm_queue` (dms.ts:74), `guides`+`guide_votes` (guides.ts:42,54), `api_keys` (apiKeys.ts:43), `guide_comments` (guideComments.ts:24), `action_log` (actionLog.ts:21), rate-limit tables (rateLimit.ts:29, rateLimitV2.ts:69), `webhook_subscribers`/`webhook_deliveries`/`webhook_state` (webhooks/store.ts:61-93 — including an `ALTER TABLE … ADD COLUMN lease_until` whose failure is swallowed at 87-93). Game-MySQL: `bus_kv`, `web_commands`, `web_responses` (busMysql.ts:24-46). A fourth mechanism exists: manual one-shot PG scripts (`migrate-tables.cjs`, `migrate-bot-tables.cjs`). Migration set needs one `d1_0004+` per group in deploy order (D1 `batch()` rejects DDL → sequential prepares), keeping `ensureSchema()` as an idempotent backstop.
+
+**[P3] pass-1 items, concrete fixes:** `sessionCsrfGuard` — hoisting to app-level `/api/*` won't work (it reads `c.get('user')`, set by `attachUser` inside the v1 sub-app, routes.ts:115, which runs after app-level middleware). Fix: register `api.use('*', sessionCsrfGuard)` in `routes.ts` right after `attachPrincipal` (line 123). Webhook UUID: normalize at `fulfillment.ts:101` and `:223` with `parseMcUuid` (or once at `:344` before dispatch). Discord `err.message` echo stands as reported.
+
+### New findings
+
+1. **[P2] Nonce replay protection is a silent no-op on the production bus transport.** `mysqlWire.ts:329` sets `CLIENT_FOUND_ROWS` (0x2) in handshake capabilities. `busMysql.ts:91-98` (`busKvPutOnce`) claims a nonce via `INSERT … ON DUPLICATE KEY UPDATE kv_key = kv_key` and reads `affectedRows === 1` as "first sighting" — but with CLIENT_FOUND_ROWS, an ODKU no-op returns `affected_rows = 1`, so `claimNonceOnce` (`db/redis.ts:185-199`) **always returns true** on the default `BUS_TRANSPORT=mysql` path. Only consumer today: `adminRegisterRoute.ts:63` (HMAC-gated command re-registration replayable within its ±120s window — low direct impact), but the documented B-10 single-use contract is dead and every future consumer inherits it. Tests mask it: `atomic-consume.test.ts:9` forces `BUS_TRANSPORT='redis'`. Fix: drop `CLIENT_FOUND_ROWS` from the caps (nothing needs matched-vs-changed) and verify with a live two-command test.
+2. **[P2] Error alerting is disarmed in production, and dashboard-arming is actively wiped.** `wrangler.jsonc:75` declares `STAFF_ALERT_WEBHOOK_URL: ""`; per the file's documented wipe behavior (56-64), a dashboard-set value resets to `""` on the next Git deploy. `errorAlerts.ts:86` `if (!url) return;` short-circuits **before** `sendOwnerDm` (119) — owner-DM leg dead too. Net: `app.onError` (app.ts:140), unhandled-rejection guard (worker.ts), PayNow empty-order (routes.ts:2449), `/errors/report` fan-out (routes.ts:3449) — all invisible outside `wrangler tail`. Cron legs (cron.ts) only `logger.error`. Fix: remove the var declaration, set it as a dashboard Secret, add `alertError` to cron failure paths.
+3. **[P3] Command-bus storage grows unboundedly.** `busKvConsume` (busMysql.ts:77-88) only sets `expires_at = 0`, never deletes; `web_commands` rows never deleted; `web_responses` rows for timed-out requests never deleted (`busWaitForResponse` deletes only on read, redis.ts:340/380). Postgres `web_queue` settled/skipped rows: no `DELETE FROM web_queue` anywhere in src (grep-verified).
+4. **[P3] Wire client silently truncates result sets at 200 rows** (`mysqlWire.ts:454` `if (rows.length >= 200) break;`). Any `gameQuery` with `LIMIT > 200` returns silently wrong data — leaderboard JOINs are the stated risk class. Only stop on the EOF packet, or throw on suspected truncation.
+5. **[P3] Gallery image serving** (gallery.ts:222-227) lacks `x-content-type-options: nosniff` (magic-byte validation itself is sound). R2 objects are never deleted on moderation/privacy-delete — bytes outlive their D1 row; uploads also orphan the R2 object if the D1 insert fails.
+6. **[P3] v2 ticket status is free-form**: `PATCH /api/v2/tickets/:id` coerces `status` with `String(v)` (tickets.ts:137-148) while v1 enforces `TICKET_RESPOND_STATUSES` (routes.ts:2661) — a bot typo can strand a ticket outside every `status='open'` filter including the 48h sweep.
+7. **[P3] Ticket stale auto-close keys on `created_at` only** (cron.ts:158-176): a 3-day-old ticket with a reply yesterday is force-closed. Key on last activity.
+8. **[P3] `paynowErrorReply` (routes.ts:1899-1907) reflects upstream PayNow `err.message` to clients** on 400/502 — leak class if PayNow ever echoes internal context.
+9. **[P3] D1 test fakes are per-test hand-rolled stubs** keyed on SQL prefixes (`api-keys.test.ts:19-40`); ON CONFLICT semantics, LIMIT binding, type affinity, `batch()` DDL rejection, ALTER failure modes, and concurrency are unverified against real D1. One smoke suite against real D1/Miniflare would close this.
+10. Cosmetic: `redis.ts:11` `usePgBus()` routes to the **MySQL** bus and reads `process.env.BUS_TRANSPORT` directly, bypassing the env module; the `'postgres'` default literal contradicts the comment above it.
+
+### Cross-repo notes
+
+- **Command bus end-to-end:** v2 commands are HMAC-SHA256 over `type|ts|nonce|requestId|sha256(stableStringify({type,request_id,ts,nonce,payload}))` (`redis.ts:223-247`), 30s window. `web_queue` rows are signed `v1|kind|requestId|uuid|username|site|sku|quantity|createdAtSec` (`webqueue.ts:49-62`); the plugin must re-derive pricing from signed `sku`/`quantity` (`payload` deliberately unsigned). **Key rotation has no key-id**: `WEBPANEL_HMAC_SECRET` is shared by the Redis bus, game-MySQL bus, `web_queue` rows, and admin-register HMAC — a rotation requires simultaneous plugin+worker swap; queued-but-unconsumed rows signed with the old key get marked `skipped`. Recommend a `kid` field + dual-key verification on the plugin before the next rotation.
+- **Transport split-brain (see the cross-repo audit):** backend default is the MySQL bus, whose `web_commands`/`web_responses` the plugin never reads — the plugin only speaks Redis.
+- Plugin downtime: dispatchers are request/response with 5-10s timeouts, callers degrade to 501/502; PayNow fulfillment releases line claims on failure so retries re-dispatch. No dead-letter surface or queue-depth alert.
+- Launcher/client contracts and the full audit table: see [the cross-repo audit doc in RomanicaPlugin](https://github.com/Romanica-MC/RomanicaPlugin/blob/master/docs/reviews/2026-10-23-cross-repo-audit.md).
+
+### Revised recommendations
+
+1. **Rotate `INTERNAL_SERVICE_TOKEN` into dashboard Secrets on both workers** (runbook above); order matters — vars must not be removed before both secrets exist, or `env.ts:213` silently re-merges onto `BOT_API_TOKEN`.
+2. **Remove `CLIENT_FOUND_ROWS` from the wire-client capabilities** (mysqlWire.ts:329) and add a real-semantics test for `busKvPutOnce` — until then the B-10 replay contract is a no-op on the production transport.
+3. **Implement MySQL TLS properly** (SSLRequest + `startTls()` in mysqlWire.ts — a flag flip alone is a silent no-op), plus an `ssl` option on the Node mysql2 pool (gameMysql.ts:47).
+4. **Arm error alerting**: delete `STAFF_ALERT_WEBHOOK_URL` from `wrangler.jsonc` vars, set it as a dashboard Secret, call `alertError` on cron leg failures.
+5. **Consolidate schema + queue hygiene**: one migration set covering the 11 runtime-DDL D1 tables (replace the ALTER-swallow), and pruning for consumed `bus_kv`, timed-out `web_responses`, settled `web_queue` rows — or document plugin-side pruning as the owner of record.
