@@ -13,7 +13,10 @@ vi.mock('../db/pool.js', () => ({
   query: async (sql: string, params: unknown[]) => db.pg.query(sql, params as never[]),
 }));
 vi.mock('../webhooks/store.js', () => ({
-  getState: async (k: string) => state.get(k) ?? null,
+  getState: async (k: string) => {
+    if (state.get('__fail_reads') === '1') throw new Error('D1 down');
+    return state.get(k) ?? null;
+  },
   setState: async (k: string, v: string) => void state.set(k, v),
 }));
 vi.mock('../webhooks/deliver.js', () => ({ emit: vi.fn(async () => 1) }));
@@ -64,11 +67,37 @@ describe('webhook tailer cursor', () => {
     expect(state.get(CURSOR_KEY)).toBe('12');
   });
 
-  it('a garbage stored cursor restarts the scan instead of erroring', async () => {
+  it('a fresh start seeds the cursor at MAX(id) instead of replaying history', async () => {
+    await insertRankups(1, 5);
+    const first = await runEventsTailer();
+    expect(first.scanned).toBe(0);
+    expect(state.get(CURSOR_KEY)).toBe('5');
+    await insertRankups(6, 7);
+    const second = await runEventsTailer();
+    expect(second.scanned).toBe(2);
+    expect(state.get(CURSOR_KEY)).toBe('7');
+  });
+
+  it('a garbage stored cursor is treated as a fresh start', async () => {
     await insertRankups(1, 3);
     state.set(CURSOR_KEY, '');
     const report = await runEventsTailer();
-    expect(report.scanned).toBe(3);
+    expect(report.scanned).toBe(0);
     expect(state.get(CURSOR_KEY)).toBe('3');
+  });
+
+  it('a fresh start on an empty table leaves the cursor unset', async () => {
+    const report = await runEventsTailer();
+    expect(report.scanned).toBe(0);
+    expect(state.has(CURSOR_KEY)).toBe(false);
+  });
+
+  it('a failed cursor read skips the tick and keeps the stored cursor', async () => {
+    await insertRankups(1, 9);
+    state.set(CURSOR_KEY, '4');
+    state.set('__fail_reads', '1');
+    const report = await runEventsTailer();
+    expect(report.scanned).toBe(0);
+    expect(state.get(CURSOR_KEY)).toBe('4');
   });
 });

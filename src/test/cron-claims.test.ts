@@ -48,6 +48,13 @@ vi.mock('../webhooks/deliver.js', async (importOriginal) => {
   };
 });
 
+// The tailer needs a stored cursor to scan; a missing or unreadable one
+// takes the fresh-start / skip paths (covered in webhook-tailer-cursor.test.ts).
+vi.mock('../webhooks/store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../webhooks/store.js')>();
+  return { ...actual, getState: vi.fn(async () => '9000'), setState: vi.fn(async () => {}) };
+});
+
 vi.mock('../bot/discordRest.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../bot/discordRest.js')>();
   return {
