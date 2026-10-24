@@ -200,7 +200,15 @@ microsoftAuthApi.on('GET', ['/auth/microsoft/callback', '/auth/ms/callback'], ms
       // A redirect registered under Azure's "Web" platform makes this a
       // confidential client, which must also send its secret.
       ...(process.env.MS_CLIENT_SECRET ? { client_secret: process.env.MS_CLIENT_SECRET } : {}),
-    }).catch(() => null)) as { access_token?: string } | null;
+    }).catch((err: { data?: { error?: unknown; error_description?: unknown } }) => {
+      // Microsoft's error name + description only (they carry no token or code)
+      // so a failed exchange says why: e.g. AADSTS7000218 = needs client_secret.
+      logger.warn(
+        { error: String(err?.data?.error ?? ''), description: String(err?.data?.error_description ?? '').slice(0, 200) },
+        'Microsoft token exchange failed',
+      );
+      return null;
+    })) as { access_token?: string } | null;
     if (!tokenRes?.access_token) return login('ms_token_failed');
 
     // 2. Microsoft token -> Xbox Live token (+ user hash).
