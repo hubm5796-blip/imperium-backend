@@ -22,6 +22,7 @@ import { commands } from './commands/index.js';
 import { writeRateLimit } from '../middleware/rateLimit.js';
 import { claimNonceOnce } from '../db/redis.js';
 import { logger } from '../utils/logger.js';
+import { DISCORD_REST_TIMEOUT_MS } from './discordRest.js';
 export const botAdmin = new Hono();
 const REPLAY_WINDOW_SECONDS = 120;
 const NONCE_NAMESPACE = 'ImperiumMC:reg_nonce:';
@@ -79,6 +80,7 @@ botAdmin.post('/bot/register-commands', writeRateLimit, async (c) => {
  method: 'PUT',
  headers: { 'Content-Type': 'application/json', Authorization: `Bot ${token}` },
  body: JSON.stringify(payload),
+ signal: AbortSignal.timeout(DISCORD_REST_TIMEOUT_MS),
  });
  const json = (await res.json().catch(() => null)) as unknown;
  if (!res.ok) {
