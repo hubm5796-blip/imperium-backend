@@ -285,7 +285,12 @@ microsoftAuthApi.on('GET', ['/auth/microsoft/callback', '/auth/ms/callback'], ms
   } catch (err) {
     const loginError = (err as { loginError?: string }).loginError;
     if (loginError) return login(loginError);
-    logger.error({ err }, 'Microsoft login chain failed');
+    // err.message is "<upstream url> -> <status>" (no tokens): names the failing hop.
+    const e = err as { message?: unknown; data?: unknown };
+    logger.error(
+      { step: String(e?.message ?? err).slice(0, 160), data: JSON.stringify(e?.data ?? null).slice(0, 300) },
+      'Microsoft login chain failed',
+    );
     return login('ms_chain_failed');
   }
 });
