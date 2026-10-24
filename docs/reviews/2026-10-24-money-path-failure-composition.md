@@ -72,3 +72,22 @@ Corrections to this doc:
    a permanent boot/cron assertion alerting when `BUS_TRANSPORT != 'redis'` in production.
 4. The `redis.ts:15` `?? 'postgres'` literal + `usePgBus` name contradict actual behavior
    (MySQL default) — rename/readme fix owed.
+
+---
+
+## RESOLUTION (2026-10-25) — the split-brain closed and the redis re-land advice is RETRACTED
+
+Finding 3 above (the BUS_TRANSPORT split-brain) was resolved by the 2026-10-24 one-trunk plugin
+merge: the plugin has polled MySQL `web_commands` since 2026-09-19 (`b1e85c72` "Redis retired" —
+the `BusStore` the kotlin line added), and that is now on **master**. Production with
+`BUS_TRANSPORT` unset is **correct as-is**. The "re-land `BUS_TRANSPORT=redis`" advice in the
+post-publication note is **retracted** — executing it now would move the bus to Redis where
+nothing listens and break client/Microsoft/Discord sign-in again (exactly what `08fc749` did).
+The backend `chore/nitpick-cleanup` branch's README warning ("Never set BUS_TRANSPORT with
+=redis") is authoritative. The 08fc749/2727d56 flip-revert remains a documented incident: the
+stated cause was disproven, the real cause was the dormant no-listener Redis path, and the KV
+transport is still untested (all KV suites mock `redisCommand`). The live money-path actions are
+now: **[P1-ops] extend the PayNow production webhook subscription** (no OnOrderCompleted/
+OnRefund/OnChargeback events are configured — fulfillment and refunds receive nothing) and merge
+`fix/paynow-refund-dispatch` (+ partial-refund policy decision). Full detail:
+ImperiumMC-Plugin `docs/reviews/2026-10-25-fix-branch-review.md`.
