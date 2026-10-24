@@ -45,3 +45,30 @@ The passes 1-3 narrative treated webhook → D1 claim → `web_queue` → plugin
 4. Implement or delete the web crate-open surface.
 5. Skew observability on the bus + pin `BUS_TRANSPORT=redis` in prod with a boot-time cross-repo assertion.
 6. PayNow reconciliation sweep + vote replay dedupe.
+
+---
+
+## POST-PUBLICATION NOTE (2026-10-24) — the BUS_TRANSPORT=redis fix was applied and reverted
+
+Recommendation 3 ("pin `BUS_TRANSPORT=redis`") was executed as `08fc749` (2026-10-23) and reverted
+the same day as `2727d56` after client, Microsoft, **and Discord** sign-in broke in production.
+
+Corrections to this doc:
+1. The revert's stated cause ("the Redis KV path passes a non-string EX to redisCommand") is
+   **disproven** — `redisSocket.ts:54-61 encodeCommand` stringifies every argument, and the
+   client-auth challenge call already passed `String(ttlSeconds)`. The real cause was never
+   root-caused; leading hypothesis: the Redis path is month-dormant in production (default
+   transport = MySQL since 2026-09-19), so the flip activated untested reachability
+   (`REDIS_PORT=6379` + `REDIS_TLS=true`) and a connection-per-command model.
+2. What the 70-minute redis window broke: `/api/client/auth/challenge` + `/verify`,
+   `/auth/ms/start` + `/auth/ms/callback`, Discord OAuth callback + `/api/auth/exchange`,
+   `/api/link/*`, webcode login, `/api/server/status`, profile response cache — i.e. everything
+   on the KV path. None of it is integration-tested (all four KV test suites mock
+   `redisCommand` and force redis mode).
+3. The finding stands: with the var absent, the split-brain is live and **every PayNow dispatch
+   times out silently**. Re-land condition (all four, then flip): string-cast the bare EX args
+   (`redis.ts:441,533,627`); live Redis smoke check with prod credentials; `wrangler tail`
+   walkthrough of client auth + Microsoft + Discord + exchange + one sandbox PayNow dispatch;
+   a permanent boot/cron assertion alerting when `BUS_TRANSPORT != 'redis'` in production.
+4. The `redis.ts:15` `?? 'postgres'` literal + `usePgBus` name contradict actual behavior
+   (MySQL default) — rename/readme fix owed.

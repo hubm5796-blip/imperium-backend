@@ -66,3 +66,7 @@ is used for followups and cron notifications.)
 2. Player visits website dashboard → enters code, or types `/link <code>` in Discord
 3. Backend validates code against plugin via the game-MySQL command bus (Redis wake-on-demand fallback)
 4. On success: `discord_links` table updated, player gets full dashboard access
+
+## Bus transport history (do not re-flip naively)
+
+`BUS_TRANSPORT=redis` was applied `08fc749` and reverted `2727d56` (2026-10-23) after client/Microsoft/Discord sign-in broke in production — the stated cause (non-string EX) was disproven (`redisSocket.ts` stringifies args); the real blocker is the month-dormant Redis path never live-tested. Re-land conditions live in `docs/reviews/2026-10-24-money-path-failure-composition.md` (post-publication note). Until then the signed command bus writes to MySQL `web_commands`, which the plugin does not read.
