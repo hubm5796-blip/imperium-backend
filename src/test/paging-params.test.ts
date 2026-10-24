@@ -81,4 +81,21 @@ describe('v1 paged routes never send NaN to LIMIT/OFFSET', () => {
     const q = [...queries].reverse().find((x) => x.sql.includes('FROM marketplace_listings') && x.sql.includes('LIMIT'));
     expect(q?.params.slice(0, 2)).toEqual([20, 0]);
   });
+
+  it('GET /api/tickets?status=bogus → 400 with the allowed list', async () => {
+    queries.length = 0;
+    const res = await app.request('/api/tickets?status=bogus', { headers: { Cookie: await staffCookie() } });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { allowed?: string[] };
+    expect(body.allowed).toContain('open');
+    expect(queries.find((x) => x.sql.includes('FROM support_tickets'))).toBeUndefined();
+  });
+
+  it('GET /api/tickets?status=closed still filters', async () => {
+    queries.length = 0;
+    const res = await app.request('/api/tickets?status=closed', { headers: { Cookie: await staffCookie() } });
+    expect(res.status).toBe(200);
+    const q = queries.find((x) => x.sql.includes('FROM support_tickets') && x.sql.includes('LIMIT'));
+    expect(q?.params[0]).toBe('closed');
+  });
 });

@@ -2585,6 +2585,8 @@ api.post('/tickets', requireMcIdentity, async (c) => {
  * own (B-12: the old code presence-checked X-Mc-Uuid and then selected
  * unfiltered, leaking every ticket to any player).
  */
+const TICKET_STATUSES = new Set(['open', 'responded', 'pending', 'closed', 'stale']);
+
 api.get('/tickets', async (c) => {
   if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
@@ -2606,6 +2608,9 @@ api.get('/tickets', async (c) => {
   const limit = limitParam(c.req.query('limit'), 20, 50);
   const offset = (page - 1) * limit;
   const statusFilter = c.req.query('status');
+  if (statusFilter && !TICKET_STATUSES.has(statusFilter)) {
+    return c.json({ error: 'Invalid status', allowed: [...TICKET_STATUSES] }, 400);
+  }
 
   const conds: string[] = [];
   const params: unknown[] = [];
@@ -2654,8 +2659,6 @@ api.get('/tickets/mine', requireMcIdentity, async (c) => {
  * LuckPerms-verified human when the panel forwards it), and the status is
  * allowlisted so the 48h auto-close sweep only ever sees real states.
  */
-const TICKET_RESPOND_STATUSES = new Set(['open', 'responded', 'pending', 'closed', 'stale']);
-
 api.post('/tickets/:id/respond', async (c) => {
   if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
@@ -2671,8 +2674,8 @@ api.post('/tickets/:id/respond', async (c) => {
   const response = (body.response ?? '').trim().slice(0, 5000);
   const newStatus = (body.status ?? 'responded').trim();
   if (!response) return c.json({ error: 'Response text is required' }, 400);
-  if (!TICKET_RESPOND_STATUSES.has(newStatus)) {
-    return c.json({ error: 'Invalid status', allowed: [...TICKET_RESPOND_STATUSES] }, 400);
+  if (!TICKET_STATUSES.has(newStatus)) {
+    return c.json({ error: 'Invalid status', allowed: [...TICKET_STATUSES] }, 400);
   }
 
   const updated = await query<{ id: string }>(
