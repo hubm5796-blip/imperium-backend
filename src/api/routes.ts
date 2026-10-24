@@ -84,7 +84,7 @@ import {
 } from '../paynow/client.js';
 import { DONOR_TIERS, isDonorSubscriptionProduct, isGiftableProduct, isOneTimeStoreProduct } from '../paynow/constants.js';
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
-import { fulfillPaynowOrder, normalizePaynowEventType, resolveCustomerUuid } from '../paynow/fulfillment.js';
+import { fulfillPaynowOrder, normalizePaynowEventType, refundPaynowOrder, resolveCustomerUuid } from '../paynow/fulfillment.js';
 import type { AppContextVariables } from '../types/index.js';
 import { CURRENCY_ALIASES } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -2494,10 +2494,23 @@ api.post('/webhooks/paynow', async (c) => {
         cancelPath = false;
         break;
       }
+      case 'refund':
+      case 'chargeback': {
+        // Revoke what we delivered (plugin PurchaseRefundService). Failures
+        // 500 so PayNow retries; the plugin's refund claim makes that safe.
+        const result = await refundPaynowOrder(data, canonicalEvent);
+        if (result.status === 'error') {
+          alertError('paynow-refund-failed', result.error ?? 'PayNow refund revocation failed');
+          return c.json({ error: 'Refund revocation failed', detail: result.error }, 500);
+        }
+        if (result.status === 'not_delivered') {
+          alertError('paynow-refund-not-delivered', result.error ?? 'PayNow refund for an undelivered order');
+          return c.json({ ok: false, flagged: 'refund_not_delivered', detail: result.error }, 200);
+        }
+        break;
+      }
       case 'unknown':
       default:
-        // Other event types (refunds, chargebacks) don't need caching —
-        // rank grant/revoke is already handled by PayNow's product commands.
         break;
     }
   } catch (err) {
