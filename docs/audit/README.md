@@ -1,5 +1,7 @@
 # imperium-backend — Audit, 2026-09-05
 
+> **STATUS (2026-10-24): HISTORICAL.** B-01 (Critical) was CLOSED 2026-09-06 (`48797b1`; the transitional panel-service exemption is deleted — `routes.ts:154-160`) and the round findings were fixed or dispositioned; evidence only. Live findings: `docs/reviews/`.
+
 Part of a cross-repo strict audit of the three ImperiumMC codebases.
 
 **Audited at:** `eba7716` (`master`)

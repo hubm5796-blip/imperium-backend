@@ -1,5 +1,8 @@
 # Lane D — Backend Work Queue (Season 2)
 
+> **STATUS (2026-10-24):** S2-D01 (B-01) was already fixed 2026-09-06 (`48797b1`) — VERIFY-ONLY, do not re-implement.
+> `API-CONTRACTS-S2.md` is PLANNED (0/9 endpoints implemented). Program status: not started beyond Wave-0 verification.
+
 Backend-specific detail for the nine Lane D packets. The authoritative status
 column lives in `ImperiumMC-Plugin/docs/season-2/08-WORK-QUEUE.md`; update both.
 

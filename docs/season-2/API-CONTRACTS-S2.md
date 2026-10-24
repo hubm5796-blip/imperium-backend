@@ -1,5 +1,7 @@
 # Season 2 — API contracts
 
+> **STATUS (2026-10-24): PLANNED — 0/9 endpoints implemented** (no `/admin/deliveries` etc. in `routes.ts`). Design reference only.
+
 Endpoints Season 2 adds or changes, and who consumes each. Agree any shape
 change with the consuming lane via a cross-lane request **before** building it;
 a contract discovered at integration time costs both lanes a rebase.
