@@ -32,6 +32,7 @@ import { logger } from '../utils/logger.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { createSessionCode, consumeMsOauthState, storeMsOauthState } from '../db/redis.js';
 import { getDiscordIdByUuid } from '../db/pool.js';
+import { mojangFetch } from '../utils/mojangFetch.js';
 
 /**
  * Romanica's own Azure app (the launcher signs players in with it; the owner
@@ -86,7 +87,7 @@ async function postJson(
   url: string,
   body: unknown,
 ): Promise<unknown> {
-  const res = await fetch(url, {
+  const res = await mojangFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
@@ -247,7 +248,7 @@ microsoftAuthApi.on('GET', ['/auth/microsoft/callback', '/auth/ms/callback'], ms
 
     // 5. Profile = the actual account identity. An absent profile means a
     //    Microsoft account that owns no Java edition.
-    const profileRes = await fetch(MC_PROFILE_URL, {
+    const profileRes = await mojangFetch(MC_PROFILE_URL, {
       headers: { Authorization: `Bearer ${mcAuth.access_token}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(5000),
     });

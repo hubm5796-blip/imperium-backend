@@ -12,3 +12,6 @@ dist/
 
 # Backend log (local dev)
 backend.log
+
+# Vercel CLI link for the Mojang relay
+relay/.vercel
