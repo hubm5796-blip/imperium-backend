@@ -69,13 +69,16 @@ export async function runEventsTailer(): Promise<TailerReport> {
   } catch {
     cursor = null; // fresh start — first pass emits nothing new beyond the window
   }
+  // web_events.id is BIGSERIAL: compare numerically. The cursor stays a
+  // string so ids past 2^53 keep full precision.
+  if (cursor !== null && !/^\d+$/.test(cursor)) cursor = null;
 
   let rows: FeedRow[];
   try {
     rows = await query<FeedRow>(
       `SELECT id, event_type, uuid, message, at
          FROM web_events
-        WHERE ($1::text IS NULL OR id::text > $1)
+        WHERE ($1::bigint IS NULL OR id > $1::bigint)
         ORDER BY id ASC
         LIMIT 200`,
       [cursor],
