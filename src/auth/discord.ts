@@ -5,6 +5,7 @@ import type { DiscordUser } from '../types/index.js';
 const AUTHORIZE_URL = 'https://discord.com/api/oauth2/authorize';
 const TOKEN_URL = 'https://discord.com/api/oauth2/token';
 const ME_URL = 'https://discord.com/api/users/@me';
+const DISCORD_OAUTH_TIMEOUT_MS = 8_000;
 
 /** Scopes requested during OAuth2. */
 const SCOPES = ['identify'].join(' ');
@@ -52,6 +53,7 @@ export async function exchangeCodeForToken(code: string): Promise<DiscordTokenRe
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
+    signal: AbortSignal.timeout(DISCORD_OAUTH_TIMEOUT_MS),
   });
 
   if (!res.ok) {
@@ -66,6 +68,7 @@ export async function exchangeCodeForToken(code: string): Promise<DiscordTokenRe
 export async function fetchDiscordUser(accessToken: string): Promise<DiscordUser> {
   const res = await fetch(ME_URL, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(DISCORD_OAUTH_TIMEOUT_MS),
   });
 
   if (!res.ok) {
