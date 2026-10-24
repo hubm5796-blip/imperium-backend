@@ -1,6 +1,6 @@
-# ImperiumMC Backend
+# Romanica Backend
 
-Backend API + Discord interactions for ImperiumMC.
+Backend API + Discord interactions for Romanica (romanica.net, served at api.romanica.net).
 
 ## Architecture
 
@@ -16,8 +16,14 @@ Backend API + Discord interactions for ImperiumMC.
 - **Game MySQL (bus)**: The web command bus (2026-09-19) — signed envelopes queue in
   `web_commands`/`web_responses`/`bus_kv` on the game MariaDB (`src/db/busMysql.ts` over
   the mysqlWire client); the plugin polls at 500ms, this side at 400ms (~1s round-trip).
-  Redis remains a wake-on-demand fallback transport (`BUS_TRANSPORT=redis`) — zero
-  connections while unused, so the free host sleeps.
+  A Redis transport (`BUS_TRANSPORT=redis`) still exists in `src/db/redis.ts`.
+
+> **Never set `BUS_TRANSPORT`.** The live plugin reads only MySQL `web_commands`. With
+> `BUS_TRANSPORT=redis`, every command (store fulfillment, linking, admin actions) goes
+> to Redis, where nothing listens, and times out.
+
+Protocol-locked names: the Redis/KV keys `ImperiumMC:*` and the env var
+`IMPERIUMMC_HMAC_SECRET` are shared with the plugin. Don't rename them on one side.
 
 ## Setup
 
@@ -64,5 +70,5 @@ is used for followups and cron notifications.)
 
 1. Player runs `/discord link` in-game → gets 6-char code
 2. Player visits website dashboard → enters code, or types `/link <code>` in Discord
-3. Backend validates code against plugin via the game-MySQL command bus (Redis wake-on-demand fallback)
+3. Backend validates code against plugin via the game-MySQL command bus
 4. On success: `discord_links` table updated, player gets full dashboard access
