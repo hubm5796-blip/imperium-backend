@@ -3531,5 +3531,5 @@ api.route('/', licenseStatusApi);
 // MICROSOFT (MINECRAFT) WEBSITE SIGN-IN: the client's Azure app + MS->Xbox->XSTS->
 // Minecraft chain run server-side; hands the resolved account to the frontend
 // exactly like the Discord OAuth flow (one-time session code). Azure prerequisite:
-// redirect URI https://api.romanica.net/api/auth/ms/callback on the app.
+// redirect URI https://api.romanica.net/api/auth/microsoft/callback on the app.
 api.route('/', microsoftAuthApi);
