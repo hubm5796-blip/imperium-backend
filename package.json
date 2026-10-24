@@ -18,7 +18,6 @@
     "@discordjs/rest": "^2.6.3",
     "@hono/node-server": "^2.1.1",
     "@hono/zod-validator": "^0.4.0",
-    "cookie": "^1.0.1",
     "discord-api-types": "^0.38.54",
     "discord-interactions": "^4.4.0",
     "dotenv": "^16.4.0",
