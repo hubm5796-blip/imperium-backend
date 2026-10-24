@@ -20,6 +20,7 @@ import { requireLinked } from '../../middleware/auth.js';
 import { readRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { pageParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -79,7 +80,7 @@ guidesV2.use('/community/*', readRateLimit, async (c, next) => {
 guidesV2.get('/community/guides', async (c) => {
   const category = c.req.query('category') ?? '';
   const sort = c.req.query('sort') === 'new' ? 'new' : 'top';
-  const page = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1);
+  const page = pageParam(c.req.query('page'));
   const where = category && CATEGORIES.has(category) ? "WHERE status = 'published' AND category = ?" : "WHERE status = 'published'";
   const order = sort === 'new' ? 'created_at DESC' : 'score DESC, created_at DESC';
   try {

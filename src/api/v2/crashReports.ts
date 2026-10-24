@@ -42,6 +42,7 @@ import { logger } from '../../utils/logger.js';
 import { ok, fail } from './respond.js';
 import { scrubCrashText } from '../../utils/crashTextRedaction.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { limitParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -324,8 +325,7 @@ crashReportsV2.get('/client/crash-reports', readRateLimit, requireStaffRole('hel
   if (unknown.length > 0) {
     return fail(c, 400, 'UNKNOWN_PARAM', `Unknown query parameter(s): ${unknown.join(', ')}`, { allowed: ['limit'] });
   }
-  const parsed = Number.parseInt(c.req.query('limit') ?? String(DEFAULT_LIST_LIMIT), 10);
-  const limit = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), MAX_LIST_LIMIT) : DEFAULT_LIST_LIMIT;
+  const limit = limitParam(c.req.query('limit'), DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
 
   try {
     await ensureSchema();

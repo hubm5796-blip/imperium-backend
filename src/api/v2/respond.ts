@@ -5,6 +5,7 @@
 // error-code enum, never parse prose. v1 routes keep their legacy shapes —
 // the contract starts at /api/v2.
 import type { Context } from 'hono';
+import { limitParam } from '../../utils/paging.js';
 
 /** Closed v2 error-code enum. Add codes here BEFORE using them in fail(). */
 export const ERROR_CODES = [
@@ -68,9 +69,7 @@ export function decodeCursor(raw: string | undefined): { value: number; uuid: st
 
 /** Parse + clamp the shared limit param (1..100, default 20). */
 export function parseLimit(raw: string | undefined): number {
-  const n = Number.parseInt(raw ?? '20', 10);
-  if (Number.isNaN(n)) return 20;
-  return Math.min(Math.max(n, 1), 100);
+  return limitParam(raw, 20, 100);
 }
 
 /** v2 strictness: unknown query params are rejected (v1 ignores them).

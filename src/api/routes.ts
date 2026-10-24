@@ -95,6 +95,7 @@ import { microsoftAuthApi } from './microsoftAuth.js';
 import { fetchExpansionBoard, isExpansionBoard } from './expansion/leaderboards.js';
 import { swrJson } from './expansion/cache.js';
 import { emit } from '../webhooks/deliver.js';
+import { intParam, limitParam, pageParam } from '../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -730,8 +731,7 @@ api.get('/player/stats', requireMcIdentity, async (c) => {
 api.get('/player/transactions', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   const pageSize = 25;
-  const rawPage = Number.parseInt(c.req.query('page') ?? '1', 10);
-  const page = Number.isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
+  const page = pageParam(c.req.query('page'));
 
   // GAME MYSQL FIRST (2026-08-30): live economy_transactions (real-time, no WebSync delay).
   try {
@@ -1241,8 +1241,7 @@ api.get('/leaderboards/parkour/:course', async (c) => {
   if (!course) {
     return c.json({ error: 'Missing course parameter' }, 400);
   }
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
+  const limit = intParam(c.req.query('limit'), 20);
 
   let rows;
   try {
@@ -1265,8 +1264,7 @@ api.get('/leaderboards/parkour/:course', async (c) => {
  * Public. Ordered by ELO desc, ties broken by peak ELO.
  */
 api.get('/leaderboards/elo', async (c) => {
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
+  const limit = intParam(c.req.query('limit'), 20);
 
   let rows;
   try {
@@ -1291,8 +1289,7 @@ api.get('/leaderboards/elo', async (c) => {
  * Public. Ordered by highest wave reached desc.
  */
 api.get('/leaderboards/waves', async (c) => {
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
+  const limit = intParam(c.req.query('limit'), 20);
 
   let rows;
   try {
@@ -1333,8 +1330,7 @@ api.get('/leaderboards/:type', async (c) => {
       400,
     );
   }
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Math.min(Math.max(Number.isNaN(limitRaw) ? 20 : limitRaw, 1), 100);
+  const limit = limitParam(c.req.query('limit'), 20, 100);
 
   try {
     return await swrJson(c, `leaderboard:${type}:${limit}:v1`, async () => {
@@ -2606,8 +2602,8 @@ api.get('/tickets', async (c) => {
     }
   }
 
-  const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
-  const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') ?? '20', 10)));
+  const page = pageParam(c.req.query('page'));
+  const limit = limitParam(c.req.query('limit'), 20, 50);
   const offset = (page - 1) * limit;
   const statusFilter = c.req.query('status');
 
@@ -3193,8 +3189,8 @@ api.get('/referrals/mine', requireMcIdentity, async (c) => {
  * Supports category filter, sorting, and pagination.
  */
 api.get('/marketplace/listings', botAuthMiddleware, async (c) => {
-  const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
-  const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') ?? '20', 10)));
+  const page = pageParam(c.req.query('page'));
+  const limit = limitParam(c.req.query('limit'), 20, 50);
   const offset = (page - 1) * limit;
   const category = c.req.query('category');
   const sort = c.req.query('sort') ?? 'recent';

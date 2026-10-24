@@ -21,6 +21,7 @@ import { requireSelfOrDelegated } from '../../middleware/gates.js';
 import { getPaynowOrdersForUuid } from '../../paynow/history.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { limitParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -54,7 +55,7 @@ type UnifiedOrder =
 storeOrdersV2.get('/store/orders', async (c) => {
   const uuid = c.get('mcUuid');
   if (!uuid) return c.json({ error: 'Unauthorized' }, 401);
-  const limit = Math.min(Math.max(Number.parseInt(c.req.query('limit') ?? '20', 10) || 20, 1), 50);
+  const limit = limitParam(c.req.query('limit'), 20, 50);
   try {
     const web = await query(
       `SELECT request_id, sku, quantity, status, created_at, processed_at, payload

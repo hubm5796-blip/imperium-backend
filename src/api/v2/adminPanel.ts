@@ -18,6 +18,7 @@ import { parseMcUuid } from '../../middleware/gates.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { pageParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -35,7 +36,7 @@ adminPanelV2.use('/admin*', readRateLimit, requireStaffRole('helper'));
 const PAGE_SIZE = 50;
 
 function pageParams(c: { req: { query: (k: string) => string | undefined } }): { limit: number; offset: number; page: number } {
-  const page = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1);
+  const page = pageParam(c.req.query('page'));
   return { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, page };
 }
 
