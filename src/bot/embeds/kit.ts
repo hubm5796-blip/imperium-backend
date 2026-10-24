@@ -33,9 +33,6 @@ export function avatarUrl(uuidOrName: string): string {
 export function bodyUrl(uuidOrName: string): string {
  return `https://mc-heads.net/body/${uuidOrName}/128`;
 }
-export function bustUrl(uuidOrName: string): string {
- return `https://crafatar.com/renders/head/${uuidOrName}?overlay&scale=4`;
-}
 // ── Progress bar ────────────────────────────────────────────────────────────
 const FILLED = '▰';
 const EMPTY = '▱';
