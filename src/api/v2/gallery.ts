@@ -29,6 +29,7 @@ import { recordAction } from '../../db/actionLog.js';
 import { logger } from '../../utils/logger.js';
 import { ok, fail } from './respond.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { pageParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -117,7 +118,7 @@ galleryV2.get('/community/gallery', async (c) => {
     return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery unavailable.');
   }
   const album = c.req.query('album') ?? '';
-  const page = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1);
+  const page = pageParam(c.req.query('page'));
   const byAlbum = album && ALBUMS.has(album);
   try {
     const stmt = byAlbum

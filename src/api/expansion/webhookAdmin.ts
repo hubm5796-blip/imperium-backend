@@ -18,6 +18,7 @@ import {
 } from '../../webhooks/store.js';
 import { envelopeOf } from '../../webhooks/types.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { limitParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -110,8 +111,7 @@ webhooksApi.delete('/webhooks/subscriptions/:id', writeRateLimit, async (c) => {
 webhooksApi.get('/webhooks/deliveries', readRateLimit, async (c) => {
   if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
   const status = c.req.query('status');
-  const rawLimit = Number.parseInt(c.req.query('limit') ?? '50', 10);
-  const limit = Number.isNaN(rawLimit) ? 50 : Math.min(Math.max(rawLimit, 1), 200);
+  const limit = limitParam(c.req.query('limit'), 50, 200);
   const rows = await listDeliveries(status, limit);
   return c.json({
     deliveries: rows.map((r) => ({

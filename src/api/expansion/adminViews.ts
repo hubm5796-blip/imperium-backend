@@ -31,6 +31,7 @@ const swrJsonPrivate = (
 ) => swrJson(c, key, fetcher, { visibility: 'private' });
 import { mcUuidSchema } from './schemas.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { limitParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -119,8 +120,7 @@ adminViewsApi.get('/admin/liveops', readRateLimit, requireStaffRole('helper'), a
  * Read-only; sweep verdicts and confiscations themselves happen in-game.
  */
 adminViewsApi.get('/admin/contraband/sweeps', readRateLimit, requireStaffRole('helper'), async (c) => {
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '25', 10);
-  const limit = Math.min(Math.max(Number.isNaN(limitRaw) ? 25 : limitRaw, 1), 100);
+  const limit = limitParam(c.req.query('limit'), 25, 100);
   try {
     return await swrJsonPrivate(c, `admin:contraband:${limit}:v1`, async () => {
       const sweeps = await softRows<{

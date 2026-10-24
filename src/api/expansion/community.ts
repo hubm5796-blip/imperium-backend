@@ -24,6 +24,7 @@ import { logger } from '../../utils/logger.js';
 import { swrJson } from './cache.js';
 import { lfgPostSchema, mcUuidSchema } from './schemas.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { limitParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -106,8 +107,7 @@ communityApi.post('/lfg/posts', writeRateLimit, zValidator('json', lfgPostSchema
  * `state` allowlist = 'OPEN' only; claimed/voided pools never leak.
  */
 communityApi.get('/bounties/top', readRateLimit, async (c) => {
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '10', 10);
-  const limit = Math.min(Math.max(Number.isNaN(limitRaw) ? 10 : limitRaw, 1), 25);
+  const limit = limitParam(c.req.query('limit'), 10, 25);
   try {
     return await swrJson(c, `bounties:top:${limit}:v1`, async () => {
       let rows: Array<{ target_uuid: string; pool: string; placers: string; username: string | null }>;
