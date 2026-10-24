@@ -100,3 +100,41 @@ Strong. 71 test files / 633 tests, all green (verified run, ~20s), `tsc --noEmit
 3. **Implement MySQL TLS properly** (SSLRequest + `startTls()` in mysqlWire.ts — a flag flip alone is a silent no-op), plus an `ssl` option on the Node mysql2 pool (gameMysql.ts:47).
 4. **Arm error alerting**: delete `STAFF_ALERT_WEBHOOK_URL` from `wrangler.jsonc` vars, set it as a dashboard Secret, call `alertError` on cron leg failures.
 5. **Consolidate schema + queue hygiene**: one migration set covering the 11 runtime-DDL D1 tables (replace the ALTER-swallow), and pruning for consumed `bus_kv`, timed-out `web_responses`, settled `web_queue` rows — or document plugin-side pruning as the owner of record.
+
+---
+
+## Pass 3 Addendum — romanica-backend (2026-10-24)
+
+Surfaces not deep-read earlier: webhook delivery engine, cron legs, gallery, guides/comments, license, bot interactions/permissions, the 14 frontend-passthrough routes, DM queue/changelog, Postgres/Hyperdrive layer. ~35 files.
+
+### Verification runs
+
+- `npx tsc --noEmit`: **exit 0.**
+- `npm test`: **633/633 passed on 3 consecutive runs** (11s each); the first cold-cache run reported 8 failed / 625 passed (parallel-load) — **[P3] test flakiness** under cold parallel import load; CI green today but this will eventually fail a push.
+- `web_events.id` verified `BIGSERIAL` in the plugin's `WebFeedService.kt:141-147`; `seedInternalBotSubscriber` has **zero call sites** in src/ or scripts/.
+
+### Passthrough-route backend validation (the 14 frontend-forwarded routes)
+
+No injection or privilege hole in the set — identity always comes from the resolved principal, never the body. Verdicts: **VALIDATED** — legion/create (name schema), legion/invite, legion/leave, privacy/delete (3/min + literal `confirm === 'DELETE'`), privacy/delete/cancel, subscription/cancel (live PayNow ownership re-check), preview-change (closed product allowlist), referrals/create (schema + partial-unique + rank gate failing closed). **PARTIAL** — `tickets/submit` (length caps only; free-form category, no rate limit, no open-ticket cap — while the v2 twin has all three); `cosmetics/equip` (64-char junk ids pass; plugin ownership check is the boundary); `tags/equip` (same); `preferences` POST (good shape guard, but uuid comes from the body and the route accepts the shared `BOT_API_TOKEN` — the pattern `storeAuth` deliberately banned); `privacy/export` (self-scoped, but `username` taken from `?username`/header unvalidated and forwarded to the plugin's export flow); `subscription/change` (`verificationCode` forwarded to PayNow verbatim, no type/length check).
+
+### New findings
+
+1. **[P1] Webhook tailer cursor is lexicographic against a numeric id — events silently stop flowing at every digit boundary.** `src/webhooks/tailer.ts:78` filters `id::text > $1`, but `web_events.id` is `BIGSERIAL`; once the cursor reaches `'999'`, every 4-5 digit id sorts below it and the tailer wedges permanently (zero rows, no error). All `player.rankup`/`player.prestige`/`war.result`/`season.roll` webhook deliveries die. The sibling SSE poller does it correctly (`sse/poller.ts:182-197`, numeric `id > $1`). Fix: numeric cursor + an alert when the tailer scans 0 events while `MAX(web_events.id)` advances.
+2. **[P2] `playerQuery` never sets the RLS session context on the Workers (production) path.** `src/db/pool.ts:145-151`: `set_config('imperium.uuid', …)` runs on one connection, the statement on a **second fresh connection** that never received it. Masked today only because the Hyperdrive role bypasses RLS — activating the documented `imperium_app` restricted-role plan would make every `playerQuery` see 0 rows (dashboard prefs, discord links, tickets, web_queue), silently. Also two connections per query. Fix: `set_config` + statement on one client, matching the Node branch; test against the restricted role **before** flipping.
+3. **[P2] The internal Discord-bot webhook subscriber is never seeded — the role-sync push pipeline shipped inert.** `seedInternalBotSubscriber` (`webhooks/store.ts:301-311`) has zero call sites; the `'discord-bot'` subscriber that should receive `subscription.updated`/`player.prestige`/`player.rankup` never exists unless hand-inserted into D1. Wire it at isolate init behind `WEBHOOK_BOT_URL`+`ROLE_WEBHOOK_SECRET`, or delete the push path.
+4. **[P2] v1 `POST /api/tickets` lacks every anti-abuse control its v2 twin has** — no writeRateLimit, no open-ticket cap, free-form category; the frontend's `tickets/submit` forwards raw bodies straight here. Unbounded ticket growth + staff-queue flooding + Discord threads via the cron sweep. Copy the v2 trio (`tickets.ts:47,64,67-78`).
+5. **[P3] Webhook subscriber URLs: any scheme, any host** (`webhookAdmin.ts:28` `z.string().url()`; fetched verbatim with redirects) — same-trust today, but pin https + host allowlist before the planned api_key/public owner migration.
+6. **[P3] Three more unbounded tables**: `webhook_deliveries` (delivered/dead rows never deleted), `dm_queue` (sent/failed), and `discord_dedupe` (one Postgres row **per minute** for cron claims, ~525k rows/year) — fold into the pruning migration.
+7. **[P3] Cron leg isolation hole**: `runTicketSweep` is awaited without its own try/catch (`bot/cron.ts:110`) — a network-level throw skips the DM-queue leg for that minute, every minute it persists.
+8. **[P3] Gallery upload buffers the entire multipart body before the 5 MB check** (`gallery.ts:178-187`) — a near-100MB request materializes in isolate memory; the 3/day quota check is also pre-insert TOCTOU. Check Content-Length / stream-truncate first.
+9. **[P3] Guides have no moderation or takedown surface**: first-post moderation deliberately absent (`guides.ts:37`), 50k chars of markdown publish instantly, staff cannot delete comments (`guideComments.ts:114-116`) — safety leans entirely on the frontend renderer.
+10. **[P3] Changelog flat path bypasses the asciify garble-guard** (`dms.ts:314` vs `:312`); cosmetic.
+
+**Verified clean:** outgoing HMAC delivery signing (per-subscriber secrets never transmitted, timing-safe), claim/lease design in both delivery queues, subscription CRUD, gallery magic-byte/key-shape/moderation flow, license status/revoke fail-closed, bot mod-command gates (backend LuckPerms resolve, re-check at consume, CSPRNG nonces), DM enqueue allowlist + caps, zero SQL injection surface (all parameterized; the one interpolated fragment is a compile-time constant), changelog asciify + no-mentions.
+
+### Cross-repo notes
+
+- `web_events` schema is plugin-owned — the backend must treat `id` as numeric everywhere; the tailer is the only consumer that doesn't.
+- Frontend header helpers are fragile: plain `botTokenMatches` routes (e.g. `/player/preferences`) accept **only** `BOT_API_TOKEN`, and the frontend **fakes success** on preferences failure (`persisted:false`) — a helper unification onto the service token would 401 silently for months.
+- License revocation is poll-based (plugin polls `GET /api/license/status`); no push channel — the webhook pipeline that could carry it is finding 3's inert path.
+- Privacy erasure covers the game DB only; backend D1 UGC (gallery rows, guide comments, guides, dm_queue, referrals) is outside the delete flow — a D1-side retention gap extending pass 2's R2 note.
