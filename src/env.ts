@@ -90,7 +90,7 @@ export interface EnvShape {
   rlV2PrincipalBudget: number;
   /**
    * Pterodactyl panel access for the aidev artifact gallery (renders the
-   * /aidev vision tools write to plugins/ImperiumMC/ai/ on the game server).
+   * /aidev vision tools write to plugins/Romanica/ai/ on the game server).
    * Optional — unset = the gallery endpoints answer configured:false and the
    * frontend shows a setup hint instead of failing.
    */
@@ -173,13 +173,13 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
       clientId: required('DISCORD_CLIENT_ID'),
       clientSecret: required('DISCORD_CLIENT_SECRET'),
       // Derive the OAuth redirect URI from BACKEND_API_BASE (reliably set in wrangler
-      // config to https://api.imperiummc.net). DISCORD_REDIRECT_URI is NOT trusted as-is:
+      // config to https://api.romanica.net). DISCORD_REDIRECT_URI is NOT trusted as-is:
       // it kept getting clobbered to a stale frontend-path value on every Workers Builds
       // redeploy, breaking Discord login with "invalid redirect_uri". The callback is a
       // fixed path on THIS backend, so computing it from the backend's own origin is always
       // correct. Only honor an explicit override if it points at a backend callback URL.
       redirectUri: (() => {
-        const base = optional('BACKEND_API_BASE', 'https://api.imperiummc.net').replace(/\/$/, '');
+        const base = optional('BACKEND_API_BASE', 'https://api.romanica.net').replace(/\/$/, '');
         const derived = `${base}/api/auth/discord/callback`;
         const override = optional('DISCORD_REDIRECT_URI');
         // Honor the override only if it's the correct backend callback (not the stale

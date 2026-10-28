@@ -1,5 +1,7 @@
 # Lane D — Backend Work Queue (Season 2)
 
+> **STATUS (2026-10-28, updated at the one-trunk merge):** S2-D01 (fail-closed RBAC, `src/middleware/gates.ts`), S2-D02 (delivery ledger + `GET /api/v2/admin/deliveries`) and S2-D03 (failed-delivery alerting) LANDED 2026-10-28 from the origin lineage. `API-CONTRACTS-S2.md` is PARTIAL — remaining packets still not started.
+
 Backend-specific detail for the nine Lane D packets. The authoritative status
 column lives in `ImperiumMC-Plugin/docs/season-2/08-WORK-QUEUE.md`; update both.
 

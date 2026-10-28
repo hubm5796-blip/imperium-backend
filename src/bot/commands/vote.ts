@@ -35,7 +35,7 @@ export const voteCommand: BotCommand = {
  value: 'Rewards arrive in game automatically after each vote. If one ever goes missing, `/vote` in game shows your pending claims.',
  },
  )
- .setFooter({ text: 'imperiummc.net' });
+ .setFooter({ text: 'romanica.net' });
  await interaction.reply({ embeds: [embed] });
  },
 };

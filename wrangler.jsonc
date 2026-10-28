@@ -6,9 +6,9 @@
 	"triggers": {
 		"crons": ["* * * * *"]
 	},
-	// Matches the existing "imperium-backend-prod" Worker (dashboard name) so
+	// Matches the existing "romanica-backend" Worker (dashboard name, renamed from imperium-backend-prod 2026-10-22) so
 	// Cloudflare's Git integration deploys new commits to that same Worker.
-	"name": "imperium-backend-prod",
+	"name": "romanica-backend",
 	"compatibility_date": "2026-08-01",
 	"compatibility_flags": [
 		"nodejs_compat"
@@ -50,14 +50,9 @@
 			"bucket_name": "imperium-community"
 		}
 	],
-	// api.imperiummc.net routes to this Worker via an existing proxied CNAME
-	// record (api -> imperium-backend-prod.playimperiummc-net.workers.dev),
-	// NOT a Wrangler-managed Custom Domain. Do NOT add a `routes` block with
-	// custom_domain:true here — it fights the CNAME for ownership of the
-	// hostname and Cloudflare's API rejects it ("already has externally
-	// managed DNS records"), which aborts the entire deploy step (the new
-	// version gets uploaded but never promoted to serve traffic). The CNAME
-	// is sufficient on its own; leave DNS as-is.
+	// api.romanica.net is a Workers Custom Domain on this Worker (dashboard-managed,
+	// not a `routes` block here: a routes entry would make every deploy fight the
+	// existing domain binding).
 	//
 	// Non-secret values. Declared here (not just the dashboard) because
 	// Workers Builds treats this file as authoritative on every Git-triggered
@@ -68,7 +63,10 @@
 	// Every one of these was previously an un-padlocked "Variable" in the
 	// dashboard (not a "Secret") — same wipe risk applied to all of them.
 	"vars": {
-		"BACKEND_API_BASE": "https://api.imperiummc.net",
+		// Mojang blocks Cloudflare Workers; its calls go through relay/ on Vercel
+		// (src/utils/mojangFetch.ts). MOJANG_RELAY_SECRET is a Worker secret.
+		"MOJANG_RELAY_URL": "https://romanica-mojang-relay.vercel.app/api/mojang",
+		"BACKEND_API_BASE": "https://api.romanica.net",
 		"DISCORD_CLIENT_ID": "1520285608906330293",
 		"DISCORD_PUBLIC_KEY": "2340504d65c62d22bab9f1150577536a0fc79d42019247dc9815bca349b45594",
 		"PAYNOW_STORE_ID": "586713008948903936",

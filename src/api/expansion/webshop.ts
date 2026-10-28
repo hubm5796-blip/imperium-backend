@@ -22,6 +22,7 @@ import { SHOP_CATALOG, findShopItem } from './shopCatalog.js';
 import { enqueueWebQueue } from './webqueue.js';
 import { mcUuidSchema, shopOrderSchema, voteBodySchema } from './schemas.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { limitParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -190,8 +191,7 @@ webshopApi.get('/shop/orders', readRateLimit, async (c) => {
     uuid = c.var.mcUuid;
   }
 
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Math.min(Math.max(Number.isNaN(limitRaw) ? 20 : limitRaw, 1), 50);
+  const limit = limitParam(c.req.query('limit'), 20, 50);
 
   try {
     const result = await query<{

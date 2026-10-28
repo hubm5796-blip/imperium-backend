@@ -1,6 +1,6 @@
-# ImperiumMC Backend
+# Romanica Backend
 
-Backend API + Discord interactions for ImperiumMC.
+Backend API + Discord interactions for Romanica (romanica.net, served at api.romanica.net).
 
 ## Architecture
 
@@ -16,8 +16,14 @@ Backend API + Discord interactions for ImperiumMC.
 - **Game MySQL (bus)**: The web command bus (2026-09-19) — signed envelopes queue in
   `web_commands`/`web_responses`/`bus_kv` on the game MariaDB (`src/db/busMysql.ts` over
   the mysqlWire client); the plugin polls at 500ms, this side at 400ms (~1s round-trip).
-  Redis remains a wake-on-demand fallback transport (`BUS_TRANSPORT=redis`) — zero
-  connections while unused, so the free host sleeps.
+  A Redis transport (`BUS_TRANSPORT=redis`) still exists in `src/db/redis.ts`.
+
+> **Never set `BUS_TRANSPORT`.** The live plugin reads only MySQL `web_commands`. With
+> `BUS_TRANSPORT=redis`, every command (store fulfillment, linking, admin actions) goes
+> to Redis, where nothing listens, and times out.
+
+Protocol-locked names: the Redis/KV keys `ImperiumMC:*` and the env var
+`IMPERIUMMC_HMAC_SECRET` are shared with the plugin. Don't rename them on one side.
 
 ## Setup
 
@@ -49,9 +55,9 @@ is used for followups and cron notifications.)
 1. Create an application at https://discord.com/developers/applications
 2. Copy the Client ID, Client Secret, and (for the interactions route) the public key
    into `.env`
-3. Set the redirect URI to `https://imperiummc.net/auth/callback`
+3. Set the redirect URI to `https://romanica.net/auth/callback`
 4. Enable the `applications.commands` scope; point an Interactions Endpoint URL at
-   `https://api.imperiummc.net/discord/interactions`
+   `https://api.romanica.net/discord/interactions`
 5. Register commands: `npm run register-commands`
 6. Required bot permissions (if you also invite the bot user): Send Messages,
    Embed Links, Read Message History
@@ -64,5 +70,9 @@ is used for followups and cron notifications.)
 
 1. Player runs `/discord link` in-game → gets 6-char code
 2. Player visits website dashboard → enters code, or types `/link <code>` in Discord
-3. Backend validates code against plugin via the game-MySQL command bus (Redis wake-on-demand fallback)
+3. Backend validates code against plugin via the game-MySQL command bus
 4. On success: `discord_links` table updated, player gets full dashboard access
+
+## Bus transport history (do not re-flip naively)
+
+`BUS_TRANSPORT=redis` was applied `08fc749` and reverted `2727d56` (2026-10-23) after client/Microsoft/Discord sign-in broke in production — the stated cause (non-string EX) was disproven (`redisSocket.ts` stringifies args); the real blocker is the month-dormant Redis path never live-tested. Re-land conditions live in `docs/reviews/2026-10-24-money-path-failure-composition.md` (post-publication note). Until then the signed command bus writes to MySQL `web_commands`, which the plugin does not read.

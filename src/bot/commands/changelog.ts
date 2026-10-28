@@ -30,7 +30,7 @@ export const changelogCommand: BotCommand = {
  .setTitle('No updates recorded yet')
  .setColor(COLORS.darkGray)
  .setDescription('Every update is documented at https://romanica.net/changelog')
- .setFooter({ text: 'imperiummc.net' });
+ .setFooter({ text: 'romanica.net' });
  await interaction.editReply({ embeds: [embed] });
  return;
  }
@@ -43,7 +43,7 @@ export const changelogCommand: BotCommand = {
  name: 'Full history',
  value: 'Every update with its full key changes: https://romanica.net/changelog',
  })
- .setFooter({ text: 'imperiummc.net' });
+ .setFooter({ text: 'romanica.net' });
  await interaction.editReply({ embeds: [embed] });
  },
 };

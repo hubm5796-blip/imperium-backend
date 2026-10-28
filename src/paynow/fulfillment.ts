@@ -53,6 +53,8 @@ export type CanonicalPaynowEvent =
   | 'subscription_activated'
   | 'subscription_renewed'
   | 'subscription_canceled'
+  | 'refund'
+  | 'chargeback'
   | 'unknown';
 
 /**
@@ -67,6 +69,10 @@ export function normalizePaynowEventType(raw: string): CanonicalPaynowEvent {
   if (compact === 'onsubscriptionactivated' || compact === 'subscriptionactivated') return 'subscription_activated';
   if (compact === 'onsubscriptionrenewed' || compact === 'subscriptionrenewed') return 'subscription_renewed';
   if (compact === 'onsubscriptioncanceled' || compact === 'subscriptioncanceled') return 'subscription_canceled';
+  // Exact matches only: OnChargebackClosed / OnChargebackLifecycle are not new
+  // chargebacks and must never trigger a second revocation path.
+  if (compact === 'onrefund' || compact === 'refund') return 'refund';
+  if (compact === 'onchargeback' || compact === 'chargeback') return 'chargeback';
   return 'unknown';
 }
 
@@ -456,4 +462,88 @@ export async function fulfillPaynowOrder(body: Record<string, unknown>): Promise
 
   logger.info({ orderId: order.orderId, buyerUuid, dispatched, skippedDuplicate, skippedUnknownProduct }, 'PayNow order fulfilled');
   return { status: 'ok', dispatched, skippedDuplicate, skippedUnknownProduct };
+}
+
+/* ── refunds / chargebacks → STORE_REFUND ─────────────────────────────────── */
+
+/**
+ * The plugin registry keys each grant on the transaction_id fulfillment sent:
+ * the bare order id for line 0, "orderId:L<i>" after (B-57). Ledger keys are
+ * '<lineIndex>:<productId>:<qty>:<uuid>'; pre-B-57 rows have no index and were
+ * all dispatched under the bare order id.
+ */
+export function refundTransactionIds(orderId: string, lineKeys: string[]): string[] {
+  const ids = new Set<string>();
+  for (const key of lineKeys) {
+    const parts = key.split(':');
+    const index = parts.length === 4 && /^\d+$/.test(parts[0]!) ? Number(parts[0]) : 0;
+    ids.add(index === 0 ? orderId : `${orderId}:L${index}`);
+  }
+  return [...ids];
+}
+
+export interface RefundResult {
+  /** 'ok' settled; 'error' webhook must 500 so PayNow retries; 'not_delivered' nothing of ours to revoke. */
+  status: 'ok' | 'error' | 'not_delivered';
+  revoked: number;
+  alreadyRefunded: number;
+  error?: string;
+}
+
+// The plugin's idempotent answer for a tx it already refunded (markRefunded claim lost).
+const ALREADY_REFUNDED = 'Transaction not found or already refunded';
+
+/**
+ * Revoke every line we delivered for a refunded or charged-back order via the
+ * plugin's STORE_REFUND (PurchaseRefundService: AUREUS clawback floored at 0,
+ * rank demote, key decrement, SEVERE+audit for unrevokable types). The
+ * plugin's markRefunded claim makes retries safe, so any failure answers
+ * 'error' and PayNow re-delivers.
+ */
+export async function refundPaynowOrder(body: Record<string, unknown>, kind: 'refund' | 'chargeback'): Promise<RefundResult> {
+  const orderId = str(body['order_id']);
+  const eventId = str(body['id']);
+  if (!orderId) return { status: 'error', revoked: 0, alreadyRefunded: 0, error: `${kind} event without order_id` };
+
+  let lineKeys: string[];
+  try {
+    const rows = await getD1()
+      .prepare('SELECT line_key FROM paynow_order_dispatches WHERE order_id = ?')
+      .bind(orderId)
+      .all<{ line_key: string }>();
+    lineKeys = (rows.results ?? []).map((r) => String(r.line_key));
+  } catch (err) {
+    return { status: 'error', revoked: 0, alreadyRefunded: 0, error: `dispatch ledger unreadable: ${String(err)}` };
+  }
+  if (lineKeys.length === 0) {
+    return { status: 'not_delivered', revoked: 0, alreadyRefunded: 0, error: `order ${orderId}: ${kind} for an order with no delivered lines` };
+  }
+
+  const reason = `paynow_${kind}:${eventId || orderId}`;
+  let revoked = 0;
+  let alreadyRefunded = 0;
+  const failures: string[] = [];
+  await Promise.all(
+    refundTransactionIds(orderId, lineKeys).map(async (transactionId) => {
+      try {
+        const response = await sendCommandWithResponse(
+          'STORE_REFUND',
+          { transaction_id: transactionId, reason, order_id: orderId },
+          DISPATCH_TIMEOUT_MS,
+        );
+        if (response.ok) revoked++;
+        else if (response.error === ALREADY_REFUNDED) alreadyRefunded++;
+        else failures.push(`${transactionId}: ${response.error ?? response.status}`);
+      } catch (err) {
+        failures.push(`${transactionId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }),
+  );
+
+  if (failures.length > 0) {
+    logger.error({ orderId, kind, failures, revoked }, 'PayNow refund revocation FAILED — webhook will 500 so PayNow retries');
+    return { status: 'error', revoked, alreadyRefunded, error: `order ${orderId}: ${failures.join('; ')}` };
+  }
+  logger.info({ orderId, kind, revoked, alreadyRefunded }, 'PayNow refund revoked in-game');
+  return { status: 'ok', revoked, alreadyRefunded };
 }

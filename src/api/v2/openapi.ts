@@ -50,7 +50,7 @@ const SPEC = {
       'consumers today.\n' +
       'v1 routes keep their legacy shapes.',
   },
-  servers: [{ url: 'https://api.imperiummc.net' }],
+  servers: [{ url: 'https://api.romanica.net' }],
   // V6 05-04: the four principal schemes. sessionCookie + botToken cover v1-era routes;
   // serviceToken is the delegated (X-Mc-Uuid) split; bearerKey is the imp_ API-key family
   // (scopes per key — enforcement via requireScope is not wired to any route yet).

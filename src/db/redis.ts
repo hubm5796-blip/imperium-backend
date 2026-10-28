@@ -495,15 +495,19 @@ function generateLinkCode(length = 6): string {
 }
 
 /**
- * The Discord identity the backend resolves during OAuth, handed off to the
- * frontend via a one-time session code so the frontend can sign its own cookie
- * without ever seeing the Discord client secret.
+ * The identity the backend resolves during a browser login (Discord OAuth or
+ * Microsoft/Minecraft sign-in), handed off to the frontend via a one-time
+ * session code so the frontend can sign its own cookie without ever seeing
+ * an OAuth secret.
  */
 export interface SessionHandoff {
-  discordId: string;
+  discordId?: string;
   discordUsername: string | null;
   /** Discord avatar hash (not a URL) — the frontend renders it via discordAvatarUrl(). */
   discordAvatar: string | null;
+  /** Microsoft (Minecraft) sign-in: the proven account, dashed-UUID form. */
+  mcUuid?: string;
+  mcUsername?: string | null;
 }
 
 /**
@@ -541,11 +545,15 @@ export async function consumeSessionCode(code: string): Promise<SessionHandoff |
   if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<SessionHandoff>;
-    if (!parsed.discordId) return null;
+    // Either identity is enough: a Discord OAuth handoff carries discordId,
+    // a Microsoft/Minecraft sign-in carries mcUuid.
+    if (!parsed.discordId && !parsed.mcUuid) return null;
     return {
-      discordId: parsed.discordId,
+      ...(parsed.discordId ? { discordId: parsed.discordId } : {}),
       discordUsername: parsed.discordUsername ?? null,
       discordAvatar: parsed.discordAvatar ?? null,
+      ...(parsed.mcUuid ? { mcUuid: parsed.mcUuid } : {}),
+      mcUsername: parsed.mcUsername ?? null,
     };
   } catch (err) {
     logger.warn({ err: String(err), key }, 'session code record corrupt — code consumed but unusable');
@@ -592,6 +600,43 @@ export async function consumeClientAuthChallenge(
     return { createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : 0 };
   } catch (err) {
     logger.warn({ err: String(err), key }, 'client auth challenge record corrupt — consumed but unusable');
+    return null;
+  }
+}
+
+/* ── Microsoft (Minecraft) website sign-in: PKCE state store ─────────────────
+ * The /auth/ms/start hop parks the PKCE verifier under the frontend-generated
+ * state; /auth/ms/callback consumes it exactly once (GETDEL semantics — the
+ * state is single-use, so a replayed authorize redirect finds nothing). */
+const MS_OAUTH_PREFIX = 'ImperiumMC:ms_oauth:';
+
+export async function storeMsOauthState(
+  state: string,
+  verifier: string,
+  ttlSeconds: number,
+): Promise<void> {
+  if (usePgBus()) {
+    await busKvPut(`${MS_OAUTH_PREFIX}${state}`, JSON.stringify({ verifier }), ttlSeconds);
+    return;
+  }
+  await redisCommand(socketConfig(), [
+    'SET',
+    `${MS_OAUTH_PREFIX}${state}`,
+    JSON.stringify({ verifier }),
+    'EX',
+    ttlSeconds,
+  ]);
+}
+
+export async function consumeMsOauthState(state: string): Promise<string | null> {
+  const raw = usePgBus()
+    ? await busKvConsume(`${MS_OAUTH_PREFIX}${state}`)
+    : await atomicGetDel(`${MS_OAUTH_PREFIX}${state}`);
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw) as { verifier?: string };
+    return typeof parsed.verifier === 'string' ? parsed.verifier : null;
+  } catch {
     return null;
   }
 }

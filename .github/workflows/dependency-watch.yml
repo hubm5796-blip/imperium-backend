@@ -1,0 +1,128 @@
+name: Dependency watch
+
+# Monthly dependency vulnerability watch: npm audit (high and above) plus an
+# OSV-Scanner pass over the repository root. Any findings fail the run and a
+# single, deduplicated "dependency-watch" issue is opened (or commented on)
+# with the scan output, so a critical vulnerability surfaces within a month
+# instead of at the next manual audit. Nothing is pinned or auto-fixed here.
+
+on:
+  schedule:
+    - cron: "0 12 1 * *" # 1st of every month, 12:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  npm-audit:
+    name: npm audit (high and above)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --silent
+
+      # The exit code drives failure: non-zero when vulnerabilities at
+      # --audit-level or higher are found, zero otherwise.
+      - name: npm audit
+        run: |
+          set -o pipefail
+          npm audit --audit-level=high 2>&1 | tee npm-audit.txt
+
+      - name: Save npm audit output
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-output
+          path: npm-audit.txt
+          if-no-files-found: ignore
+
+  osv-scanner:
+    name: OSV-Scanner
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.7.0
+    with:
+      scan-args: |-
+        --recursive
+        ./
+      upload-sarif: false # no security-events permission; results go to the issue instead
+
+  report:
+    name: Report findings
+    needs: [npm-audit, osv-scanner]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download npm audit output
+        continue-on-error: true # the audit may have failed before producing it
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-audit-output
+
+      - name: Download OSV-Scanner results
+        continue-on-error: true # the scan may have failed before uploading
+        uses: actions/download-artifact@v4
+        with:
+          name: OSV Scanner SARIF file
+
+      - name: Open or update the dependency-watch issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_AUDIT_RESULT: ${{ needs.npm-audit.result }}
+          OSV_RESULT: ${{ needs.osv-scanner.result }}
+        run: |
+          set -euo pipefail
+          gh label create dependency-watch --color B60205 \
+            --description "Automated dependency vulnerability findings from the dependency-watch workflow" \
+            2>/dev/null || true
+          existing="$(gh issue list --label dependency-watch --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+
+          osv_summary=""
+          if [ -s results.sarif ]; then
+            osv_summary="$(jq -r '.runs[]?.results[]? | "- **\(.ruleId // "unknown")** - \((.message.text // "no description") | gsub("[\\r\\n]+"; " "))"' results.sarif 2>/dev/null || true)"
+          fi
+
+          {
+            echo "The monthly dependency watch run [${GITHUB_RUN_NUMBER}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) reported problems in \`${GITHUB_REPOSITORY}\` on $(date -u '+%Y-%m-%d')."
+            echo
+            echo "Job results - npm audit: ${NPM_AUDIT_RESULT:-unknown}, OSV-Scanner: ${OSV_RESULT:-unknown}."
+            echo
+            echo "### npm audit (\`--audit-level=high\`)"
+            echo
+            echo '```'
+            cat npm-audit.txt 2>/dev/null || echo "(npm audit output was not captured - the install or the audit itself failed. See the run log.)"
+            echo '```'
+            echo
+            echo "### OSV-Scanner findings"
+            echo
+            if [ -n "$osv_summary" ]; then
+              echo "$osv_summary"
+            elif [ -s results.sarif ]; then
+              echo "(OSV-Scanner uploaded results but no vulnerabilities were summarized - download the \`OSV Scanner SARIF file\` artifact from the run page for details.)"
+            else
+              echo "(OSV-Scanner did not upload results - the scan itself may have errored. See the run log.)"
+            fi
+            echo
+            echo "_Opened automatically by the dependency-watch workflow. Close after triage; while this issue stays open, later runs add comments instead of duplicates, and a fresh issue opens once it is closed._"
+          } > issue-body.md
+
+          if [ -n "${existing:-}" ]; then
+            echo "Open dependency-watch issue #${existing} already exists - adding findings there instead of creating a duplicate."
+            gh issue comment "${existing}" --body-file issue-body.md
+          else
+            gh issue create \
+              --title "Dependency watch: ${GITHUB_REPOSITORY} findings ($(date -u '+%Y-%m-%d'))" \
+              --body-file issue-body.md \
+              --label dependency-watch
+          fi

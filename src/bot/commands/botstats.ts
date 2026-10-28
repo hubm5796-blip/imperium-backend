@@ -82,7 +82,7 @@ export const botstatsCommand: BotCommand = {
  .setTitle(`Bot stats`)
  .setDescription(`No analytics recorded yet for the last ${days} day${days === 1 ? '' : 's'}.`)
  .setColor(COLORS.darkGray)
- .setFooter({ text: 'imperiummc.net • Forge your empire.' });
+ .setFooter({ text: 'romanica.net • Forge your empire.' });
  await interaction.editReply({ embeds: [empty] });
  return;
  }
@@ -125,7 +125,7 @@ export const botstatsCommand: BotCommand = {
  { name: 'Errors', value: formatNumber(windowErrors), inline: true },
  )
  .setColor(COLORS.gold)
- .setFooter({ text: 'imperiummc.net • Forge your empire.' })
+ .setFooter({ text: 'romanica.net • Forge your empire.' })
  .setTimestamp();
  await interaction.editReply({ embeds: [embed] });
  },

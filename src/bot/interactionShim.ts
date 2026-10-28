@@ -12,7 +12,7 @@
 // ambiguity in Discord's docs. Everything after the first ack (editReply,
 // and a second reply()/deferReply() if a command calls one twice) has no
 // such timing constraint and goes through plain REST calls.
-import { fetchGuildMember, type DiscordMember } from './discordRest.js';
+import { DISCORD_REST_TIMEOUT_MS, fetchGuildMember, type DiscordMember } from './discordRest.js';
 const API_BASE = 'https://discord.com/api/v10';
 interface RawOption {
  name: string;
@@ -190,6 +190,7 @@ export class InteractionShim {
  components: payload.components,
  flags: payload.ephemeral ? EPHEMERAL_FLAG : undefined,
  }),
+ signal: AbortSignal.timeout(DISCORD_REST_TIMEOUT_MS),
  });
  if (!res.ok) {
  // fetch never throws on HTTP errors — without this check a Discord
@@ -213,6 +214,7 @@ export class InteractionShim {
  embeds: payload.embeds,
  components: payload.components,
  }),
+ signal: AbortSignal.timeout(DISCORD_REST_TIMEOUT_MS),
  });
  if (!res.ok) {
  // Same class as the followup POST: a failed PATCH leaves the user on

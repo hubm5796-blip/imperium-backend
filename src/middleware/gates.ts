@@ -145,10 +145,8 @@ export async function getPrincipal(c: Context): Promise<Principal> {
  * cross-site (and same-site non-GET) requests; non-browser callers send no
  * cookie, so the guard never applies to them. */
 export const ALLOWED_BROWSER_ORIGINS = new Set<string>([
-  'https://imperiummc.net',
-  'https://www.imperiummc.net',
-  // Rebrand cutover 2026-10: romanica.net allowed ALONGSIDE imperiummc.net until
-  // DNS/zone cutover completes — then remove the two imperiummc.net entries above.
+  // Rebrand cutover complete (2026-10-23): the retired pre-rebrand origins
+  // are gone — a session-cookie mutation claiming one is CSRF-rejected.
   'https://romanica.net',
   'https://www.romanica.net',
   'http://localhost:5173',

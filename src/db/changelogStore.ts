@@ -59,12 +59,12 @@ const SEED: { id: string; ts: number; title: string; lead: string; changes: stri
     id: 'seed-faster-website-honest-map',
     ts: Date.UTC(2026, 9, 11, 3, 32),
     title: 'A faster website, an honest map, and proper link cards',
-    lead: 'The website got a full speed pass, the live map can no longer get stuck showing an old copy, and sharing ImperiumMC links now shows a proper card.',
+    lead: 'The website got a full speed pass, the live map can no longer get stuck showing an old copy, and sharing Romanica links now shows a proper card.',
     changes: [
       'Pages you visit often now open almost instantly instead of being rebuilt from scratch every time.',
       'The live player counter refreshes without the wait, and images ship in a much lighter format.',
       'The map now forces a fresh load every visit, so a browser can never replay a broken old copy again.',
-      'ImperiumMC links on Discord and socials now show a proper card with the emblem instead of a gray rectangle.',
+      'Romanica links on Discord and socials now show a proper card with the emblem instead of a gray rectangle.',
     ],
   },
   {
@@ -74,7 +74,7 @@ const SEED: { id: string; ts: number; title: string; lead: string; changes: stri
     lead: 'The landing pages are available in three more languages, picked automatically from your browser, with a switcher in the footer.',
     changes: [
       'The homepage, the vote page, the beginner guide and the FAQ are available in Brazilian Portuguese, German and Spanish.',
-      'English always stays at imperiummc.net.',
+      'English always stays at romanica.net.',
     ],
   },
   {

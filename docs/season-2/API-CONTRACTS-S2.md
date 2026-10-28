@@ -1,5 +1,7 @@
 # Season 2 — API contracts
 
+> **STATUS (2026-10-28, updated at the one-trunk merge): PARTIAL — S2-D01/D02/D03 landed** (`GET /api/v2/admin/deliveries` is live in `src/api/v2/deliveries.ts`; RBAC fail-closed in `src/middleware/gates.ts`; delivery alerting in the cron). Remaining endpoints still PLANNED — design reference for those.
+
 Endpoints Season 2 adds or changes, and who consumes each. Agree any shape
 change with the consuming lane via a cross-lane request **before** building it;
 a contract discovered at integration time costs both lanes a rebase.

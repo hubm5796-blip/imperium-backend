@@ -1,0 +1,5 @@
+{
+  "name": "romanica-mojang-relay",
+  "private": true,
+  "type": "module"
+}

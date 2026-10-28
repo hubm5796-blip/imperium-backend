@@ -31,6 +31,7 @@ import { resolveAuditActor } from '../../utils/auditActor.js';
 import { logger } from '../../utils/logger.js';
 import { env } from '../../env.js';
 import type { AppContextVariables } from '../../types/index.js';
+import { limitParam } from '../../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -132,7 +133,7 @@ async function sendDm(botToken: string, discordId: string, notif: DmNotification
           title: `${icon} ${notif.title}`,
           description: notif.message,
           color,
-          footer: { text: 'Romanica - imperiummc.net' },
+          footer: { text: 'Romanica - romanica.net' },
           timestamp: new Date().toISOString(),
         }],
       }),
@@ -224,8 +225,7 @@ export const changelogApi = new Hono<ApiEnv>();
  * the /changelog bot command and any future site consumer read.
  */
 changelogApi.get('/changelog/list', readRateLimit, async (c) => {
-  const limit = Number(c.req.query('limit') ?? 5);
-  const posts = await listChangelogPosts(Number.isFinite(limit) ? limit : 5);
+  const posts = await listChangelogPosts(limitParam(c.req.query('limit'), 5, 25));
   c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
   return c.json({
     posts: posts.map((p) => ({
@@ -317,7 +317,7 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
     title: title,
     description: (lead + (sectionText || flatText)).slice(0, 4000),
     color: 0xcea464,
-    footer: { text: 'Romanica • imperiummc.net' },
+    footer: { text: 'Romanica • romanica.net' },
     timestamp: new Date().toISOString(),
   };
 

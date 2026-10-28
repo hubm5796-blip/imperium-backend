@@ -14,6 +14,7 @@ import {
   type PrestigeDataRow,
 } from '../types/index.js';
 import { minorUnitsToDisplay } from '../utils/money.js';
+import { mojangFetch } from '../utils/mojangFetch.js';
 
 
 /**
@@ -547,7 +548,7 @@ async function resolveUuidFromMojang(
 ): Promise<{ uuid: string; name: string | null } | null> {
   // --- Mojang (authoritative) ---
   try {
-    const res = await fetch(
+    const res = await mojangFetch(
       `https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(username)}`,
       { signal: AbortSignal.timeout(4000), headers: { Accept: 'application/json' } },
     );

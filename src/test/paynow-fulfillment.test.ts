@@ -168,7 +168,7 @@ describe('normalizePaynowEventType', () => {
   });
 
   it('unknown events stay unknown', () => {
-    expect(normalizePaynowEventType('ON_REFUND')).toBe('unknown');
+    expect(normalizePaynowEventType('OnPaymentCompleted')).toBe('unknown');
     expect(normalizePaynowEventType('')).toBe('unknown');
   });
 });

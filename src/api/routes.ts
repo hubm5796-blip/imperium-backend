@@ -85,16 +85,18 @@ import {
 } from '../paynow/client.js';
 import { DONOR_TIERS, isDonorSubscriptionProduct, isGiftableProduct, isOneTimeStoreProduct } from '../paynow/constants.js';
 import { verifyPaynowWebhook } from '../paynow/webhookVerify.js';
-import { fulfillPaynowOrder, normalizePaynowEventType, resolveCustomerUuid } from '../paynow/fulfillment.js';
+import { fulfillPaynowOrder, normalizePaynowEventType, refundPaynowOrder, resolveCustomerUuid } from '../paynow/fulfillment.js';
 import type { AppContextVariables } from '../types/index.js';
 import { CURRENCY_ALIASES } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { alertError } from '../utils/errorAlerts.js';
 import { expansionApi } from './expansion/index.js';
 import { licenseStatusApi } from './license.js';
+import { microsoftAuthApi } from './microsoftAuth.js';
 import { fetchExpansionBoard, isExpansionBoard } from './expansion/leaderboards.js';
 import { swrJson } from './expansion/cache.js';
 import { emit } from '../webhooks/deliver.js';
+import { intParam, limitParam, pageParam } from '../utils/paging.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -163,7 +165,7 @@ const botAuthMiddleware = async (c: Context, next: Next) => {
  * Route role gates (S2-D01: declared ON the route, deny by default):
  * /admin/punish requires mod+; /admin/broadcast requires helper+;
  * /admin/reload requires admin. Every dispatch writes an attributed
- * action_log audit row on success. Admin routes accept a valid session, the
+ * action_log audit row. Admin routes accept a valid session, the
  * bot/service token, or a verified per-staff token pair as the AUTHENTICATING
  * credential — the staff gate then decides what that identity may do (a
  * logged-in non-staff player resolves to anonymous and is refused).
@@ -235,7 +237,7 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     setCookie(c, 'oauth_state', '', { maxAge: 0, path: '/' });
     // B-C21: this is a browser flow — the user came from the frontend, so send
     // them back there with a machine-readable error instead of raw JSON they'd
-    // stare at on a bare api.imperiummc.net page (same shape as the sibling
+    // stare at on a bare api.romanica.net page (same shape as the sibling
     // oauth_denied / missing_code branches below).
     return c.redirect(`${frontendUrl()}/login?error=state_mismatch`, 302);
   }
@@ -257,7 +259,7 @@ api.get('/auth/discord/callback', authRateLimit, async (c) => {
     // Code-exchange handoff: store the resolved Discord identity under a one-time
     // code in Redis, then redirect to the FRONTEND's callback with that code. The
     // frontend exchanges it (POST /api/auth/exchange) and signs its own session
-    // cookie on imperiummc.net. The backend owns the OAuth + Discord secret; the
+    // cookie on romanica.net. The backend owns the OAuth + Discord secret; the
     // frontend owns the browser session — neither cookie domain nor secret leaks.
     const sessionCode = await createSessionCode({
       discordId: discordUser.id,
@@ -372,7 +374,7 @@ api.post('/auth/webcode/verify', webcodeRateLimit, async (c) => {
  * No bot-token gate: the session code is itself a single-use capability token
  * (60s TTL, consumed on read), so possession of it IS the authorization. Only
  * imperium-frontend's edge callback calls this to sign its own session cookie on
- * imperiummc.net after the backend completed the Discord OAuth. Single-use.
+ * romanica.net after the backend completed the Discord OAuth. Single-use.
  */
 api.post('/auth/exchange', exchangeRateLimit, async (c) => {
   let body: { code?: string };
@@ -396,9 +398,12 @@ api.post('/auth/exchange', exchangeRateLimit, async (c) => {
 
   return c.json({
     ok: true,
-    discordId: session.discordId,
+    discordId: session.discordId ?? null,
     discordUsername: session.discordUsername,
     discordAvatar: session.discordAvatar,
+    // Microsoft (Minecraft) sign-in handoffs carry the proven account instead
+    // of a Discord identity (absent fields are omitted by JSON serialization).
+    ...(session.mcUuid ? { mcUuid: session.mcUuid, mcUsername: session.mcUsername ?? null } : {}),
   });
 });
 
@@ -730,8 +735,7 @@ api.get('/player/stats', requireMcIdentity, async (c) => {
 api.get('/player/transactions', requireMcIdentity, async (c) => {
   const uuid = c.var.mcUuid!;
   const pageSize = 25;
-  const rawPage = Number.parseInt(c.req.query('page') ?? '1', 10);
-  const page = Number.isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
+  const page = pageParam(c.req.query('page'));
 
   // GAME MYSQL FIRST (2026-08-30): live economy_transactions (real-time, no WebSync delay).
   try {
@@ -1228,8 +1232,7 @@ api.get('/leaderboards/parkour/:course', async (c) => {
   if (!course) {
     return c.json({ error: 'Missing course parameter' }, 400);
   }
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
+  const limit = intParam(c.req.query('limit'), 20);
 
   let rows;
   try {
@@ -1252,8 +1255,7 @@ api.get('/leaderboards/parkour/:course', async (c) => {
  * Public. Ordered by ELO desc, ties broken by peak ELO.
  */
 api.get('/leaderboards/elo', async (c) => {
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
+  const limit = intParam(c.req.query('limit'), 20);
 
   let rows;
   try {
@@ -1278,8 +1280,7 @@ api.get('/leaderboards/elo', async (c) => {
  * Public. Ordered by highest wave reached desc.
  */
 api.get('/leaderboards/waves', async (c) => {
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Number.isNaN(limitRaw) ? 20 : limitRaw;
+  const limit = intParam(c.req.query('limit'), 20);
 
   let rows;
   try {
@@ -1320,8 +1321,7 @@ api.get('/leaderboards/:type', async (c) => {
       400,
     );
   }
-  const limitRaw = Number.parseInt(c.req.query('limit') ?? '20', 10);
-  const limit = Math.min(Math.max(Number.isNaN(limitRaw) ? 20 : limitRaw, 1), 100);
+  const limit = limitParam(c.req.query('limit'), 20, 100);
 
   try {
     return await swrJson(c, `leaderboard:${type}:${limit}:v1`, async () => {
@@ -1450,7 +1450,7 @@ api.get('/server/status', async (c) => {
         const pgNames = await withAttemptTimeout(
           query<{ username: string | null }>(
             `SELECT pn.username FROM online_players op
-              LEFT JOIN player_names pn ON op.uuid = op.uuid
+              LEFT JOIN player_names pn ON pn.uuid = op.uuid
              ORDER BY op.uuid
              LIMIT 100`,
             [],
@@ -1465,7 +1465,7 @@ api.get('/server/status', async (c) => {
         const mysqlNames = await withAttemptTimeout(
           gameQuery<{ username: string | null }>(
             `SELECT pn.username FROM online_players op
-              LEFT JOIN player_names pn ON op.uuid = op.uuid
+              LEFT JOIN player_names pn ON pn.uuid = op.uuid
              ORDER BY op.uuid
              LIMIT 100`,
             [],
@@ -2485,10 +2485,23 @@ api.post('/webhooks/paynow', async (c) => {
         cancelPath = false;
         break;
       }
+      case 'refund':
+      case 'chargeback': {
+        // Revoke what we delivered (plugin PurchaseRefundService). Failures
+        // 500 so PayNow retries; the plugin's refund claim makes that safe.
+        const result = await refundPaynowOrder(data, canonicalEvent);
+        if (result.status === 'error') {
+          alertError('paynow-refund-failed', result.error ?? 'PayNow refund revocation failed');
+          return c.json({ error: 'Refund revocation failed', detail: result.error }, 500);
+        }
+        if (result.status === 'not_delivered') {
+          alertError('paynow-refund-not-delivered', result.error ?? 'PayNow refund for an undelivered order');
+          return c.json({ ok: false, flagged: 'refund_not_delivered', detail: result.error }, 200);
+        }
+        break;
+      }
       case 'unknown':
       default:
-        // Other event types (refunds, chargebacks) don't need caching —
-        // rank grant/revoke is already handled by PayNow's product commands.
         break;
     }
   } catch (err) {
@@ -2576,6 +2589,8 @@ api.post('/tickets', requireMcIdentity, async (c) => {
  * own (B-12: the old code presence-checked X-Mc-Uuid and then selected
  * unfiltered, leaking every ticket to any player).
  */
+const TICKET_STATUSES = new Set(['open', 'responded', 'pending', 'closed', 'stale']);
+
 api.get('/tickets', async (c) => {
   if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
@@ -2593,10 +2608,13 @@ api.get('/tickets', async (c) => {
     }
   }
 
-  const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
-  const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') ?? '20', 10)));
+  const page = pageParam(c.req.query('page'));
+  const limit = limitParam(c.req.query('limit'), 20, 50);
   const offset = (page - 1) * limit;
   const statusFilter = c.req.query('status');
+  if (statusFilter && !TICKET_STATUSES.has(statusFilter)) {
+    return c.json({ error: 'Invalid status', allowed: [...TICKET_STATUSES] }, 400);
+  }
 
   const conds: string[] = [];
   const params: unknown[] = [];
@@ -2645,8 +2663,6 @@ api.get('/tickets/mine', requireMcIdentity, async (c) => {
  * LuckPerms-verified human when the panel forwards it), and the status is
  * allowlisted so the 48h auto-close sweep only ever sees real states.
  */
-const TICKET_RESPOND_STATUSES = new Set(['open', 'responded', 'pending', 'closed', 'stale']);
-
 api.post('/tickets/:id/respond', async (c) => {
   if (!adminAuthOk(c)) {
     return c.json({ error: 'Unauthorized' }, 401);
@@ -2662,8 +2678,8 @@ api.post('/tickets/:id/respond', async (c) => {
   const response = (body.response ?? '').trim().slice(0, 5000);
   const newStatus = (body.status ?? 'responded').trim();
   if (!response) return c.json({ error: 'Response text is required' }, 400);
-  if (!TICKET_RESPOND_STATUSES.has(newStatus)) {
-    return c.json({ error: 'Invalid status', allowed: [...TICKET_RESPOND_STATUSES] }, 400);
+  if (!TICKET_STATUSES.has(newStatus)) {
+    return c.json({ error: 'Invalid status', allowed: [...TICKET_STATUSES] }, 400);
   }
 
   const updated = await query<{ id: string }>(
@@ -3180,8 +3196,8 @@ api.get('/referrals/mine', requireMcIdentity, async (c) => {
  * Supports category filter, sorting, and pagination.
  */
 api.get('/marketplace/listings', botAuthMiddleware, async (c) => {
-  const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
-  const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') ?? '20', 10)));
+  const page = pageParam(c.req.query('page'));
+  const limit = limitParam(c.req.query('limit'), 20, 50);
   const offset = (page - 1) * limit;
   const category = c.req.query('category');
   const sort = c.req.query('sort') ?? 'recent';
@@ -3515,3 +3531,8 @@ api.route('/', expansionApi);
 // 4-8h. Revocation status is not secret — the Ed25519 token is the proof; this only says
 // whether its id (or the global kill switch) has been revoked. See src/api/license.ts.
 api.route('/', licenseStatusApi);
+// MICROSOFT (MINECRAFT) WEBSITE SIGN-IN: the client's Azure app + MS->Xbox->XSTS->
+// Minecraft chain run server-side; hands the resolved account to the frontend
+// exactly like the Discord OAuth flow (one-time session code). Azure prerequisite:
+// redirect URI https://api.romanica.net/api/auth/microsoft/callback on the app.
+api.route('/', microsoftAuthApi);

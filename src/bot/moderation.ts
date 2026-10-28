@@ -75,7 +75,7 @@ export function moderationEmbed(title: string, lines: string[], danger = false):
  .setTitle(`${danger ? '' : ''} ${title}`)
  .setDescription(lines.join('\n'))
  .setColor(danger ? COLORS.red : COLORS.gold)
- .setFooter({ text: 'imperiummc.net • Forge your empire.' })
+ .setFooter({ text: 'romanica.net • Forge your empire.' })
  .setTimestamp();
 }
 export async function handleModCommand(

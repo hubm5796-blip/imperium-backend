@@ -70,7 +70,7 @@ const WELCOME = `# Welcome to Romanica
 
 We're a Roman-themed OP prison server. Mine your way up the rank ladder, prestige, and climb from a nameless prisoner to Imperator.
 
-**IP:** \`play.imperiummc.net\` — Java + Bedrock (Geyser)
+**IP:** \`play.romanica.net\` — Java + Bedrock (Geyser)
 
 **Getting started:**
 1. Join the server and pick your first pickaxe
@@ -78,9 +78,9 @@ We're a Roman-themed OP prison server. Mine your way up the rank ladder, prestig
 3. Every mine has better ore than the last one
 
 **Link your account:**
-Run \`/link\` in-game, then \`/link\` here in Discord with the code it gives you. Linking unlocks balance checks, stat lookups, and the dashboard at imperiummc.net
+Run \`/link\` in-game, then \`/link\` here in Discord with the code it gives you. Linking unlocks balance checks, stat lookups, and the dashboard at romanica.net
 
-**Store:** store.imperiummc.net — supporter tiers, Aureus, crates
+**Store:** romanica.net/store — supporter tiers, Aureus, crates
 
 If you need help, open a ticket with \`/ticket\` in <#support>. We answer fast.`;
 
@@ -135,7 +135,7 @@ const LINK_INFO = `# Account Linking
 **Why link?**
 - Check your balance from Discord with \`/balance\`
 - See your stats, crate keys, and progress with \`/profile\`
-- Log into the dashboard at imperiummc.net
+- Log into the dashboard at romanica.net
 - Get the Linked role here
 
 **How to link:**

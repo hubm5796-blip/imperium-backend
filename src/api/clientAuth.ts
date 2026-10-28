@@ -41,6 +41,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { logger } from '../utils/logger.js';
 import { ok, fail } from './v2/respond.js';
 import type { AppContextVariables } from '../types/index.js';
+import { mojangFetch } from '../utils/mojangFetch.js';
 
 type ApiEnv = { Variables: AppContextVariables };
 
@@ -119,7 +120,7 @@ clientAuthApi.post('/auth/verify', verifyRateLimit, async (c) => {
   const url = `${HASJOINED_URL}?username=${encodeURIComponent(username)}&serverId=${serverId}`;
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await mojangFetch(url, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(HASJOINED_TIMEOUT_MS),
     });

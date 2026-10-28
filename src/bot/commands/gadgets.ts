@@ -53,7 +53,7 @@ export const gadgetsCommand: BotCommand = {
  inline: false,
  },
  )
- .setFooter({ text: 'imperiummc.net • Forge your empire.' })
+ .setFooter({ text: 'romanica.net • Forge your empire.' })
  .setTimestamp();
  await interaction.editReply({ embeds: [embed] });
  },

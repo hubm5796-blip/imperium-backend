@@ -130,7 +130,7 @@ export function createApp() {
   // V6 02-08: the game→Discord bridge (Bearer BRIDGE_SECRET; chat + typed events).
   app.route('/bridge', bridgeApi);
   // Discord's Interactions Endpoint URL — configured in the Discord
-  // Developer Portal to point at https://api.imperiummc.net/discord/interactions.
+  // Developer Portal to point at https://api.romanica.net/discord/interactions.
   app.route('/discord/interactions', discordInteractions);
 
   // Catch any uncaught exception from a route handler so we never leak a stack
