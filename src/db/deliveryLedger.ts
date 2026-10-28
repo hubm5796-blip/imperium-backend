@@ -166,7 +166,7 @@ export async function ledgerLineQueued(entry: QueuedDeliveryLine): Promise<void>
 /** Generic patch update — WHERE order_id [+ line_key]. NEVER throws. */
 async function patchLines(
   where: { orderId: string; lineKey?: string },
-  patch: Partial<Pick<DeliveryLineRow, 'status' | 'executed_at' | 'failed_reason' | 'grant_verified_at' | 'grant_evidence' | 'alerted_at' | 'resolved_at'>>,
+  patch: Partial<Pick<DeliveryLineRow, 'status' | 'executed_at' | 'failed_reason' | 'grant_verified_at' | 'grant_evidence' | 'alerted_at' | 'resolved_at' | 'updated_at'>>,
 ): Promise<void> {
   try {
     await ensureSchema();
