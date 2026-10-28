@@ -324,7 +324,10 @@ export interface RowBreaches {
   faucet_offenders: string[];
 }
 
-const BREACH_WINDOW_DAYS = 7;
+/** The rolling breach window length, in stored rows (days). Exported so the
+ *  S2-D06 alerting module evaluates the SAME window markBreaches does — one
+ *  definition, no drift. */
+export const BREACH_WINDOW_DAYS = 7;
 
 /**
  * Mark breaches for every row of an ASCENDING series. The weekly windows end
