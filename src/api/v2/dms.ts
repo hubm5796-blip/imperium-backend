@@ -26,7 +26,10 @@ import { readRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
 import { requireServiceToken } from '../../middleware/serviceToken.js';
 import { parseMcUuid } from '../../middleware/gates.js';
 import { recordAction } from '../../db/actionLog.js';
-import { recordChangelogPost, listChangelogPosts, pruneDuplicateChangelogPosts } from '../../db/changelogStore.js';
+import { recordChangelogPost, pruneDuplicateChangelogPosts } from '../../db/changelogStore.js';
+import { listChangelogEntries, upsertChangelogEntry } from '../../changelog/store.js';
+import { CHANGELOG_PRODUCTS, isChangelogProduct } from '../../changelog/types.js';
+import type { ChangelogProduct } from '../../changelog/types.js';
 import { resolveAuditActor } from '../../utils/auditActor.js';
 import { logger } from '../../utils/logger.js';
 import { env } from '../../env.js';
@@ -219,20 +222,50 @@ dmApi.post('/notifications/dm', writeRateLimit, async (c) => {
 export const changelogApi = new Hono<ApiEnv>();
 
 /**
- * GET /api/v2/changelog/list?limit=5 — public, cacheable read of the posted
- * changelog record (D1 store; see db/changelogStore.ts). The service-token
- * guard below is mounted on /changelog/post paths only — this list is what
- * the /changelog bot command and any future site consumer read.
+ * GET /api/v2/changelog/list?limit=5&product=server — public, cacheable read
+ * of the ONE changelog store (D1, changelog_entry; see src/changelog/store.ts).
+ * Serves every origin: the imported site updates (id = the site slug, so
+ * /changelog/<slug> permalinks resolve), Discord-posted server changelogs and
+ * synced GitHub releases. Optional exact `product` filter (400 on anything
+ * outside the vocabulary); stable newest-first ordering (date DESC, id DESC).
+ * Each entry carries its product, version and links. The service-token guard
+ * below is mounted on /changelog/post and /changelog/release only — this list
+ * is what the /changelog bot command, the website and the client title screen
+ * read (client tokens: explicitly allowlisted in middleware/gates.ts).
  */
 changelogApi.get('/changelog/list', readRateLimit, async (c) => {
-  const posts = await listChangelogPosts(limitParam(c.req.query('limit'), 5, 25));
+  const limit = limitParam(c.req.query('limit'), 5, 200);
+  const productParam = c.req.query('product');
+  let product: ChangelogProduct | undefined;
+  if (productParam) {
+    if (!isChangelogProduct(productParam)) {
+      return c.json({ error: `product must be one of: ${CHANGELOG_PRODUCTS.join(', ')}` }, 400);
+    }
+    product = productParam;
+  }
+  const entries = await listChangelogEntries({ limit, product });
   c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
   return c.json({
-    posts: posts.map((p) => ({
+    // Straight from the store's single source (src/changelog/types.ts) so no
+    // consumer hardcodes a second copy of the vocabulary.
+    products: CHANGELOG_PRODUCTS,
+    count: entries.length,
+    posts: entries.map((p) => ({
+      id: p.id,
+      product: p.product,
+      version: p.version,
       title: p.title,
-      lead: p.lead,
-      postedAt: new Date(p.ts).toISOString(),
-      sections: p.body?.sections ?? (p.body?.changes?.length ? [{ name: 'Changes', changes: p.body.changes }] : []),
+      lead: p.summary, // legacy alias (pre-#9 consumers read `lead`)
+      summary: p.summary,
+      postedAt: new Date(p.date).toISOString(), // legacy alias — same instant as `date`
+      date: new Date(p.date).toISOString(),
+      sections: p.body.sections ?? (p.body.changes?.length ? [{ name: 'Changes', changes: p.body.changes }] : []),
+      keyChanges: p.body.keyChanges ?? [],
+      action: p.body.action ?? null,
+      tags: p.body.tags ?? [],
+      links: p.links,
+      related: p.related,
+      syncedAt: p.syncedAt !== null ? new Date(p.syncedAt).toISOString() : null,
     })),
   });
 });
@@ -299,6 +332,14 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
     return c.json({ error: 'title and at least one change are required' }, 400);
   }
 
+  // Optional product stamping (#9): Discord posts are server changelogs unless
+  // the caller says otherwise. Validated against the store's vocabulary.
+  const product = typeof body.product === 'string' && body.product !== '' ? body.product : 'server';
+  if (!isChangelogProduct(product)) {
+    return c.json({ error: `product must be one of: ${CHANGELOG_PRODUCTS.join(', ')}` }, 400);
+  }
+  const version = typeof body.version === 'string' && body.version.trim() !== '' ? body.version.trim().slice(0, 50) : null;
+
   const channelId = env.changelogChannelId;
   const botToken = env.discord.botToken;
   if (!channelId || !botToken) {
@@ -346,11 +387,141 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
     });
     // Durable record for /api/v2/changelog/list + the /changelog bot command
     // (write-after-action; a store failure never fails the delivered post).
-    await recordChangelogPost({ title, lead: description, sections: sections.map((s) => ({ name: s.name, changes: s.changes })), changes });
+    // Dual-writes the legacy table AND the canonical changelog_entry store
+    // (same id) — see db/changelogStore.ts.
+    await recordChangelogPost({
+      title,
+      lead: description,
+      sections: sections.map((s) => ({ name: s.name, changes: s.changes })),
+      changes,
+      product,
+      version,
+    });
     return c.json({ posted: true, actor: actor.id });
   } catch (err) {
     logger.error({ err: String(err) }, 'changelog post crashed');
     return c.json({ error: 'Post failed' }, 502);
+  }
+});
+
+// ── GitHub release sync (#9) ────────────────────────────────────────────────
+// POST /api/v2/changelog/release — the upsert endpoint of the release-sync
+// design. A sync job (follow-up wiring: a scheduled() step per product repo —
+// client, launcher, pack — that lists GitHub releases newer than the last
+// syncedAt and POSTs each one here) turns a release into a changelog entry
+// WITHOUT hand-posting. The endpoint is the contract; the cron is a follow-up.
+//
+// Idempotency: the id defaults to the deterministic `<product>-<version>`, so
+// replaying the same release (retry, cron re-run, backfill) UPSERTS one row —
+// never a duplicate — and refreshes synced_at. Different versions coexist.
+// Unlike the curated store path, failures here are REPORTED (502), not
+// absorbed: a sync that lies about success is worse than a retry.
+changelogApi.use('/changelog/release*', readRateLimit, requireServiceToken);
+
+changelogApi.post('/changelog/release', writeRateLimit, async (c) => {
+  let body: Record<string, unknown> = {};
+  try {
+    const raw = await c.req.json();
+    if (raw && typeof raw === 'object') body = raw as Record<string, unknown>;
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const product = typeof body.product === 'string' ? body.product : '';
+  if (!isChangelogProduct(product)) {
+    return c.json({ error: `product must be one of: ${CHANGELOG_PRODUCTS.join(', ')}` }, 400);
+  }
+  const version = typeof body.version === 'string' ? body.version.trim() : '';
+  if (!/^[A-Za-z0-9._+-]{1,50}$/.test(version)) {
+    return c.json({ error: 'version is required (1-50 chars of [A-Za-z0-9._+-])' }, 400);
+  }
+  const title = typeof body.title === 'string' && body.title.trim() !== '' ? body.title.trim().slice(0, 200) : `${product} ${version}`;
+  const markdown = typeof body.body === 'string' ? body.body : '';
+  if (!markdown.trim()) return c.json({ error: 'body is required (release notes)' }, 400);
+  if (markdown.length > 32_000) return c.json({ error: 'body must be 32,000 characters or fewer' }, 400);
+
+  // Summary: caller-supplied, else the first non-empty line of the notes with
+  // markdown list/heading prefixes stripped — enough for a one-line lead.
+  const summary =
+    typeof body.summary === 'string' && body.summary.trim() !== ''
+      ? body.summary.trim().slice(0, 300)
+      : markdown
+          .split('\n')
+          .map((l) => l.replace(/^#{1,6}\s*|^[-*]\s*|^\d+\.\s*/, '').trim())
+          .find((l) => l !== '')
+          ?.slice(0, 300) ?? title;
+
+  // date: release publication date (ms epoch); defaults to now.
+  let date = Date.now();
+  if (body.date !== undefined) {
+    const parsed = typeof body.date === 'number' ? body.date : typeof body.date === 'string' ? Date.parse(body.date) : NaN;
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return c.json({ error: 'date must be an epoch-ms number or an ISO date string' }, 400);
+    }
+    date = parsed;
+  }
+
+  // links: release URL must be https; pr/issue accept a number string or URL.
+  const links: { release?: string; pr?: string; issue?: string } = {};
+  if (body.releaseUrl !== undefined) {
+    const releaseUrl = typeof body.releaseUrl === 'string' ? body.releaseUrl : '';
+    if (!/^https:\/\/[\w.-]+(:\d+)?(\/[\w.\-~/]*)?$/.test(releaseUrl) || releaseUrl.length > 500) {
+      return c.json({ error: 'releaseUrl must be an https URL' }, 400);
+    }
+    links.release = releaseUrl;
+  }
+  for (const key of ['pr', 'issue'] as const) {
+    const raw = body[key];
+    if (raw === undefined) continue;
+    const value = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw.trim() : '';
+    if (/^\d{1,12}$/.test(value) || /^https:\/\/[\w.-]+(\/[\w.\-~/]*)?$/.test(value)) {
+      links[key] = value.slice(0, 500);
+    } else {
+      return c.json({ error: `${key} must be a number or an https URL` }, 400);
+    }
+  }
+
+  const related = Array.isArray(body.related)
+    ? (body.related as unknown[]).filter((r): r is string => typeof r === 'string' && /^[\w.-]{1,120}$/.test(r)).slice(0, 20)
+    : [];
+
+  // Deterministic id (the idempotency anchor); an explicit id must stay slug-like.
+  const id = typeof body.id === 'string' && body.id !== '' ? body.id.trim() : `${product}-${version}`;
+  if (!/^[\w.-]{1,140}$/.test(id)) {
+    return c.json({ error: 'id must be 1-140 chars of [A-Za-z0-9._-]' }, 400);
+  }
+
+  try {
+    const result = await upsertChangelogEntry({
+      id,
+      date,
+      product,
+      version,
+      title,
+      summary,
+      body: { markdown },
+      links,
+      related,
+      syncedAt: Date.now(), // the sync stamp — every successful upsert refreshes it
+    });
+    // Per-actor audit attribution (same doctrine as /changelog/post): a sync
+    // speaks with the service principal's identity; an audit failure must not
+    // undo the committed upsert.
+    try {
+      const actor = await resolveAuditActor(c);
+      await recordAction({
+        actor,
+        action: 'changelog.release.sync',
+        target: id,
+        detail: `${product}@${version} created=${result.created}`,
+      });
+    } catch (err) {
+      logger.warn({ err: String(err) }, 'changelog release sync audit write failed (upsert committed)');
+    }
+    return c.json({ upserted: true, id, created: result.created, product, version });
+  } catch (err) {
+    logger.error({ err: String(err) }, 'changelog release sync failed');
+    return c.json({ error: 'Sync failed' }, 502);
   }
 });
 
