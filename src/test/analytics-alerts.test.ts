@@ -430,6 +430,9 @@ describe('S2-D06: economy breach alerting', () => {
 /* ── Cron wiring ──────────────────────────────────────────────────────────── */
 
 describe('S2-D06 cron leg', () => {
+  // These run the ENTIRE cron pass (every leg). Under full-suite worker load
+  // a pass can take seconds of wall clock; the default 5s budget is too tight
+  // for a whole-pass test, so these carry an explicit one.
   it('runBotCron folds a breaching day and alerts on it in the SAME pass', async () => {
     const { runBotCron } = await import('../bot/cron.js');
     const report = await runBotCron(new Date('2026-09-18T00:07:00Z'));
@@ -450,20 +453,22 @@ describe('S2-D06 cron leg', () => {
     expect(second.economyAlerts.evaluated).toBe(false);
     expect(second.economyAlerts.alerted).toBe(0);
     expect(posts).toHaveLength(1); // still exactly one — not a loop
-  });
+  }, 20_000);
 
   it('a crashed alert leg never takes the cron pass down', async () => {
-    vi.doMock('../analytics/alerts.js', () => ({
-      runEconomyAlertEvaluation: vi.fn(async () => {
-        throw new Error('boom');
-      }),
-    }));
-    const { runBotCron } = await import('../bot/cron.js');
-    const report = await runBotCron(new Date('2026-09-18T00:07:00Z'));
-    expect(report.economyAlerts.evaluated).toBe(false);
-    expect(report.economyAlerts.errors).toBe(0); // the leg caught it; the report stays initial
-    vi.doUnmock('../analytics/alerts.js');
-  });
+    // Spy on the same module instance the cron leg dynamically imports —
+    // deterministic regardless of module-cache order.
+    const alerts = await import('../analytics/alerts.js');
+    const spy = vi.spyOn(alerts, 'runEconomyAlertEvaluation').mockRejectedValue(new Error('boom'));
+    try {
+      const { runBotCron } = await import('../bot/cron.js');
+      const report = await runBotCron(new Date('2026-09-18T00:07:00Z'));
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(report.economyAlerts.evaluated).toBe(false); // the leg caught it; the report stays initial
+    } finally {
+      spy.mockRestore();
+    }
+  }, 20_000);
 });
 
 /* ── Migration parity ─────────────────────────────────────────────────────── */
