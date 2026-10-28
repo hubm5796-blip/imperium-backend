@@ -36,6 +36,9 @@ export interface CronReport {
   economy: { ran: boolean; day: string | null; error?: string };
   retention: { ran: boolean; players: number; days: number; error?: string };
  };
+ /** S2-D06: economy breach alerting (gini / weekly supply delta / faucet
+  * concentration — deduped per breach-window in D1, resolve on recovery). */
+ economyAlerts: { evaluated: boolean; day: string | null; alerted: number; resolved: number; open: string[]; errors: number };
  /** B-39: true when another isolate already ran this minute's pass — every
  * leg stayed untouched (the report is all-zero). */
  skipped?: boolean;
@@ -64,6 +67,7 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
   economy: { ran: false, day: null },
   retention: { ran: false, players: 0, days: 0 },
  },
+ economyAlerts: { evaluated: false, day: null, alerted: 0, resolved: 0, open: [], errors: 0 },
  };
  // Minute-granular claim: one pass per wall-clock minute, fleet-wide.
  try {
@@ -148,6 +152,20 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
  report.analytics = await runAnalyticsDaily(now);
  } catch (err) {
  logger.error({ err: String(err) }, 'cron: analytics leg crashed');
+ }
+ // S2-D06: economy breach alerts — evaluates the STORED daily rows' breach
+ // booleans (no game-DB dependency) at most once per UTC hour; deduped per
+ // breach-window in D1 (economy_breach_state), resolve on recovery, armed
+ // but silent while STAFF_ALERT_WEBHOOK_URL is unset. A failed hour
+ // self-heals on the next (the evaluation is idempotent).
+ try {
+ const { runEconomyAlertEvaluation } = await import('../analytics/alerts.js');
+ const hourKey = `analytics-econ-alerts:${now.toISOString().slice(0, 13)}`; // YYYY-MM-DDTHH
+ if (await claim(hourKey)) {
+ report.economyAlerts = await runEconomyAlertEvaluation(now);
+ }
+ } catch (err) {
+ logger.error({ err: String(err) }, 'cron: economy alert leg crashed');
  }
  return report;
 }
