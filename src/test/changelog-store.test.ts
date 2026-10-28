@@ -433,6 +433,42 @@ describe('release sync upsert (POST /changelog/release)', () => {
     expect(rows[0]!.syncedAt!).toBeGreaterThan(before); // stamp refreshed
   });
 
+  it('an explicit slug id makes version optional (website entries carry none)', async () => {
+    // Issue #9 site import: /changelog/<slug> permalinks anchor on the id alone;
+    // the store's version column is nullable and website entries legitimately
+    // have no version. The REQUIRED-version rule exists for the auto-derived
+    // <product>-<version> anchor only.
+    const res = await changelogApi.request('/changelog/release', {
+      method: 'POST',
+      headers: { ...SERVICE, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'store-link-rank-protection-anticheat',
+        date: '2026-10-28T00:00:00.000Z',
+        product: 'server',
+        title: 'Store link restored, your rank protected',
+        summary: 'The in-game store link works again.',
+        body: '- fixed the dead-domain link',
+      }),
+    });
+    const dbg = await res.text();
+    expect(res.status, dbg).toBe(200);
+    const json = JSON.parse(dbg) as { id: string; created: boolean };
+    expect(json.id).toBe('store-link-rank-protection-anticheat');
+    const row = (await listChangelogEntries({ limit: 10 }))[0]!;
+    expect(row.version).toBeNull();
+    expect(row.body.markdown).toContain('dead-domain link');
+  });
+
+  it('still requires version when the id is auto-derived', async () => {
+    const res = await changelogApi.request('/changelog/release', {
+      method: 'POST',
+      headers: { ...SERVICE, 'content-type': 'application/json' },
+      body: JSON.stringify({ product: 'launcher', title: 'No version given', summary: 's', markdown: '- x' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('version is required');
+  });
+
   it('different versions coexist as separate entries', async () => {
     for (const version of ['0.2.8', '0.2.9']) {
       const res = await changelogApi.request('/changelog/release', {

@@ -432,10 +432,15 @@ changelogApi.post('/changelog/release', writeRateLimit, async (c) => {
     return c.json({ error: `product must be one of: ${CHANGELOG_PRODUCTS.join(', ')}` }, 400);
   }
   const version = typeof body.version === 'string' ? body.version.trim() : '';
-  if (!/^[A-Za-z0-9._+-]{1,50}$/.test(version)) {
+  // An explicit slug-like id is a sufficient anchor on its own — website entries
+  // legitimately carry no version (the store column is nullable). Version stays
+  // REQUIRED only for the auto-derived <product>-<version> id form, where it is
+  // half of the idempotency anchor.
+  const explicitId = typeof body.id === 'string' && body.id.trim() !== '';
+  if (!explicitId && !/^[A-Za-z0-9._+-]{1,50}$/.test(version)) {
     return c.json({ error: 'version is required (1-50 chars of [A-Za-z0-9._+-])' }, 400);
   }
-  const title = typeof body.title === 'string' && body.title.trim() !== '' ? body.title.trim().slice(0, 200) : `${product} ${version}`;
+  const title = typeof body.title === 'string' && body.title.trim() !== '' ? body.title.trim().slice(0, 200) : `${product} ${version || body.id || 'update'}`;
   const markdown = typeof body.body === 'string' ? body.body : '';
   if (!markdown.trim()) return c.json({ error: 'body is required (release notes)' }, 400);
   if (markdown.length > 32_000) return c.json({ error: 'body must be 32,000 characters or fewer' }, 400);
@@ -496,7 +501,7 @@ changelogApi.post('/changelog/release', writeRateLimit, async (c) => {
       id,
       date,
       product,
-      version,
+      version: version || null,
       title,
       summary,
       body: { markdown },
