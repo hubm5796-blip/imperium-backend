@@ -31,6 +31,11 @@ export interface CronReport {
  dms: { sent: number; failed: number; skipped: number };
  /** S2-D03: failed-delivery alerting (breach + resolve, deduped in D1). */
  deliveries: { alerted: number; resolved: number; staleMarked: number; errors: number };
+ /** S2-D05/S2-D07: daily analytics fold (economy day row + retention seen/days). */
+ analytics: {
+  economy: { ran: boolean; day: string | null; error?: string };
+  retention: { ran: boolean; players: number; days: number; error?: string };
+ };
  /** B-39: true when another isolate already ran this minute's pass — every
  * leg stayed untouched (the report is all-zero). */
  skipped?: boolean;
@@ -55,6 +60,10 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
  tickets: { threaded: 0, staleClosed: 0, errors: 0 },
  dms: { sent: 0, failed: 0, skipped: 0 },
  deliveries: { alerted: 0, resolved: 0, staleMarked: 0, errors: 0 },
+ analytics: {
+  economy: { ran: false, day: null },
+  retention: { ran: false, players: 0, days: 0 },
+ },
  };
  // Minute-granular claim: one pass per wall-clock minute, fleet-wide.
  try {
@@ -129,6 +138,16 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
  report.deliveries = await runDeliveryAlertSweep(now);
  } catch (err) {
  logger.error({ err: String(err) }, 'cron: delivery alert sweep crashed');
+ }
+ // S2-D05/S2-D07: the daily analytics leg — aggregates the finished day's
+ // economy row (game MySQL -> economy_daily_row) and folds player state +
+ // presence days into the retention tables. Self-guarded (00:06 UTC window,
+ // per-day claims); no-ops outside the window, never throws.
+ try {
+ const { runAnalyticsDaily } = await import('../analytics/cronSync.js');
+ report.analytics = await runAnalyticsDaily(now);
+ } catch (err) {
+ logger.error({ err: String(err) }, 'cron: analytics leg crashed');
  }
  return report;
 }

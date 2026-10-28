@@ -17,6 +17,8 @@ import { guideCommentsV2 } from './guideComments.js';
 import { crashReportsV2 } from './crashReports.js';
 import { dmApi, changelogApi } from './dms.js';
 import { deliveriesV2 } from './deliveries.js';
+import { economyV2 } from './economy.js';
+import { retentionV2 } from './retention.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -40,3 +42,5 @@ v2Api.route('/', crashReportsV2);
 v2Api.route('/', dmApi);
 v2Api.route('/', changelogApi);
 v2Api.route('/', deliveriesV2); // S2-D02 delivery ledger (Lane D) — append-only
+v2Api.route('/', economyV2); // S2-D05 economy snapshot (Lane D) — append-only
+v2Api.route('/', retentionV2); // S2-D07 retention instrumentation (Lane D) — append-only
