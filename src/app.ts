@@ -17,6 +17,7 @@ import { discordInteractions } from './bot/interactions.js';
 import { botAdmin } from './bot/adminRegisterRoute.js';
 import { bridgeApi } from './bot/bridge.js';
 import { logger } from './utils/logger.js';
+import { env } from './env.js';
 import { rateLimitV2 } from './middleware/rateLimitV2.js';
 import { attachUser } from './middleware/auth.js';
 import { ALLOWED_BROWSER_ORIGINS, attachPrincipal, clientTokenAllowlist, sessionCsrfGuard } from './middleware/gates.js';
@@ -25,6 +26,15 @@ import { alertError } from './utils/errorAlerts.js';
 import type { AppContextVariables } from './types/index.js';
 
 export function createApp() {
+  // D04 visibility: while CLIENT_JWT_SECRET is unset the client token family
+  // signs with the session secret (audience separation still applies). The
+  // split activates the moment the owner sets the variable — env-only, no
+  // redeploy of code.
+  if (env.clientJwtSecretShared) {
+    logger.warn(
+      '[D04] CLIENT_JWT_SECRET is unset — client tokens share the session JWT secret. Set CLIENT_JWT_SECRET (32+ chars) to split the trust families.',
+    );
+  }
   const app = new Hono<{ Variables: AppContextVariables }>();
 
   app.use(

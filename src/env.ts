@@ -19,6 +19,9 @@ export interface EnvShape {
     publicKey: string;
   };
   jwtSecret: string;
+  clientJwtSecret: string;
+  /** True while CLIENT_JWT_SECRET is unset (falls back to jwtSecret). */
+  clientJwtSecretShared: boolean;
   /** Node dev/prod only — Workers gets its Postgres connection via the Hyperdrive binding instead. */
   databaseUrl: string;
   /** Trust X-Forwarded-For for client IP (rate limiting). The rate limiter reads this so a
@@ -168,6 +171,20 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     );
   }
 
+  // D04 (token hygiene): the client token family gets its OWN signing secret.
+  // CLIENT_JWT_SECRET is optional-with-fallback so existing deploys keep
+  // working; the moment it is set, the two trust families stop sharing key
+  // material at all (audience separation was already enforced — this removes
+  // the shared-secret coupling the packet called out). clientJwtSecretShared
+  // lets startup warn loudly while the fallback is in effect.
+  const clientJwtSecret = optional('CLIENT_JWT_SECRET', jwtSecret);
+  if (clientJwtSecret.length < 32) {
+    throw new Error(
+      'Environment variable CLIENT_JWT_SECRET must be at least 32 characters long.',
+    );
+  }
+  const clientJwtSecretShared = clientJwtSecret === jwtSecret;
+
   return {
     discord: {
       clientId: required('DISCORD_CLIENT_ID'),
@@ -191,6 +208,8 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
       publicKey: optional('DISCORD_PUBLIC_KEY'),
     },
     jwtSecret,
+    clientJwtSecret,
+    clientJwtSecretShared,
     trustProxy: optionalBool('TRUST_PROXY', false),
     databaseUrl: opts.requireDatabaseUrl ? required('DATABASE_URL') : optional('DATABASE_URL'),
     redis: {

@@ -39,6 +39,15 @@ function secretKey(): Uint8Array {
   return encoder.encode(env.jwtSecret);
 }
 
+/** D04: the client family signs with CLIENT_JWT_SECRET (falling back to the
+ *  session secret until the owner sets it — env.clientJwtSecretShared gates
+ *  the startup warning). Splitting the key material means a compromised
+ *  session secret can never mint client tokens and vice versa, even if an
+ *  audience check is ever lost. */
+function clientSecretKey(): Uint8Array {
+  return encoder.encode(env.clientJwtSecret);
+}
+
 /**
  * Create a signed JWT for either a Discord session or an in-game-code
  * session. Uses `jose` (Web Crypto / SubtleCrypto) rather than
@@ -149,7 +158,7 @@ export async function signClientJwt(payload: ClientSignPayload): Promise<string>
     .setExpirationTime(now + CLIENT_JWT_EXPIRY_SECONDS)
     .setIssuer(CLIENT_JWT_ISSUER)
     .setAudience(CLIENT_JWT_AUDIENCE)
-    .sign(secretKey());
+    .sign(clientSecretKey());
 }
 
 /**
@@ -163,7 +172,7 @@ export async function signClientJwt(payload: ClientSignPayload): Promise<string>
 export async function verifyClientJwt(token: string | undefined | null): Promise<ClientJwtPayload | null> {
   if (!token) return null;
   try {
-    const { payload: decoded } = await jwtVerify<JWTPayload & ClientSignPayload>(token, secretKey(), {
+    const { payload: decoded } = await jwtVerify<JWTPayload & ClientSignPayload>(token, clientSecretKey(), {
       algorithms: ['HS256'],
       issuer: CLIENT_JWT_ISSUER,
       audience: CLIENT_JWT_AUDIENCE,
