@@ -1,4 +1,5 @@
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
+import { randomUUID } from 'node:crypto';
 import type { CookieOptions } from 'hono/utils/cookie';
 import { env } from '../env.js';
 import type { JwtPayload } from '../types/index.js';
@@ -54,11 +55,17 @@ function clientSecretKey(): Uint8Array {
  * `jsonwebtoken` (Node crypto) — this is the backend's own session system
  * (not the live user-facing one on romanica.net), but it still needs to
  * run in the Workers runtime, so it's built on the portable primitive.
+ *
+ * S2-D04: every token carries a `jti` (randomUUID) — the revocation list's
+ * per-token key (src/auth/sessionRevocations.ts). Legacy tokens minted
+ * before this deploy have no jti and are only reachable by the uuid-ALL
+ * key; they age out within 7 days of the deploy.
  */
 export async function signJwt(payload: SignPayload): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: 'HS256' })
+    .setJti(randomUUID())
     .setIssuedAt(now)
     .setExpirationTime(now + JWT_EXPIRY_SECONDS)
     .sign(secretKey());
@@ -116,6 +123,10 @@ export async function verifyJwt(token: string | undefined | null): Promise<JwtPa
       discordUsername: decoded.discordUsername,
       discordAvatar: decoded.discordAvatar ?? null,
       mcUuid: decoded.mcUuid,
+      // S2-D04: pass the token id through when present — the revocation
+      // check (attachUser → isSessionRevoked) keys on it. Absent on legacy
+      // tokens; verifyJwt rejects nothing for its absence (they age out).
+      jti: typeof decoded.jti === 'string' ? decoded.jti : undefined,
       // B-01/X-04 claim fallback: forwarded tokens may carry the panel's
       // verified staff role. Only the closed enum survives verification —
       // anything else is dropped (the LuckPerms linkage fallback then

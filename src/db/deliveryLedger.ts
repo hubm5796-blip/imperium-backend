@@ -93,6 +93,11 @@ async function ensureSchema(): Promise<void> {
   schemaEnsured = true;
 }
 
+/** Test hook — the next ensureSchema runs for real again (fresh-db tests). */
+export function __resetDeliveryLedgerSchemaForTests(): void {
+  schemaEnsured = false;
+}
+
 /** Column whitelist for patch-based updates (never interpolate caller keys). */
 const UPDATEABLE = new Set([
   'status',

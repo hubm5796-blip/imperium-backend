@@ -7,6 +7,7 @@ import {
   verifyClientJwt,
   verifyJwt,
 } from '../auth/jwt.js';
+import { isSessionRevoked } from '../auth/sessionRevocations.js';
 import { env } from '../env.js';
 import { getUuidByDiscordId } from '../db/pool.js';
 import type { AppContextVariables } from '../types/index.js';
@@ -49,7 +50,20 @@ export const attachUser: MiddlewareHandler<AuthEnv> = async (c, next) => {
   }
   const token = getCookie(c, AUTH_COOKIE_NAME);
   let user = await verifyJwt(token);
-  if (!user) {
+  // S2-D04: the session revocation list. A revoked token (logged out via the
+  // revocation surface, or force-revoked by an admin — per-jti or uuid-ALL)
+  // is treated as NO session from this request on. A revoked cookie also
+  // does NOT fall through to the client-bearer path below: "this session was
+  // explicitly killed" must not silently promote the request's other
+  // credential in the same breath. The check is bounded (~1.5s) and fails
+  // OPEN on D1 trouble (availability over limiting — the rateLimitV2
+  // convention; the 7-day expiry itself never blips).
+  let sessionRevoked = false;
+  if (user) {
+    sessionRevoked = await isSessionRevoked(user);
+    if (sessionRevoked) user = null;
+  }
+  if (!user && !sessionRevoked) {
     const bearer = clientBearerToken(c);
     if (bearer) {
       user = await verifyClientJwt(bearer);

@@ -8,6 +8,7 @@ import {
   clearAuthCookieOptions,
   signJwt,
 } from '../auth/jwt.js';
+import { revokeSessionByToken } from '../auth/sessionRevocations.js';
 import { env } from '../env.js';
 import {
   buildAuthorizeUrl,
@@ -408,9 +409,22 @@ api.post('/auth/exchange', exchangeRateLimit, async (c) => {
 });
 
 /** POST /api/auth/logout — clear the auth cookie. */
-api.post('/auth/logout', (c) => {
+api.post('/auth/logout', async (c) => {
   // Only clear if a cookie actually exists.
-  if (getCookie(c, AUTH_COOKIE_NAME)) {
+  const token = getCookie(c, AUTH_COOKIE_NAME);
+  if (token) {
+    // S2-D04/E04: logout now also kills the session server-side — the
+    // token's jti lands on the revocation list, so the cleared cookie's twin
+    // (any copied token) dies at its next request instead of verifying to
+    // its full 7-day exp. Best-effort: a revocation-store blip must not fail
+    // a logout (revokeSessionByToken catches its own errors; this wrapper is
+    // belt-and-braces so logout always answers ok with the cookie cleared —
+    // cookie clearing remains the legacy-token story).
+    try {
+      await revokeSessionByToken(token, { reason: 'logout', revokedBy: 'self' });
+    } catch {
+      // logout still succeeds
+    }
     setCookie(c, AUTH_COOKIE_NAME, '', clearAuthCookieOptions());
   }
   return c.json({ ok: true });

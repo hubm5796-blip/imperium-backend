@@ -36,6 +36,13 @@ export interface JwtPayload {
    * claim is missing, so old sessions keep working.
    */
   staffRole?: 'helper' | 'mod' | 'admin';
+  /**
+   * S2-D04: per-token id (randomUUID) stamped by signJwt — the session
+   * revocation list's per-token key. Absent on legacy tokens (pre-revocation
+   * deploys); those are only revocable via the uuid-ALL key and age out
+   * within 7 days of the deploy.
+   */
+  jti?: string;
   iat?: number;
   exp?: number;
 }
