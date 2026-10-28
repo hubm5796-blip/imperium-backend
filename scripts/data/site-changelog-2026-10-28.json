@@ -1,0 +1,757 @@
+[
+  {
+    "slug": "bedrock-nethernet",
+    "date": "27 October 2026",
+    "sortKey": "2026-10-27",
+    "type": "Announcement",
+    "title": "Bedrock players keep joining through the protocol change",
+    "summary": "Bedrock Edition switched to a new connection method today — the server already speaks it, and your join details do not change.",
+    "keyChanges": [
+      "Bedrock moved every player to a new connection method (NetherNet) today; the old one stops working for updated clients.",
+      "The server was moved to the newest translation build ahead of the switch and now accepts both the new method and the old one, so every Bedrock version in the supported range can join.",
+      "Your join details are unchanged: play.romanica.net, port 19132, for Java and Bedrock alike.",
+      "On a newer Bedrock version you may see a one-time prompt asking whether you trust the server on your first join. That is expected and safe — accept it and play as usual.",
+      "Bedrock versions 26.30 and older are no longer supported; update your game if you are on one of those.",
+      "The translation layer and its account bridge both run their latest builds, so console and phone players get the newest fixes."
+    ],
+    "action": "Nothing to change — join as always at play.romanica.net, port 19132.",
+    "tags": [
+      "bedrock",
+      "crossplay",
+      "compatibility"
+    ],
+    "readHref": "/wiki/bedrock"
+  },
+  {
+    "slug": "store-link-rank-protection-anticheat",
+    "date": "27 October 2026",
+    "sortKey": "2026-10-27",
+    "type": "Fix",
+    "title": "Store link restored, your rank protected, sharper anticheat",
+    "summary": "The in-game store link works again, a rare sign-in hiccup can no longer reset your rank, and going through thin blocks is now caught.",
+    "keyChanges": [
+      "The web-store link inside /store and the scoreboard links now open romanica.net — they still pointed at the retired address, so the store page would not load.",
+      "A rare server-side hiccup during sign-in could reset a player’s rank to 1 and save it. Failed rank loads are now retried and, if they still fail, discarded instead of saved.",
+      "A background maintenance task could stall permanently after a database hiccup until the next restart; it now recovers on its own.",
+      "A malformed response during a routine license check could disconnect every player; the server now treats it as a temporary network error.",
+      "/vote all no longer lists vote websites that have shut down — only live listings remain.",
+      "Going through thin blocks such as glass panes and iron bars is now detected. The old check measured depth in a way thin blocks could never reach, so those walls were effectively unguarded.",
+      "Bedrock players keep their burst-mining allowance, but the sustained mining rate now matches Java players instead of sitting 2.5x higher.",
+      "Twelve NPCs had a latent setup issue that would have dropped their custom skins; fixed before it could show."
+    ],
+    "tags": [
+      "store",
+      "ranks",
+      "anticheat",
+      "fixes"
+    ]
+  },
+  {
+    "slug": "sign-in-with-microsoft",
+    "date": "24 October 2026",
+    "sortKey": "2026-10-24",
+    "type": "Update",
+    "title": "Sign in with Microsoft",
+    "summary": "The website now accepts the Microsoft account that owns your Minecraft account — no password entered here, ever.",
+    "keyChanges": [
+      "A new Microsoft option sits alongside Discord and the in-game code on the login page.",
+      "Signing in proves it is really you through Microsoft itself, using the same account the game and the Romanica launcher use.",
+      "You land straight in your dashboard, with your Discord link attached automatically if you have one."
+    ],
+    "action": "Try it: romanica.net/login, choose Microsoft.",
+    "tags": [
+      "login",
+      "microsoft"
+    ]
+  },
+  {
+    "slug": "launcher-0-2-7",
+    "date": "24 October 2026",
+    "sortKey": "2026-10-24",
+    "type": "Update",
+    "title": "Launcher 0.2.7: supported engine, clean security slate",
+    "summary": "The launcher moves to a fully supported desktop engine with every known dependency advisory cleared, and the launch screen now tracks the real work.",
+    "keyChanges": [
+      "Runs on a fully supported version of its desktop engine, with all 29 known dependency security findings cleared.",
+      "The launching screen tracks the real work — file checks run in parallel and progress follows the game’s own log.",
+      "Development-kit installs verify cleanly from scratch again."
+    ],
+    "action": "Restart the launcher — it updates itself.",
+    "tags": [
+      "launcher",
+      "security"
+    ]
+  },
+  {
+    "slug": "cassius-guide-at-spawn",
+    "date": "23 October 2026",
+    "sortKey": "2026-10-23",
+    "type": "Announcement",
+    "title": "A guide now waits at the gates of Rome",
+    "summary": "Cassius the Fixer stands in the heart of Rome, ready to walk newcomers through their first hour.",
+    "keyChanges": [
+      "Cassius the Fixer is placed near the spawn point. Right-click him and he offers a guided tour: the Mine, the coins it pays, and the enchantments that multiply both.",
+      "Already know your way around? Tell him to skip the tour and he leaves you to it."
+    ],
+    "action": "Look for Cassius near the spawn fountain and say hello.",
+    "tags": [
+      "story",
+      "new-players"
+    ]
+  },
+  {
+    "slug": "honest-store-page",
+    "date": "23 October 2026",
+    "sortKey": "2026-10-23",
+    "type": "Fix",
+    "title": "An honest store page",
+    "summary": "Store tiers no longer advertise an auto-sell perk that never actually worked.",
+    "keyChanges": [
+      "Store tiers no longer list an auto-sell perk — it never worked and was removed from the game long ago. Taglines show only what each tier really includes.",
+      "The perks page now describes the real benefit: a discount on the fee for selling."
+    ],
+    "tags": [
+      "store"
+    ]
+  },
+  {
+    "slug": "launcher-0-2-6",
+    "date": "23 October 2026",
+    "sortKey": "2026-10-23",
+    "type": "Update",
+    "title": "Launcher 0.2.6: disk cleanup and crash privacy",
+    "summary": "The launcher stops hoarding old client versions, and crash reports are scrubbed before they leave your PC.",
+    "keyChanges": [
+      "Old client versions are cleaned up after updating - every version ever downloaded used to stay on your disk forever.",
+      "Crash reports are scrubbed before sending: usernames in file paths and any tokens or secrets are removed, stack traces stay for diagnosis.",
+      "Fixed a bug where about half the mod files saved with ‘undefined’ in their filename."
+    ],
+    "action": "Restart the launcher - it updates itself.",
+    "tags": [
+      "launcher"
+    ]
+  },
+  {
+    "slug": "romanica-name-everywhere",
+    "date": "23 October 2026",
+    "sortKey": "2026-10-23",
+    "type": "Update",
+    "title": "The Romanica name, everywhere it reaches you",
+    "summary": "The last user-facing spots that still said the old name now say Romanica - in all 45 game languages.",
+    "keyChanges": [
+      "Welcome messages, broadcasts and menus now say Romanica in every one of the game’s 45 languages.",
+      "The website’s guide pages now point at the right settings files.",
+      "A routine security sweep updated the server’s supporting libraries."
+    ],
+    "tags": [
+      "romanica",
+      "security"
+    ]
+  },
+  {
+    "slug": "client-beta-24-breadcrumbs",
+    "date": "23 October 2026",
+    "sortKey": "2026-10-23",
+    "type": "Fix",
+    "title": "Romanica Client beta.24: breadcrumbs fixed",
+    "summary": "Legion breadcrumbs stay on screen again — a slip two versions back made them vanish within a second.",
+    "keyChanges": [
+      "Legion breadcrumbs work again — a slip introduced two client versions ago made every crumb vanish within a second of dropping it.",
+      "The client updates itself through the launcher the next time you launch it — nothing to do by hand."
+    ],
+    "tags": [
+      "client",
+      "legion"
+    ]
+  },
+  {
+    "slug": "store-leaderboard-guides-polish",
+    "date": "23 October 2026",
+    "sortKey": "2026-10-23",
+    "type": "Update",
+    "title": "A cleaner store, leaderboard and guides",
+    "summary": "The shopping, rankings and community-guides pages got a craft pass — and two real glitches were fixed along the way.",
+    "keyChanges": [
+      "The leaderboards read properly now: labeled columns, neatly aligned numbers, a cleaner top-three podium and a highlight when you point at a row.",
+      "Store pages line up — the tier comparison table and perk prices use properly aligned figures, and the tier-page questions sit in tidy cards instead of a bare stack.",
+      "The community guides page was rebuilt in the same style as the rest of the site, with working filters and sort chips.",
+      "Fixed a garbled hover label on blog cards, and corrected an outdated statistic on the features page.",
+      "FAQ category icons now render the same on every system."
+    ],
+    "tags": [
+      "website",
+      "store",
+      "leaderboards"
+    ]
+  },
+  {
+    "slug": "legion-commands-and-navy-map",
+    "date": "23 October 2026",
+    "sortKey": "2026-10-23",
+    "type": "Update",
+    "title": "Legion commands and a navy live map",
+    "summary": "The legion command family got native tab completion, and the live map now matches the rest of the site.",
+    "keyChanges": [
+      "Typing /legion (and its roughly forty subcommands) now suggests and tab-completes natively, same for about thirty more everyday commands including tips, scoreboard, rename, broadcast, mute and the gamemode shortcuts.",
+      "The live map’s headers, side panels and gazetteer were retuned from near-black to the same deep navy as the rest of the site — the map itself, its markers and colours are unchanged.",
+      "Staff pages behind the admin dashboard were moved onto the same navy palette."
+    ],
+    "action": "Type /legion and press Tab in-game to see the new suggestions.",
+    "tags": [
+      "commands",
+      "legion",
+      "map",
+      "theme"
+    ]
+  },
+  {
+    "slug": "site-wide-polish-pass",
+    "date": "22 October 2026",
+    "sortKey": "2026-10-22",
+    "type": "Update",
+    "title": "A sharper website, head to toe",
+    "summary": "Every page now uses the emblem’s exact gold and navy, with cleaner cards, buttons and navigation.",
+    "keyChanges": [
+      "Borders, glows and buttons across every page — the store, the wiki, the map, your dashboard — now use the emblem’s champagne gold instead of the older, muddier shade they still carried.",
+      "The active page button in the navigation is easier to spot, and the top bar sits on a cleaner deep-navy backdrop.",
+      "Keyboard focus rings, text selection and scrollbars are themed to match, and animations settle down for visitors who prefer reduced motion.",
+      "The live map’s markers, compass and buttons were retuned to the same palette, so it no longer reads like a different site."
+    ],
+    "tags": [
+      "website",
+      "theme",
+      "map",
+      "store"
+    ]
+  },
+  {
+    "slug": "romanica-net-live-store-fixed",
+    "date": "22 October 2026",
+    "sortKey": "2026-10-22",
+    "type": "Update",
+    "title": "romanica.net is live, store fixed, new look",
+    "summary": "The new address is live end to end, checkout works there, and everything now matches the emblem.",
+    "keyChanges": [
+      "The website now lives at romanica.net, and the server address is play.romanica.net - the old address keeps working.",
+      "Checkout on romanica.net is fixed - purchases were being blocked by a security check that only knew the old address.",
+      "The launcher (0.2.3) has new background art and emblem-matched colors, and connects through play.romanica.net.",
+      "The client (0.2.0-beta.14) interface matches the emblem: deep-navy surfaces with champagne-gold accents."
+    ],
+    "action": "Open the launcher and both it and the client update by themselves.",
+    "tags": [
+      "romanica-net",
+      "store",
+      "launcher",
+      "client"
+    ]
+  },
+  {
+    "slug": "faster-joins-smoother-onboarding",
+    "date": "22 October 2026",
+    "sortKey": "2026-10-22",
+    "type": "Update",
+    "title": "Faster joins and smoother onboarding",
+    "summary": "The texture pack is remembered between joins, and holding right-click with tools no longer trips cheat detection.",
+    "keyChanges": [
+      "The texture pack downloads once and is remembered - returning players join in about a second instead of re-downloading a large file every single time.",
+      "The pack is also no longer sent twice per join.",
+      "Holding right-click with your pickaxe or other tools while looking around no longer trips cheat detection - it was wrongly flagging and even freezing brand-new accounts during their first minutes.",
+      "Players joining through launcher or controller setups no longer build up cheat-detection penalties from a large startup handshake - the extra traffic it generated was wrongly counted against the player.",
+      "Tab completion and command suggestions now work natively on more of the everyday commands, including kit, casino, vault, trade, mail, marriage, parkour, and loadouts."
+    ],
+    "action": "Nothing to do - everything applies the next time you join.",
+    "tags": [
+      "performance",
+      "anticheat",
+      "commands"
+    ]
+  },
+  {
+    "slug": "romanica-new-emblem",
+    "date": "22 October 2026",
+    "sortKey": "2026-10-22",
+    "type": "Update",
+    "title": "A new emblem for Romanica",
+    "summary": "A gold-ringed eagle medallion now stands for Romanica everywhere.",
+    "keyChanges": [
+      "The new emblem - a gold-ringed eagle medallion on deep navy - replaces the old mark everywhere: this site and its browser icons, the launcher, the client, the server list, and Discord.",
+      "Launcher 0.2.2 carries the emblem on the app, the installer, and the loading screen - existing installs update themselves.",
+      "Client 0.2.0-beta.13 shows the emblem in your mod list and as the badge next to player names in-game."
+    ],
+    "action": "Open the launcher once and both it and the client update by themselves.",
+    "tags": [
+      "branding",
+      "launcher",
+      "client"
+    ]
+  },
+  {
+    "slug": "romanica-client-beta12",
+    "date": "22 October 2026",
+    "sortKey": "2026-10-22",
+    "type": "Update",
+    "title": "Romanica Client beta.12",
+    "summary": "Secure sign-in groundwork: the client proves who you are with the same handshake Minecraft uses for servers.",
+    "keyChanges": [
+      "No passwords to enter and nothing stored on your disk - the sign-in uses the game's own session, the same one used when joining an online server.",
+      "Your legion's name and standing will display on the HUD even on other servers, once the account services switch on.",
+      "Everything degrades gracefully - if the services are unavailable, nothing changes and nothing breaks."
+    ],
+    "action": "Open the launcher and the client updates by itself.",
+    "tags": [
+      "update",
+      "client"
+    ],
+    "readHref": "/client"
+  },
+  {
+    "slug": "romanica-client-beta11",
+    "date": "21 October 2026",
+    "sortKey": "2026-10-21",
+    "type": "Update",
+    "title": "Romanica Client beta.11",
+    "summary": "The clean look: menu backdrop blur, a proper UI typeface, themed buttons, and the rebuilt HUD editor.",
+    "keyChanges": [
+      "The client menu softly blurs the world behind it - the signature look of a modern client, respecting the game's own blur setting.",
+      "A proper UI typeface for labels, smooth hover and press motion on every card, button and chip, and a real item icon on every module card.",
+      "The HUD editor is rebuilt: snap guides with a live position readout, selection handles, arrow-key nudging with undo and redo, a right-click menu with reset, hide and an anchor picker, plus a toolbar and help panel.",
+      "The launcher matches the client exactly - same colors, one consistent hover, press and keyboard-focus system, smoother typography."
+    ],
+    "action": "Open the launcher and both update by themselves.",
+    "tags": [
+      "update",
+      "client"
+    ],
+    "readHref": "/client"
+  },
+  {
+    "slug": "romanica-rename",
+    "date": "21 October 2026",
+    "sortKey": "2026-10-21",
+    "type": "Announcement",
+    "title": "ImperiumMC is now Romanica",
+    "summary": "New name, same Rome. Your account, rank, balance and files all carry over - and our new address romanica.net goes live as soon as the domain is ready.",
+    "keyChanges": [
+      "The website, the launcher (Romanica Launcher 0.2.0), the client (Romanica Client), the Discord bot and every in-game message carry the new name.",
+      "Nothing you own changes: accounts, ranks, balances, plots and client settings carry over automatically; the launcher picks up your existing files on first start.",
+      "The new address romanica.net is announced the moment it works - until then, connect exactly as you do today.",
+      "Launcher 0.2.0 also fixes the server address shown in the launcher's server list, which had pointed at a wrong domain."
+    ],
+    "action": "Open the launcher and everything updates by itself.",
+    "tags": [
+      "announcement"
+    ],
+    "readHref": "/client"
+  },
+  {
+    "slug": "imperium-client-beta9",
+    "date": "21 October 2026",
+    "sortKey": "2026-10-21",
+    "type": "Update",
+    "title": "Romanica Client beta.9",
+    "summary": "Performance options with measured results, and the client now speaks three more languages.",
+    "keyChanges": [
+      "A text render distance option cuts frame time nearly in half in sign- and hologram-heavy scenes (measured at minus 45 percent with 28 signs and name tags on screen).",
+      "A HUD frame cache paces HUD redraws - cost-neutral on fast machines, helpful for item-heavy HUDs on slower CPUs.",
+      "Optional toggles skip TNT's flash expansion, spawner internals and enchant-table books for a little more headroom.",
+      "The menu, module names and key messages now follow your game language in Portuguese, German and Spanish."
+    ],
+    "action": "Open the launcher and the update installs by itself.",
+    "tags": [
+      "update",
+      "client"
+    ],
+    "readHref": "/client"
+  },
+  {
+    "slug": "imperium-client-beta8",
+    "date": "20 October 2026",
+    "sortKey": "2026-10-20",
+    "type": "Update",
+    "title": "Romanica Client beta.8",
+    "summary": "The full Romanica redesign of the title screen and module menu, and live server data in your HUDs.",
+    "keyChanges": [
+      "A new title screen: the emblem, the wordmark, and a Play button that shows the live player count.",
+      "The module menu is rebuilt: sliding sidebar, three-column cards with real item icons, and a clear red state for anything the server keeps locked.",
+      "Settings rows refined to match - section accents, hover highlighting, reset buttons, half-width pairs.",
+      "Live server data reaches the HUDs directly: your legion's power and online count, active boosts with remaining time, and server cooldowns like rifts.",
+      "Mine regions draw in the world for client users, showing exactly where your current mine ends."
+    ],
+    "action": "Open the launcher and everything updates by itself.",
+    "tags": [
+      "update",
+      "client"
+    ],
+    "readHref": "/client"
+  },
+  {
+    "slug": "imperium-client-beta7",
+    "date": "20 October 2026",
+    "sortKey": "2026-10-20",
+    "type": "Update",
+    "title": "Romanica Client beta.7",
+    "summary": "The client wears the Romanica emblem on every surface, the titles HUD keeps its colors, and the core is now Kotlin.",
+    "keyChanges": [
+      "The mod-list icon, the title and pause menu buttons, and the in-game menu all show the Romanica seal from the website.",
+      "Fixed: titles a server sends now keep their colors and long titles wrap to fit instead of clipping off screen.",
+      "The client core - menu, server integration, rules enforcement - is rewritten in Kotlin; invisible to players, faster feature work ahead."
+    ],
+    "action": "The launcher updates the client automatically - open it and you are up to date.",
+    "tags": [
+      "update",
+      "client"
+    ],
+    "readHref": "/client"
+  },
+  {
+    "slug": "launcher-0-1-2",
+    "date": "20 October 2026",
+    "sortKey": "2026-10-20",
+    "type": "Fix",
+    "title": "Launcher 0.1.2",
+    "summary": "The launch crash is fixed, every download is hash-verified before the game starts, and a crash screen shows the cause.",
+    "keyChanges": [
+      "Fixed the crash some players hit on launch: the game's library files now unpack to the exact folders Minecraft looks in.",
+      "Every file the launcher downloads is checked against its published hash; a corrupted download repairs itself instead of launching broken.",
+      "When the game closes with an error, the launcher shows the cause with a Copy report button for Discord support.",
+      "The news panel works, reading the site's news feed."
+    ],
+    "action": "The launcher updates itself - open it to get the fixes.",
+    "tags": [
+      "fix",
+      "launcher"
+    ],
+    "readHref": "/client"
+  },
+  {
+    "slug": "launcher-0-1-1",
+    "date": "20 October 2026",
+    "sortKey": "2026-10-20",
+    "type": "Update",
+    "title": "Launcher 0.1.1",
+    "summary": "The launcher now wears the Romanica emblem, and Microsoft login is confirmed working for everyone.",
+    "keyChanges": [
+      "The app icon, the welcome and login screen, and the loading screen all show the same Romanica seal you know from the website.",
+      "Microsoft login is confirmed working - any earlier approval notice is gone, and sign-in opens normally."
+    ],
+    "action": "The launcher updates itself - open it and 0.1.1 installs automatically.",
+    "tags": [
+      "update",
+      "launcher"
+    ],
+    "readHref": "/wiki/getting-started"
+  },
+  {
+    "slug": "imperium-client-beta6",
+    "date": "20 October 2026",
+    "sortKey": "2026-10-20",
+    "type": "Update",
+    "title": "Romanica Client beta.6",
+    "summary": "Module settings open inside the menu, HUD elements can blur the world behind them, and a performance section arrives.",
+    "keyChanges": [
+      "The gear on any module card now opens that module's settings right inside the menu as a scrollable panel - every option one click away, with labelled groups for sub-options, and Escape returns you straight to the module grid.",
+      "Every HUD element can blur the world behind its background for a soft frosted look - on per element, with adjustable strength.",
+      "A new Performance section: a frame limiter that can lower FPS while the window is minimized, unfocused, or while you are away (off by default, and it always respects the game's own throttling when that is stricter), plus visibility toggles for the TNT flash, lightning bolts, dropped hopper items and distant entities.",
+      "Chunk borders and the hitboxes view now draw reliably every frame instead of only appearing at certain times.",
+      "The account card no longer appears in the module grid; account settings stay under All Settings."
+    ],
+    "action": "The launcher updates the client automatically - open it and you are up to date.",
+    "tags": [
+      "update",
+      "client"
+    ],
+    "readHref": "/wiki/getting-started"
+  },
+  {
+    "slug": "imperium-client-beta5",
+    "date": "19 October 2026",
+    "sortKey": "2026-10-19",
+    "type": "Announcement",
+    "title": "Romanica Client beta.5",
+    "summary": "Every remaining gap in the module lineup is closed - TNT arcs, a fullscreen map, light levels, and more.",
+    "keyChanges": [
+      "TNT trajectory preview: hold a TNT and see exactly where it will fly and how big the blast will be before you throw it.",
+      "A fullscreen map on M - pan around, zoom in and out, and see every waypoint with its name and distance.",
+      "Light-level overlay on F7: the ground lights up green where mobs cannot spawn and red where they can.",
+      "Waypoint tracers: every waypoint shows as an on-screen marker with its name and distance, with arrows when it is off-screen.",
+      "Chat upgrades: smooth scrolling, history that survives relogging, a screenshot button for just the chat, and three quick-phrase keybinds.",
+      "Inventory upgrades: hide the potion icons, keep your inventory perfectly centred, and compact stack counts.",
+      "Hitboxes on a keybind - player, mob and item boxes with eye lines, without the F3 screen.",
+      "An emote wheel on hold-G with wave, salute, cheer and sit built in, ready for server cosmetics.",
+      "A Now Playing HUD that shows your current Spotify track while you play."
+    ],
+    "action": "Grab the launcher from the Discord - it installs and updates everything for you.",
+    "tags": [
+      "announcement",
+      "client"
+    ],
+    "readHref": "/wiki/getting-started"
+  },
+  {
+    "slug": "imperium-client-beta2",
+    "date": "19 October 2026",
+    "sortKey": "2026-10-19",
+    "type": "Announcement",
+    "title": "Romanica Client and the official launcher",
+    "summary": "Our own client and launcher are here - everything installs in one click and stays updated automatically.",
+    "keyChanges": [
+      "A minimap with real terrain colours and hill shading - square or round, rotates with your camera or locks north, and your waypoints appear on it as labelled dots.",
+      "Waypoints: press B to drop one anywhere, see name, direction and distance on your HUD, and get an automatic marker where you died so you can find your way back.",
+      "A legion status readout, breadcrumbs (press N to drop a trail marker), and TNT blast-radius boxes that show exactly what a primed TNT is about to hit.",
+      "Chat upgrades: timestamps, a sound ping when someone says your name, duplicate messages stacking as a counter, a hold-to-peek key for recent history, and empty spam filtered out.",
+      "The tab list shows real ping numbers in colour and highlights your own row; any chest or inventory gets a search bar that lights up matching items.",
+      "A bundle of HUD and comfort options: movable titles, item cooldown bars, playtime/stopwatch/entity/potion/obsidian counters, armor durability colours, potion blink, TNT timer stages, particle control, hurt-camera control, low-health screen tint, clear water, crop growth overlays, chunk borders, and a 180-degree quick-look key.",
+      "WorldEdit users: selections render as the classic grid box in the world.",
+      "The official Romanica Launcher installs everything in one click - Minecraft 26.3, Fabric, Romanica Client and the performance mods - and verifies every file on every start. Updates arrive automatically on the next launch."
+    ],
+    "action": "Grab the launcher from the Discord - it installs everything for you.",
+    "tags": [
+      "announcement",
+      "client"
+    ],
+    "readHref": "/wiki/getting-started"
+  },
+  {
+    "slug": "story-guidance-mine-restoration",
+    "date": "17 October 2026",
+    "sortKey": "2026-10-17",
+    "type": "Fix",
+    "title": "Story guidance catches up with the mine restoration",
+    "summary": "The opening story line and the compass targets for Titus, Lucia and Gaius now match the world as it is today.",
+    "keyChanges": [
+      "The first-chapter arrival line told new players to warp straight into the mines - impossible while every mine is closed for the hand restoration. It now points at your compass and says the mines will guide you again when they reopen.",
+      "Compass wayfinding to the story NPCs Titus, Lucia and Gaius was resolving to authored placeholder coordinates instead of their real positions. The compass now leads to where those three actually stand.",
+      "Titus, Lucia and Gaius dropped the decorative symbols from their name tags - on vanilla-font and Bedrock clients those symbols rendered as empty boxes."
+    ],
+    "action": "Mid-story already? Your compass to Titus, Lucia or Gaius now points at the real NPC.",
+    "tags": [
+      "story",
+      "quality"
+    ],
+    "readHref": "/wiki/getting-started"
+  },
+  {
+    "slug": "mine-restoration-underway",
+    "date": "17 October 2026",
+    "sortKey": "2026-10-17",
+    "type": "Announcement",
+    "title": "Mine restoration underway",
+    "summary": "Every mine is being rebuilt by hand, so all automatic refills and block generation are paused until the restoration is finished.",
+    "keyChanges": [
+      "All automatic mine refills and block generation are paused while every mine is rebuilt by hand - nothing will place, replace, or fill blocks in any mine until the restoration is done.",
+      "Mines are temporarily closed while their pits are restored - warping to one will tell you to check back soon.",
+      "When each mine reopens it will refill with fresh ore exactly as before."
+    ],
+    "action": "Mines reopen as each one is restored - watch the Discord for the announcement.",
+    "tags": [
+      "announcement",
+      "progression"
+    ],
+    "readHref": "/wiki/getting-started"
+  },
+  {
+    "slug": "objective-bar-always-on",
+    "date": "17 October 2026",
+    "sortKey": "2026-10-17",
+    "type": "Update",
+    "title": "The game now always tells you what to do next",
+    "summary": "The objective bar above your hotbar now stays with you every session and always names the single most useful thing to do right now.",
+    "keyChanges": [
+      "The OBJECTIVE bar used to disappear after your very first session on the server - now it is there every time you play, pointing at your best next step.",
+      "It leads with what you would otherwise miss: finished daily quest or battle pass rewards waiting to be claimed, crate keys sitting unopened, your current story step with live progress, and a rank up the moment you can afford it.",
+      "Saving for a rank now has a live target: \"Rank VII - 8.4k to go\", counting down as you mine and sell instead of a vague \"go mine\".",
+      "When something becomes ready - rewards to claim, a rank you can pay for - you get one short chat heads-up, so the bar being easy to ignore no longer matters.",
+      "/next still prints the same guidance in full chat detail any time you want it - the bar and the command can never disagree because they share one brain."
+    ],
+    "action": "Look above your hotbar when you log in - the OBJECTIVE line is your next step. Type /next for the full version.",
+    "tags": [
+      "progression",
+      "quality"
+    ],
+    "readHref": "/wiki/getting-started"
+  },
+  {
+    "slug": "bug-report-command",
+    "date": "14 October 2026",
+    "sortKey": "2026-10-14",
+    "type": "Update",
+    "title": "Reporting a bug now takes one command",
+    "summary": "/bug is live: describe what happened, and it lands directly in the queue the devs read every day.",
+    "keyChanges": [
+      "Type /bug <what happened, and what you expected> - that is it. Where you are, your rank, the server version and how many players are online are captured automatically, so you never have to explain where you were.",
+      "Your report goes straight to a queue the devs read every single day - no Discord ticket, no waiting for a staff member to be online.",
+      "Reports are limited to one every two minutes per player, which keeps the queue clean so every report actually gets read.",
+      "Also this week: the economy monitor no longer flags quest rewards as suspicious, and background jobs can no longer crowd out logins during busy minutes."
+    ],
+    "tags": [
+      "quality",
+      "community"
+    ],
+    "readHref": "/support"
+  },
+  {
+    "slug": "discord-bot-three-new-commands",
+    "date": "12 October 2026",
+    "sortKey": "2026-10-12",
+    "type": "Update",
+    "title": "The Discord bot learned three new tricks",
+    "summary": "The Romanica bot got its biggest upgrade in months - new lookup commands, a cleaner look, and the full update history at your fingertips.",
+    "keyChanges": [
+      "/mine - look up any mine by numeral (XLVIII), name (Marcus Aurelius) or number (48): its unlock rank, every ore it holds with the denarius each block pays, and its signature ores.",
+      "/changelog - the five latest server updates right in Discord, with the full per-update history right here on this page.",
+      "/vote - every vote link and exactly what voting pays you, in one reply.",
+      "Every bot reply is restyled to the bronze-and-marble look of the new emblem, and the symbols that rendered as garbage on some clients are gone for good."
+    ],
+    "tags": [
+      "discord",
+      "bot"
+    ],
+    "readHref": "/wiki/commands"
+  },
+  {
+    "slug": "last-two-frozen-mines-open",
+    "date": "11 October 2026",
+    "sortKey": "2026-10-11",
+    "type": "Announcement",
+    "title": "The last two frozen mines are open, all fifty await",
+    "summary": "The Augustan Forum Mine and the Marcus Aurelius Memorial passed their repairs and inspection, completing the ladder from Mine I to the Golden Milestone.",
+    "keyChanges": [
+      "The Augustan Forum Mine (Rank 41) and the Marcus Aurelius Memorial (Rank 48) were held back from the big expansion because their entry points dropped you into the floor instead of onto it.",
+      "Their entry platforms are fixed and both mines passed a block-by-block inspection of the whole dig site before opening — the ore in them is the real, full table, verified at every corner of the region.",
+      "Every mine from I to L is now enterable: fifty in total, the complete ladder up to the Golden Milestone at Rank 50. Deeper mines keep paying richer ore, exactly as the ladder promises."
+    ],
+    "tags": [
+      "mines",
+      "progression"
+    ],
+    "readHref": "/progression"
+  },
+  {
+    "slug": "faster-website-honest-map",
+    "date": "11 October 2026",
+    "sortKey": "2026-10-11",
+    "type": "Update",
+    "title": "A faster website, an honest map, and proper link cards",
+    "summary": "The website got a full speed pass, the live map can no longer get stuck showing an old copy, and sharing Romanica links now shows a proper card.",
+    "keyChanges": [
+      "Pages you visit often now open almost instantly — they are kept ready on a server near you instead of being rebuilt from scratch every time.",
+      "The live player counter on the homepage no longer pauses to check the server; it refreshes without the wait, and images ship in a much lighter format, which you will notice most on a phone.",
+      "If the live map ever looked broken, empty or stuck in the past for you, your browser was replaying an old saved copy of it. The map now forces a fresh load every visit, so that cannot happen again.",
+      "Posting a Romanica link on Discord or socials now shows a proper Romanica card — emblem, title and all — instead of a gray rectangle."
+    ],
+    "tags": [
+      "website",
+      "performance",
+      "map"
+    ],
+    "readHref": "/"
+  },
+  {
+    "slug": "site-speaks-three-languages",
+    "date": "10 October 2026",
+    "sortKey": "2026-10-10",
+    "type": "Update",
+    "title": "The website now speaks Portuguese, German and Spanish",
+    "summary": "The landing pages are available in three more languages, picked automatically from your browser, with a switcher in the footer.",
+    "keyChanges": [
+      "The homepage, the vote page, the beginner guide and the FAQ are now available in Brazilian Portuguese, German and Spanish.",
+      "Your browser picks the right language automatically on first visit, and a language switcher sits in the site footer — English always stays at imperiummc.net.",
+      "The landing pages also lost their last bits of template filler, including the old scroll hint."
+    ],
+    "tags": [
+      "website",
+      "languages"
+    ],
+    "readHref": "/pt-BR"
+  },
+  {
+    "slug": "frozen-mine-band-opens",
+    "date": "10 October 2026",
+    "sortKey": "2026-10-10",
+    "type": "Announcement",
+    "title": "The Sabine Ridge and beyond: 22 new mines open",
+    "summary": "The biggest expansion since launch — 22 new mines from Rank 27 to Rank 50, each one ground-verified before opening.",
+    "keyChanges": [
+      "Twenty-two new mines opened in one release, stretching from The Sabine Ridge at Rank 27 to The Golden Milestone at Rank 50.",
+      "Every site was checked on the ground before unlocking — entry points, ore fills and floors were verified mine by mine, and anything that failed stayed closed for repairs.",
+      "Two sites (the Augustan Forum Mine and the Marcus Aurelius Memorial) stayed closed for entry-point repairs and passed inspection the next day; seven more wait beyond the Milestone for the next release."
+    ],
+    "tags": [
+      "mines",
+      "progression"
+    ],
+    "readHref": "/progression"
+  },
+  {
+    "slug": "263-clients-and-lighter-mobile-data",
+    "date": "10 October 2026",
+    "sortKey": "2026-10-10",
+    "type": "Update",
+    "title": "Minecraft 26.3 clients welcome, lighter data on mobile",
+    "summary": "Newer Java editions can join directly, Bedrock support runs on the newest translation build, and phones download less.",
+    "keyChanges": [
+      "Minecraft 26.3 clients can now join — the cross-version layer accepts every newer Java edition on the 26.2 server.",
+      "Bedrock support runs on the newest translation build, covering the latest console and phone Bedrock versions.",
+      "Data use on mobile is lighter across the board, from the resource pack to how much the client fetches while you play."
+    ],
+    "tags": [
+      "compatibility",
+      "bedrock"
+    ],
+    "readHref": "/wiki/getting-started"
+  },
+  {
+    "slug": "smoother-first-minutes-on-touch",
+    "date": "8 October 2026",
+    "sortKey": "2026-10-08",
+    "type": "Fix",
+    "title": "Smoother first minutes on touch and new accounts",
+    "summary": "Playing on touchscreens no longer trips the cheat detection, and new accounts get a fair learning window before anything can count against them.",
+    "keyChanges": [
+      "Fast touch mining no longer trips the cheat detection anywhere on the map — not just inside mines.",
+      "Tapping beds and chests through doorways now works reliably instead of sometimes being read as reaching through walls.",
+      "The adaptive detector now learns your personal style for ten minutes before it can flag anything — your opening moments on a new account no longer count against you."
+    ],
+    "tags": [
+      "bedrock",
+      "fairness",
+      "anticheat"
+    ],
+    "readHref": "/wiki/bedrock"
+  },
+  {
+    "slug": "faster-joins-during-busy-periods",
+    "date": "6 October 2026",
+    "sortKey": "2026-10-06",
+    "type": "Fix",
+    "title": "Faster joins during busy periods",
+    "summary": "A wave of players logging in at once no longer stalls everyone — joins got their own dedicated handling.",
+    "keyChanges": [
+      "When many players logged in at the same moment — restarts, vote pushes, events — each join competed for the same thread of work as everything else, and everyone felt the stall.",
+      "Joins now run on their own dedicated handling, so a busy login rush processes in parallel instead of forming a queue that delays the whole server.",
+      "You will notice this most right after a restart or during a drop party: getting in is fast no matter how many others are arriving with you."
+    ],
+    "tags": [
+      "connection",
+      "performance"
+    ],
+    "readHref": "/wiki/getting-started"
+  },
+  {
+    "slug": "praeneste-shaft-and-first-hour-gifts",
+    "date": "9 October 2026",
+    "sortKey": "2026-10-09",
+    "type": "Announcement",
+    "title": "The Praeneste Shaft opens, and the first hour learns to greet you",
+    "summary": "A new mid-ladder mine opened, and the opening hour of a new account now hands you the things a fresh prisoner actually needs.",
+    "keyChanges": [
+      "The Praeneste Shaft joined the ladder as a new dig site with its own ore table.",
+      "The first hour on a new account now greets you with the tools and currency a fresh prisoner actually needs, delivered as you hit early milestones instead of all at once."
+    ],
+    "tags": [
+      "mines",
+      "new-players"
+    ],
+    "readHref": "/progression"
+  }
+]
