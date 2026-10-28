@@ -21,10 +21,11 @@ import {
   parseMcUuid,
   requireMcIdentity,
   requireStaffRole,
-  resolveActorFromToken,
   resolveStaffActor,
   staffActorHasRole,
 } from '../middleware/gates.js';
+import { recordAction } from '../db/actionLog.js';
+import { resolveAuditActor } from '../utils/auditActor.js';
 import { authRateLimit, globalRateLimit, rateLimit, readRateLimit, writeRateLimit } from '../middleware/rateLimit.js';
 import {
   deleteDiscordLinkByDiscordId,
@@ -159,10 +160,13 @@ const botAuthMiddleware = async (c: Context, next: Next) => {
  *      staff role (the transitional panel-service exemption is deleted).
  *
  *
- * Route role gates: /admin/punish requires mod+; /admin/broadcast requires
- * helper+; /admin/reload requires admin. Admin routes accept EITHER a valid
- * bot/service token OR a valid session — the staff gate above decides what
- * that identity may do (a logged-in non-staff player resolves to anonymous).
+ * Route role gates (S2-D01: declared ON the route, deny by default):
+ * /admin/punish requires mod+; /admin/broadcast requires helper+;
+ * /admin/reload requires admin. Every dispatch writes an attributed
+ * action_log audit row on success. Admin routes accept a valid session, the
+ * bot/service token, or a verified per-staff token pair as the AUTHENTICATING
+ * credential — the staff gate then decides what that identity may do (a
+ * logged-in non-staff player resolves to anonymous and is refused).
  */
 
 /** Admin-route authentication: valid bot/service token OR valid session. */
@@ -1037,11 +1041,15 @@ api.get('/admin/player', requireStaffRole('helper'), async (c) => {
 /**
  * POST /api/admin/punish — forward a punishment to the plugin via Redis.
  * Body: { target, action, reason, duration, actor }
+ *
+ * S2-D01: the required role is DECLARED on the route (mod+) — 401 with no
+ * valid credential, 403 authenticated-but-below-role, deny by default.
+ * Attribution (X-03): the actor comes ONLY from the authenticated principal
+ * (resolveStaffActor via the gate); a body `actor` value is never trusted and
+ * never merged in. Every successful dispatch writes an attributed action_log
+ * audit row.
  */
-api.post('/admin/punish', async (c) => {
-  if (!adminAuthOk(c)) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
+api.post('/admin/punish', requireStaffRole('mod'), async (c) => {
   let body: { target?: string; action?: string; reason?: string; duration?: string; actor?: string };
   try {
     body = (await c.req.json()) as typeof body;
@@ -1057,28 +1065,7 @@ api.post('/admin/punish', async (c) => {
     return c.json({ error: 'Missing target or action' }, 400);
   }
 
-  // ROLE GATE + AUDIT ATTRIBUTION (B-01/X-04 + X-03): the actor is resolved
-  // from the authenticated identity — never from the body. When the request
-  // carries an attributed human (staff-token, X-Staff-Role claim on an
-  // authenticated request, or a staff session), that name rides the dispatch.
-  // The body `actor` is only compared when NO attribution exists; with one,
-  // it is simply ignored (the frontend is dropping the field — X-03 — and a
-  // spoof warning on every legitimate action made the signal useless).
-  const staffActor = await resolveStaffActor(c);
-  if (body.actor && staffActor.source === 'anonymous') {
-    const resolvedActor = resolveActorFromToken(c);
-    if (body.actor !== resolvedActor) {
-      logger.warn(
-        { claimed: body.actor, resolved: resolvedActor },
-        'AUDIT SPOOF ATTEMPT: body actor differs from token-derived identity — body value discarded',
-      );
-    }
-  }
-
-  if (!staffActorHasRole(staffActor, 'mod')) {
-    logger.warn({ actor: staffActor.name, role: staffActor.role, target, action }, 'AUDIT: punish refused — role below mod');
-    return c.json({ error: 'Staff role mod or above required for punishments' }, 403);
-  }
+  const staffActor = c.get('staffActor') ?? (await resolveStaffActor(c));
 
   // Try to forward via the Redis command bus
   try {
@@ -1088,6 +1075,14 @@ api.post('/admin/punish', async (c) => {
       5_000,
     );
     if (response.status === 'OK') {
+      // S2-D01: attributed audit row AFTER the action succeeded (never blocks
+      // the response — recordAction swallows its own failures).
+      await recordAction({
+        actor: await resolveAuditActor(c),
+        action: 'admin.punish',
+        target: target.slice(0, 120),
+        detail: `action=${action}${reason ? '; reason=' + reason.slice(0, 200) : ''}`,
+      });
       return c.json({ ok: true, result: response.data ?? null });
     }
     return c.json({ error: response.error ?? 'Plugin rejected the action' }, 502);
@@ -1099,11 +1094,9 @@ api.post('/admin/punish', async (c) => {
 
 /**
  * POST /api/admin/broadcast — forward a broadcast to the plugin.
+ * S2-D01: role DECLARED on the route (helper+); attributed audit row on success.
  */
-api.post('/admin/broadcast', async (c) => {
-  if (!adminAuthOk(c)) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
+api.post('/admin/broadcast', requireStaffRole('helper'), async (c) => {
   let body: { message?: string };
   try {
     body = (await c.req.json()) as typeof body;
@@ -1116,17 +1109,18 @@ api.post('/admin/broadcast', async (c) => {
     return c.json({ error: 'Message must be 1-256 characters' }, 400);
   }
 
-  // ROLE GATE + ATTRIBUTION (B-01/X-04): broadcasts are helper+ and carry the
-  // resolved staff actor so the plugin-side audit trail names who sent it.
-  const staffActor = await resolveStaffActor(c);
-  if (!staffActorHasRole(staffActor, 'helper')) {
-    logger.warn({ actor: staffActor.name, role: staffActor.role }, 'AUDIT: broadcast refused — role below helper');
-    return c.json({ error: 'Staff role helper or above required for broadcasts' }, 403);
-  }
+  // ATTRIBUTION (B-01/X-04): broadcasts carry the resolved staff actor so the
+  // plugin-side audit trail names who sent it.
+  const staffActor = c.get('staffActor') ?? (await resolveStaffActor(c));
 
   try {
     const response = await sendCommandWithResponse('BROADCAST', { message, actor: staffActor.name }, 5_000);
     if (response.status === 'OK') {
+      await recordAction({
+        actor: await resolveAuditActor(c),
+        action: 'admin.broadcast',
+        detail: message.slice(0, 500),
+      });
       return c.json({ ok: true });
     }
     return c.json({ error: response.error ?? 'Plugin rejected the broadcast' }, 502);
@@ -1138,22 +1132,19 @@ api.post('/admin/broadcast', async (c) => {
 
 /**
  * POST /api/admin/reload — trigger a config reload on the plugin.
+ * S2-D01: role DECLARED on the route (admin — reloads change live economy and
+ * anticheat behavior); attributed audit row on success.
  */
-api.post('/admin/reload', async (c) => {
-  if (!adminAuthOk(c)) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
-  // ROLE GATE + ATTRIBUTION (B-01/X-04): reloads are admin-only (they can
-  // change live economy and anticheat behavior) and carry the actor for the
-  // audit trail.
-  const staffActor = await resolveStaffActor(c);
-  if (!staffActorHasRole(staffActor, 'admin')) {
-    logger.warn({ actor: staffActor.name, role: staffActor.role }, 'AUDIT: reload refused — role below admin');
-    return c.json({ error: 'Staff role admin required for reloads' }, 403);
-  }
+api.post('/admin/reload', requireStaffRole('admin'), async (c) => {
+  const staffActor = c.get('staffActor') ?? (await resolveStaffActor(c));
   try {
     const response = await sendCommandWithResponse('RELOAD_CONFIG', { actor: staffActor.name }, 10_000);
     if (response.status === 'OK') {
+      await recordAction({
+        actor: await resolveAuditActor(c),
+        action: 'admin.reload',
+        detail: 'config reload dispatched',
+      });
       return c.json({ ok: true });
     }
     return c.json({ error: response.error ?? 'Plugin rejected the reload' }, 502);

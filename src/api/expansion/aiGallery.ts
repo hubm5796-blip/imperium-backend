@@ -3,15 +3,20 @@
 //   GET /api/admin/ai-artifacts                (list plugins/ImperiumMC/ai/)
 //   GET /api/admin/ai-artifacts/content?name=  (one artifact: png bytes or text)
 //
-// Auth: bot token only — consumed by the frontend's server-side edge proxy
-// (src/app/api/admin/ai-artifacts), same trust model as adminViews.ts.
+// Auth (S2-D01): staff role gate — helper+. These are /admin/* routes and the
+// fail-closed packet requires EVERY admin route to declare its required role;
+// the bare shared bot/service token is a service credential, not a staff role,
+// and no longer opens them. The frontend's edge proxy must forward the staff
+// identity (X-Staff-Role on its authenticated proxy call, or a per-staff
+// token pair) per the staff trust protocol — cross-lane request to Lane E
+// (S2-E-side), same as every other admin surface it proxies.
 //
 // Panel access (PANEL_URL / PANEL_API_KEY / PANEL_SERVER_ID env) is OPTIONAL:
 // unset → configured:false with a setup hint, never a crash. Artifact names
 // are whitelisted to a flat [A-Za-z0-9._-]+ basename + known extensions, so
 // the ?name= parameter can never traverse out of the ai/ directory.
 import { Hono, type Context } from 'hono';
-import { botTokenMatches } from '../../middleware/auth.js';
+import { requireStaffRole } from '../../middleware/gates.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
 import { env } from '../../env.js';
 import type { AppContextVariables } from '../../types/index.js';
@@ -62,8 +67,7 @@ interface PanelListEntry {
 }
 
 /** GET /api/admin/ai-artifacts — newest-first listing of the ai/ directory. */
-aiGalleryApi.get('/admin/ai-artifacts', readRateLimit, async (c) => {
-  if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
+aiGalleryApi.get('/admin/ai-artifacts', readRateLimit, requireStaffRole('helper'), async (c) => {
   if (!panelConfigured()) return notConfigured(c);
 
   const res = await panelFetch(
@@ -86,8 +90,7 @@ aiGalleryApi.get('/admin/ai-artifacts', readRateLimit, async (c) => {
 });
 
 /** GET /api/admin/ai-artifacts/content?name=face.png — bytes for images, text otherwise. */
-aiGalleryApi.get('/admin/ai-artifacts/content', readRateLimit, async (c) => {
-  if (!botTokenMatches(c)) return c.json({ error: 'Unauthorized' }, 401);
+aiGalleryApi.get('/admin/ai-artifacts/content', readRateLimit, requireStaffRole('helper'), async (c) => {
   if (!panelConfigured()) return notConfigured(c);
   const name = c.req.query('name') ?? '';
   if (!isSafeArtifactName(name)) return c.json({ error: 'Invalid artifact name' }, 400);

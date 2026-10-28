@@ -524,9 +524,28 @@ export function staffActorHasRole(actor: StaffActor, minimum: StaffRole): boolea
   return actor.rank >= (STAFF_ROLE_RANK[minimum] ?? 99);
 }
 
-/** Any verified credential: a session JWT or the bot/service token. */
+/**
+ * True when the presented X-Staff-Token + X-Staff-Actor pair is a VERIFIED
+ * per-staff credential (name-bound entry in STAFF_ACTOR_TOKEN_MAP). S2-D01:
+ * this IS a credential in its own right — a personal, name-bound, revocable
+ * token must not additionally require the shared umbrella token to count as
+ * "authenticated" (that coupling was the inverted model: personal credentials
+ * were worthless while possession of the shared token stayed mandatory).
+ */
+export function staffTokenPairMatches(c: Context): boolean {
+  const staffToken = c.req.header('X-Staff-Token') ?? '';
+  const claimedName = c.req.header('X-Staff-Actor') ?? '';
+  if (!staffToken || !claimedName) return false;
+  for (const { token, name } of parseStaffTokenMap(env.staffActorTokenMap ?? '')) {
+    if (safeEqual(staffToken, token) && name === claimedName) return true;
+  }
+  return false;
+}
+
+/** Any verified credential: a session JWT, the bot/service token, or a
+ *  verified per-staff token pair (S2-D01). */
 export function isAuthenticated(c: Context): boolean {
-  return c.get('user') !== null || botOrServiceTokenValid(c);
+  return c.get('user') !== null || botOrServiceTokenValid(c) || staffTokenPairMatches(c);
 }
 
 /**
