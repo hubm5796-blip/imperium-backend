@@ -16,6 +16,7 @@ import { adminPanelV2 } from './adminPanel.js';
 import { guideCommentsV2 } from './guideComments.js';
 import { crashReportsV2 } from './crashReports.js';
 import { dmApi, changelogApi } from './dms.js';
+import { deliveriesV2 } from './deliveries.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -38,3 +39,4 @@ v2Api.route('/', guideCommentsV2);
 v2Api.route('/', crashReportsV2);
 v2Api.route('/', dmApi);
 v2Api.route('/', changelogApi);
+v2Api.route('/', deliveriesV2); // S2-D02 delivery ledger (Lane D) — append-only

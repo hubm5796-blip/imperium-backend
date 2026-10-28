@@ -43,6 +43,7 @@ import {
   findRankUpgrade,
   findTierByLifetimeProductId,
 } from './constants.js';
+import { ledgerLineExecuted, ledgerLineFailed, ledgerLineQueued } from '../db/deliveryLedger.js';
 import { logger } from '../utils/logger.js';
 
 /* ── event-name normalization ─────────────────────────────────────────────── */
@@ -83,6 +84,10 @@ export interface ParsedOrder {
   customerId: string;
   /** Minecraft UUID embedded in the order's customer object, when present. */
   customerMinecraftUuid: string | null;
+  /** Minecraft username embedded in the order's customer object, when present. */
+  customerName: string | null;
+  /** PayNow's human-facing "pn-…" order id, when present. */
+  prettyId: string | null;
   lines: ParsedOrderLine[];
 }
 
@@ -99,6 +104,8 @@ export function parsePaynowOrder(body: Record<string, unknown>): ParsedOrder | n
 
   const minecraft = customer?.['minecraft'] as Record<string, unknown> | undefined;
   const customerMinecraftUuid = str(minecraft?.['id']) || str(body['minecraft_uuid']) || null;
+  const customerName = str(minecraft?.['name']) || null;
+  const prettyId = str(body['pretty_id']) || null;
 
   const rawLines = Array.isArray(body['lines'])
     ? body['lines']
@@ -118,7 +125,7 @@ export function parsePaynowOrder(body: Record<string, unknown>): ParsedOrder | n
     const gift = line['gift_to_customer'] as Record<string, unknown> | undefined;
     lines.push({ productId, quantity, giftCustomerId: str(gift?.['id']) || null });
   }
-  return { orderId, customerId, customerMinecraftUuid, lines };
+  return { orderId, customerId, customerMinecraftUuid, customerName, prettyId, lines };
 }
 
 /* ── product → dispatch mapping ───────────────────────────────────────────── */
@@ -147,6 +154,20 @@ export function resolveStoreDispatch(productId: string): ResolvedStoreDispatch |
   if (booster) return { kind: 'booster', boosterId: booster.boosterId, boosterAmount: booster.boosterAmount };
 
   return null;
+}
+
+/** Human-readable SKU label for the delivery ledger (S2-D02), as of purchase. */
+export function skuLabelFor(resolved: ResolvedStoreDispatch): string {
+  switch (resolved.kind) {
+    case 'aureus':
+      return `Aureus ×${resolved.amount}`;
+    case 'rank':
+      return `${resolved.tier} (lifetime)`;
+    case 'crate_key':
+      return `${resolved.crateId} keys ×${resolved.keyAmount}`;
+    case 'booster':
+      return `${resolved.boosterId} ×${resolved.boosterAmount}`;
+  }
 }
 
 /**
@@ -390,16 +411,33 @@ export async function fulfillPaynowOrder(body: Record<string, unknown>): Promise
         return;
       }
 
+      // S2-D02: the delivery ledger row — queued now, executed/failed when the
+      // bus answers. Writes never throw; a ledger gap must not fail a delivery.
+      await ledgerLineQueued({
+        orderId: order.orderId,
+        lineKey,
+        prettyId: order.prettyId,
+        customerName: order.customerName,
+        customerUuid: targetUuid,
+        productId: line.productId,
+        skuLabel: skuLabelFor(resolved),
+        command: `${command.type} ${JSON.stringify(command.payload)}`,
+      });
+
       try {
         const response = await sendCommandWithResponse(command.type, command.payload, DISPATCH_TIMEOUT_MS);
         if (!response.ok) {
           failures.push(`${command.type} rejected: ${response.error ?? response.status}`);
+          await ledgerLineFailed(order.orderId, lineKey, `rejected: ${response.error ?? response.status}`);
           await releaseOrderLine(order.orderId, lineKey);
           return;
         }
+        await ledgerLineExecuted(order.orderId, lineKey);
         dispatched++;
       } catch (err) {
-        failures.push(`${command.type} dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
+        const detail = err instanceof Error ? err.message : String(err);
+        failures.push(`${command.type} dispatch failed: ${detail}`);
+        await ledgerLineFailed(order.orderId, lineKey, `dispatch failed: ${detail}`);
         await releaseOrderLine(order.orderId, lineKey);
       }
     }),
