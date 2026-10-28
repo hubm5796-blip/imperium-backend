@@ -1,17 +1,29 @@
 /**
- * Backend-owned changelog store (2026-10-11) — the durable record of every
- * changelog posted through /api/v2/changelog/post, plus an idempotent seed of
- * the October 2026 backfill (the same entries the site renders at
- * romanica.net/changelog — src/lib/changelog.ts in the frontend repo is the
- * presentation twin; keep both in sync when a new update ships).
+ * Backend-owned changelog store — LEGACY half of the two-module split.
+ *
+ * Since Romanica-MC/romanica-frontend#9 the canonical store is
+ * src/changelog/store.ts (changelog_entry: product/version/links/related,
+ * one table for site-curated + Discord-posted + release-synced entries; the
+ * product vocabulary lives in src/changelog/types.ts and nowhere else).
+ * This module keeps the pre-#9 changelog_post table and its write path:
+ *   - recordChangelogPost still writes changelog_post (write-only history +
+ *     the prune lever below) AND dual-writes the canonical table with the
+ *     same id, so Discord posts appear in the unified store immediately.
+ *   - listChangelogPosts DELEGATES to the canonical store — the bot's
+ *     /changelog command and the v2 list route see every entry (imported
+ *     site updates included) through one read path.
+ *   - The one-time empty-table seed of the October 2026 backfill still runs
+ *     against changelog_post; its `seed-<slug>` rows are mapped to `<slug>`
+ *     by the canonical backfill, then overwritten by the site import (the
+ *     same entries the site renders at romanica.net/changelog).
  *
  * Doctrine (mirrors actionLog.ts): rows are written AFTER the Discord post
  * succeeded, and a store failure NEVER fails the post — it is logged loudly.
- * The table is additive backend-owned D1; the seed only runs when the table is
- * empty so it can never duplicate or resurrect deleted history.
  */
 import { getD1 } from './pool.js';
 import { logger } from '../utils/logger.js';
+import { listChangelogEntries, upsertChangelogEntry } from '../changelog/store.js';
+import type { ChangelogProduct } from '../changelog/types.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS changelog_post (
@@ -122,6 +134,11 @@ const SEED: { id: string; ts: number; title: string; lead: string; changes: stri
 
 let schemaReady = false;
 
+/** Test hook: force the next ensure to re-run (per-test D1 swaps). */
+export function __resetChangelogSchemaForTests(): void {
+  schemaReady = false;
+}
+
 /** Lazy CREATE TABLE IF NOT EXISTS + one-time empty-table seed (dms.ts pattern). */
 export async function ensureChangelogSchema(): Promise<void> {
   if (schemaReady) return;
@@ -154,22 +171,48 @@ export async function ensureChangelogSchema(): Promise<void> {
   }
 }
 
-/** Record a successful changelog post. Never throws (write-after-action doctrine). */
+/** Record a successful changelog post. Never throws (write-after-action doctrine).
+ *  The optional product/version ride into the canonical store; the legacy
+ *  changelog_post shape ignores them. */
 export async function recordChangelogPost(entry: {
   title: string;
   lead: string;
   sections?: { name: string; changes: string[] }[];
   changes?: string[];
+  product?: ChangelogProduct;
+  version?: string | null;
 }): Promise<void> {
+  // One id + one timestamp for both rows: the canonical backfill (INSERT OR
+  // IGNORE) can then never re-import a row the dual-write already placed.
+  const id = `post-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const ts = Date.now();
   try {
     await ensureChangelogSchema();
-    const id = `post-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     await getD1()
       .prepare('INSERT INTO changelog_post (id, ts, title, lead, body_json) VALUES (?, ?, ?, ?, ?)')
-      .bind(id, Date.now(), entry.title, entry.lead, JSON.stringify({ sections: entry.sections, changes: entry.changes }))
+      .bind(id, ts, entry.title, entry.lead, JSON.stringify({ sections: entry.sections, changes: entry.changes }))
       .run();
   } catch (err) {
     logger.error({ err: String(err), title: entry.title }, 'changelog_post store write failed (post already delivered)');
+  }
+  // Canonical dual-write. Same failure doctrine: a store outage must never
+  // break the already-delivered Discord post.
+  try {
+    await upsertChangelogEntry({
+      // The route validates product against the vocabulary before calling.
+      product: entry.product ?? 'server',
+      version: entry.version ?? null,
+      id,
+      date: ts,
+      title: entry.title,
+      summary: entry.lead || entry.title,
+      body: { sections: entry.sections, changes: entry.changes },
+      links: {},
+      related: [],
+      syncedAt: null,
+    });
+  } catch (err) {
+    logger.error({ err: String(err), title: entry.title }, 'changelog_entry dual-write failed (post already delivered)');
   }
 }
 
@@ -193,31 +236,23 @@ export async function pruneDuplicateChangelogPosts(): Promise<number> {
   }
 }
 
-/** Latest posts, newest first. */
+/** Latest posts, newest first — DELEGATED to the canonical store so every
+ *  consumer (bot /changelog, v2 list route) sees imported site entries and
+ *  synced releases too, not just Discord posts. The returned body keeps the
+ *  legacy {sections, changes} shape, mapping imported keyChanges into a flat
+ *  changes list so legacy renderers still show bullets. */
 export async function listChangelogPosts(limit = 5): Promise<ChangelogPostRow[]> {
-  try {
-    await ensureChangelogSchema();
-    const rows = await getD1()
-      .prepare('SELECT id, ts, title, lead, body_json FROM changelog_post ORDER BY ts DESC, id DESC LIMIT ?')
-      .bind(Math.min(Math.max(1, limit), 25))
-      .all<{ id: string; ts: number; title: string; lead: string | null; body_json: string | null }>();
-    return (rows.results ?? []).map((r) => ({
-      id: r.id,
-      ts: r.ts,
-      title: r.title,
-      lead: r.lead,
-      body: r.body_json ? safeParse(r.body_json) : null,
-    }));
-  } catch (err) {
-    logger.error({ err: String(err) }, 'changelog_post list failed');
-    return [];
-  }
-}
-
-function safeParse(raw: string): ChangelogPostRow['body'] {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+  const entries = await listChangelogEntries({ limit: Math.min(Math.max(1, limit), 25) });
+  return entries.map((e) => ({
+    id: e.id,
+    ts: e.date,
+    title: e.title,
+    lead: e.summary,
+    body: {
+      sections: e.body.sections,
+      changes:
+        e.body.changes ??
+        (e.body.sections ? undefined : (e.body.keyChanges && e.body.keyChanges.length > 0 ? e.body.keyChanges : undefined)),
+    },
+  }));
 }
