@@ -29,6 +29,8 @@ export interface CronReport {
  rollup: { ran: boolean; metrics: number };
  tickets: { threaded: number; staleClosed: number; errors: number };
  dms: { sent: number; failed: number; skipped: number };
+ /** S2-D03: failed-delivery alerting (breach + resolve, deduped in D1). */
+ deliveries: { alerted: number; resolved: number; staleMarked: number; errors: number };
  /** B-39: true when another isolate already ran this minute's pass — every
  * leg stayed untouched (the report is all-zero). */
  skipped?: boolean;
@@ -52,6 +54,7 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
  rollup: { ran: false, metrics: 0 },
  tickets: { threaded: 0, staleClosed: 0, errors: 0 },
  dms: { sent: 0, failed: 0, skipped: 0 },
+ deliveries: { alerted: 0, resolved: 0, staleMarked: 0, errors: 0 },
  };
  // Minute-granular claim: one pass per wall-clock minute, fleet-wide.
  try {
@@ -118,6 +121,14 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
  } catch (err) {
  logger.error({ err: String(err) }, 'cron: DM queue crashed');
  }
+ }
+ // S2-D03: paid orders whose delivery command sat >24h unexecuted raise ONE
+ // deduped Discord alert (D1 alerted_at); a later execution posts a resolve.
+ try {
+ const { runDeliveryAlertSweep } = await import('../alerts/deliveryAlerts.js');
+ report.deliveries = await runDeliveryAlertSweep(now);
+ } catch (err) {
+ logger.error({ err: String(err) }, 'cron: delivery alert sweep crashed');
  }
  return report;
 }
