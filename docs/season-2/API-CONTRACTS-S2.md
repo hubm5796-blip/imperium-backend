@@ -153,3 +153,35 @@ An `order_completed` webhook subscription. Live delivery runs through PayNow
 commands executed by the PayNow plugin; adding the webhook without stripping
 commands in the same change **double-delivers every product**. If delivery ever
 moves to webhooks, it is a single atomic change, not two.
+
+---
+
+## Attribution (S2-E09) — the agreed field, both lanes build to this
+
+**Coordinator decision 2026-10-28** (Lane E asked for the agreement before
+building; this is it).
+
+Field name: **`source`** — singular, on every object that records a join or a
+session. Never null: an unattributed join is `"direct"`.
+
+Allowed values (closed vocabulary, lowercase, hyphenated):
+
+| value | meaning |
+|---|---|
+| `direct` | no tag present — typed the IP by hand (the default) |
+| `site` | came through romanica.net's copy button / join links |
+| `launcher` | joined through the Romanica launcher |
+| `client` | first-party client announcement (imperiumclient handshake) |
+| `vote-<site>` | a vote-site landing page (e.g. `vote-minecraftservers`) |
+| `sponsor-<name>` | a streamer/sponsor tag (owner-granted slugs) |
+| `page-<slug>` | any other tagged site page (e.g. `page-faq`) |
+
+Plumbing:
+- Site links carry `?source=<value>` (the copy button stamps `site`).
+- The launcher/client append their value to the server-join handshake they
+  already send (the plugin reads it once at join and stores it on the player
+  row — plugin-side column `join_source`, default `direct`).
+- The backend's session/player sync persists it; `/admin/retention/cohorts`
+  and `/funnel` slice on it (S2-D07's `source` query parameter).
+- Unknown values pass through as-is (they are data, not a gate) but the
+  vocabulary above is what the site/launcher/client may emit.
