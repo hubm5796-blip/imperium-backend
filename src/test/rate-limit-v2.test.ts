@@ -209,6 +209,51 @@ describe('B-25 D1-shared counters across isolates', () => {
     expect(res.status).toBe(200);
   });
 
+  // S2-D10 regression pin (root-caused 2026-10-29): the opportunistic-cleanup
+  // statement used to be built OUTSIDE the fail-open try. With schemaReady
+  // armed (a prior successful request in the same worker — exactly what the
+  // analytics-retention outage tests set up) + Math.random() < 0.02 selecting
+  // the cleanup branch + getD1() throwing, the throw escaped the middleware
+  // and app.onError answered 500 where the route's own outage handling (and
+  // the tests) expect a fail-open pass-through. Deterministic here: the branch
+  // is FORCED via a Math.random spy, so no 2% lottery.
+  it('S2-D10: schemaReady-armed D1 outage with the cleanup branch forced never 500s (fail-open)', async () => {
+    const app = makeApp();
+    // Models the outage route class (the analytics-retention endpoints): the
+    // route's OWN D1 dependency failing answers an honest 503. The limiter
+    // must fail open and let that answer through.
+    app.get('/api/v2/outage-probe', (c) => {
+      try {
+        getD1();
+        return c.json({ ok: true });
+      } catch {
+        return c.json({ error: 'D1 unavailable' }, 503);
+      }
+    });
+
+    // 1. Warm-up with a working D1 arms the module-level schemaReady, so the
+    //    outage below skips ensureSchema's own try and reaches the branch
+    //    under test (the analytics-retention ordering).
+    const warm = await app.request('/api/v2/thing', {
+      method: 'POST',
+      headers: { 'cf-connecting-ip': '198.51.100.30', 'content-type': 'application/json' },
+    });
+    expect(warm.status).toBe(200);
+
+    // 2. Force the opportunistic-cleanup branch AND break D1.
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+    d1Broken.value = true;
+
+    const res = await app.request('/api/v2/outage-probe', {
+      headers: { 'cf-connecting-ip': '198.51.100.31' },
+    });
+
+    randomSpy.mockRestore();
+    d1Broken.value = false;
+
+    expect(res.status).toBe(503); // fail-open pass-through; NEVER a middleware 500
+  });
+
   it('different principals under one IP split fairly: principal budget exhausted on its own', async () => {
     const app = makeApp();
     // GET = std = 2 cost; principal budget 20 → 10 reads by ONE token, then
