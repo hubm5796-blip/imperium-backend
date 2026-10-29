@@ -100,10 +100,13 @@ async function consumeBuckets(asks: BucketAsk[], cost: number, now: number): Pro
   if (asks.length === 0) return [];
   if (!(await ensureSchema())) return null; // fail-open
   const windowStart = Math.floor(now / WINDOW_MS) * WINDOW_MS;
-  const cleanup = Math.random() < 0.02
-    ? getD1().prepare(`DELETE FROM ${D1_TABLE} WHERE window_start < ?`).bind(now - WINDOW_MS)
-    : null;
   try {
+    // S2-D10: built INSIDE the try, mirroring rateLimit.ts:113-114 — when it
+    // lived before the try, a throwing getD1() (schemaReady already armed)
+    // escaped this fail-open contract and surfaced as a 500.
+    const cleanup = Math.random() < 0.02
+      ? getD1().prepare(`DELETE FROM ${D1_TABLE} WHERE window_start < ?`).bind(now - WINDOW_MS)
+      : null;
     const stmts = asks.map((a) =>
       getD1()
         .prepare(
