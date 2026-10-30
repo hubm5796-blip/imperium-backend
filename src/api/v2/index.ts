@@ -22,6 +22,7 @@ import { retentionV2 } from './retention.js';
 import { launchdayV2 } from './launchday.js';
 import { sessionsV2 } from './sessions.js';
 import { revenueV2 } from './revenue.js';
+import { attributionV2 } from './attribution.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -50,3 +51,4 @@ v2Api.route('/', retentionV2); // S2-D07 retention instrumentation (Lane D) — 
 v2Api.route('/', launchdayV2); // S2-D08 launch-day observability composite (Lane D) — append-only
 v2Api.route('/', sessionsV2); // S2-D04/E04 session revocation admin surface (Lane D) — append-only
 v2Api.route('/', revenueV2); // S2-D09 revenue summary (Lane D) — append-only
+v2Api.route('/', attributionV2); // S2-E09 attribution intent + claim (Lane D) — append-only
