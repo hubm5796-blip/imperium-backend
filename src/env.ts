@@ -69,6 +69,15 @@ export interface EnvShape {
    * worker gets the new var) — set INTERNAL_SERVICE_TOKEN to activate the split.
    */
   internalServiceToken: string;
+  /**
+   * S2-E09 attribution: the STATIC salt for the visitor-IP hash
+   * (sha256(ip + salt), 48h matching window). A dedicated worker secret —
+   * ATTRIBUTION_SALT — but until the owner sets it, JWT_SECRET stands in so
+   * the feature is armed with zero owner action (the INTERNAL_SERVICE_TOKEN
+   * compat posture). Rotating it orphans at most one 48h window of intents;
+   * it must NOT be daily-rotated (matching across the window would break).
+   */
+  attributionSalt: string;
   /** V6 02-08 bridge: Bearer secret + the chat/events webhooks (empty = disabled). */
   bridgeSecret: string;
   bridgeWebhookUrl: string;
@@ -230,6 +239,7 @@ function buildEnv(get: Getter, opts: { requireDatabaseUrl: boolean }): EnvShape 
     actorTokenMap: optional('ACTOR_TOKEN_MAP', ''),
     staffActorTokenMap: optional('STAFF_ACTOR_TOKEN_MAP', ''),
     internalServiceToken: optional('INTERNAL_SERVICE_TOKEN') || (nodeEnv === 'production' ? required('BOT_API_TOKEN') : optional('BOT_API_TOKEN')),
+    attributionSalt: optional('ATTRIBUTION_SALT') || jwtSecret,
     bridgeSecret: optional('BRIDGE_SECRET') ?? '',
     bridgeWebhookUrl: optional('BRIDGE_WEBHOOK_URL') ?? '',
     bridgeEventsWebhookUrl: optional('BRIDGE_EVENTS_WEBHOOK_URL') ?? '',

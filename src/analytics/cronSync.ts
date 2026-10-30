@@ -12,9 +12,11 @@
  * (last_join/last_quit/join_count), player_ranks (rank_level),
  * player_playtime and onboarding_state (first_seen) into
  * retention_player_seen (upserts are monotonic — first_seen can only move
- * earlier, rank/session/playtime only up), and DISTINCT
+ * earlier, rank/session/playtime only up, and `source` only upgrades from
+ * 'direct': a player's first attribution is permanent), and DISTINCT
  * economy_transactions days into retention_player_days (presence days).
- * `source` stays 'direct' until Lane E's S2-E09 attribution lands.
+ * `source` is the S2-E09 fold of player_stats.join_source (the plugin's
+ * one-shot claim at first join).
  *
  * Discipline (the rollup leg's, 02-09): the window is the whole
  * 00:06–00:59 UTC hour with a 7-day catch-up; each candidate day is claimed
@@ -115,24 +117,19 @@ function prevDay(day: string): string {
 }
 
 /**
- * Fold the game MySQL's player state + recent presence into the retention
- * tables. Monotonic upserts; throws on upstream failure.
+ * The player fold's SELECT. `withSource` adds player_stats.join_source —
+ * the S2-E09 plugin-half column, which ships SEPARATELY from this backend
+ * change. While the game server runs a pre-column build, the extended
+ * SELECT fails with MySQL's Unknown-column error and the leg retries the
+ * legacy shape (every source 'direct' — exactly the pre-E09 behavior), so
+ * deploying backend-first never breaks the daily fold.
  */
-export async function syncRetention(nowMs: number): Promise<{ players: number; days: number }> {
-  const since = new Date(nowMs - 30 * 86_400_000);
-  const playerRows = await gameQuery<{
-    uuid: string;
-    join_count: number;
-    last_join: unknown;
-    last_quit: unknown;
-    rank_level: number;
-    total_secs: number;
-    first_seen: unknown;
-  }>(
-    `SELECT ps.uuid,
+function playerSelectSql(withSource: boolean): string {
+  return `SELECT ps.uuid,
             ps.join_count,
             ps.last_join,
             ps.last_quit,
+            ${withSource ? 'ps.join_source,' : ''}
             COALESCE(pr.rank_level, 1) AS rank_level,
             (SELECT total_secs FROM player_playtime WHERE uuid = ps.uuid LIMIT 1) AS total_secs,
             (SELECT first_seen FROM onboarding_state WHERE player_uuid = ps.uuid LIMIT 1) AS first_seen
@@ -140,9 +137,37 @@ export async function syncRetention(nowMs: number): Promise<{ players: number; d
       WHERE ps.uuid IN (
             SELECT DISTINCT uuid FROM economy_transactions
              WHERE timestamp >= ? LIMIT ${MAX_PLAYER_ROWS})
-      LIMIT ${MAX_PLAYER_ROWS}`,
-    [since.toISOString().slice(0, 19).replace('T', ' ')],
-  );
+      LIMIT ${MAX_PLAYER_ROWS}`;
+}
+
+/**
+ * Fold the game MySQL's player state + recent presence into the retention
+ * tables. Monotonic upserts; throws on upstream failure.
+ */
+export async function syncRetention(nowMs: number): Promise<{ players: number; days: number }> {
+  const since = new Date(nowMs - 30 * 86_400_000);
+  const sinceSql = since.toISOString().slice(0, 19).replace('T', ' ');
+  let playerRows: Array<{
+    uuid: string;
+    join_count: number;
+    last_join: unknown;
+    last_quit: unknown;
+    rank_level: number;
+    total_secs: number;
+    first_seen: unknown;
+    join_source?: unknown;
+  }>;
+  try {
+    playerRows = await gameQuery(playerSelectSql(true), [sinceSql]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/unknown column/i.test(message) && message.includes('join_source')) {
+      logger.warn('cron: player_stats.join_source not present yet — retention fold runs unattributed (S2-E09 plugin half pending)');
+      playerRows = await gameQuery(playerSelectSql(false), [sinceSql]);
+    } else {
+      throw err;
+    }
+  }
 
   const seen: SeenUpsert[] = [];
   for (const r of playerRows) {
@@ -152,6 +177,10 @@ export async function syncRetention(nowMs: number): Promise<{ players: number; d
     if (candidates.length === 0) continue; // no trustworthy time anchor — skip, never fabricate
     const firstSeen = Math.min(...candidates);
     const lastSeen = Math.max(...candidates);
+    // The plugin writes join_source exactly once at a player's first join
+    // (its claim call against /api/v2/attribution/claim); anything absent,
+    // empty, or non-string folds as 'direct' — never null.
+    const rawSource = typeof r.join_source === 'string' ? r.join_source.trim() : '';
     seen.push({
       uuid: String(r.uuid),
       firstSeenMs: firstSeen,
@@ -159,6 +188,7 @@ export async function syncRetention(nowMs: number): Promise<{ players: number; d
       sessionCount: Number(r.join_count) || 0,
       totalPlaytimeS: Math.max(0, Number(r.total_secs) || 0),
       rankLevel: Math.max(1, Number(r.rank_level) || 1),
+      source: rawSource || 'direct',
     });
   }
   const players = seen.length > 0 ? await upsertSeenRows(seen, nowMs) : 0;

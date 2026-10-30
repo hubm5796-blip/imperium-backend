@@ -6,8 +6,9 @@
  * analytics/cronSync.ts from the game MySQL):
  *   - retention_player_seen  — one row per account: first_seen/last_seen,
  *     session count, playtime, current rank_level, join `source`
- *     ('direct' is the never-null default until Lane E's S2-E09 attribution
- *     wires the real values — an unattributed join is 'direct', never null);
+ *     ('direct' is the never-null default; the S2-E09 fold upgrades it from
+ *     player_stats.join_source on first attribution, and once a real tag is
+ *     set it is permanent — never null, never regressed);
  *   - retention_player_days  — one (uuid, UTC day) row per ACTIVE day. The
  *     feed today is DISTINCT economy_transactions days (every player earns
  *     within minutes of joining, so an economy day is a presence day); when
@@ -200,7 +201,9 @@ export async function loadFirstPurchases(): Promise<Map<string, number>> {
 
 /* ── Write path (the cron leg's fold) ─────────────────────────────────────── */
 
-/** One player's folded state from the game MySQL (cronSync.syncRetention). */
+/** One player's folded state from the game MySQL (cronSync.syncRetention).
+ *  `source` is the S2-E09 join attribution (player_stats.join_source);
+ *  omitted means 'direct'. */
 export interface SeenUpsert {
   uuid: string;
   firstSeenMs: number;
@@ -208,14 +211,18 @@ export interface SeenUpsert {
   sessionCount: number;
   totalPlaytimeS: number;
   rankLevel: number;
+  source?: string;
 }
 
 /**
  * Monotonic upsert: first_seen can only move EARLIER (a late onboarding row
  * must never push a player's join day forward), last_seen/session/playtime/
- * rank only move UP. `source` keeps its existing value once set — S2-E09
- * attribution must not be regressed to 'direct' by the next sync. Returns
- * the number of rows written.
+ * rank only move UP. `source` follows the S2-E09 first-attribution-wins
+ * rule: written on INSERT, and on UPDATE only when the existing value is
+ * 'direct' — a player's first attribution is permanent, so a later claim
+ * (or a sync from before the plugin column existed) can neither rewrite
+ * history nor regress an attributed row back to 'direct'. Returns the
+ * number of rows written.
  */
 export async function upsertSeenRows(rows: SeenUpsert[], nowMs: number): Promise<number> {
   await ensureRetentionSchema();
@@ -226,16 +233,21 @@ export async function upsertSeenRows(rows: SeenUpsert[], nowMs: number): Promise
       .prepare(
         `INSERT INTO retention_player_seen
            (uuid, first_seen_ms, last_seen_ms, session_count, total_playtime_s, rank_level, source, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'direct', ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (uuid) DO UPDATE SET
            first_seen_ms = MIN(retention_player_seen.first_seen_ms, excluded.first_seen_ms),
            last_seen_ms = MAX(retention_player_seen.last_seen_ms, excluded.last_seen_ms),
            session_count = MAX(retention_player_seen.session_count, excluded.session_count),
            total_playtime_s = MAX(retention_player_seen.total_playtime_s, excluded.total_playtime_s),
            rank_level = MAX(retention_player_seen.rank_level, excluded.rank_level),
+           source = CASE
+             WHEN retention_player_seen.source = 'direct' AND excluded.source <> 'direct'
+             THEN excluded.source
+             ELSE retention_player_seen.source
+           END,
            updated_at = excluded.updated_at`,
       )
-      .bind(r.uuid, r.firstSeenMs, r.lastSeenMs, r.sessionCount, r.totalPlaytimeS, r.rankLevel, nowMs)
+      .bind(r.uuid, r.firstSeenMs, r.lastSeenMs, r.sessionCount, r.totalPlaytimeS, r.rankLevel, r.source ?? 'direct', nowMs)
       .run();
     written += 1;
   }
