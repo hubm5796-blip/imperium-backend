@@ -26,10 +26,16 @@ import { readRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
 import { requireServiceToken } from '../../middleware/serviceToken.js';
 import { parseMcUuid } from '../../middleware/gates.js';
 import { recordAction } from '../../db/actionLog.js';
-import { recordChangelogPost, pruneDuplicateChangelogPosts } from '../../db/changelogStore.js';
+import { recordChangelogPost, pruneDuplicateChangelogPosts, newChangelogPostId } from '../../db/changelogStore.js';
 import { listChangelogEntries, upsertChangelogEntry } from '../../changelog/store.js';
-import { CHANGELOG_PRODUCTS, isChangelogProduct } from '../../changelog/types.js';
-import type { ChangelogProduct } from '../../changelog/types.js';
+import { CHANGELOG_PRODUCTS, CHANGELOG_CATEGORY_IDS, isChangelogProduct, isChangelogCategory } from '../../changelog/types.js';
+import type { ChangelogProduct, ChangelogCategory } from '../../changelog/types.js';
+import {
+  buildChangelogEmbedMessage,
+  buildLegacyPostEmbed,
+  type EmbedEntry,
+  type DiscordEmbedMessage,
+} from '../../changelog/embed.js';
 import { resolveAuditActor } from '../../utils/auditActor.js';
 import { logger } from '../../utils/logger.js';
 import { env } from '../../env.js';
@@ -260,6 +266,8 @@ changelogApi.get('/changelog/list', readRateLimit, async (c) => {
       postedAt: new Date(p.date).toISOString(), // legacy alias — same instant as `date`
       date: new Date(p.date).toISOString(),
       sections: p.body.sections ?? (p.body.changes?.length ? [{ name: 'Changes', changes: p.body.changes }] : []),
+      category: p.category, // S2-L10: null on legacy rows (site renders the area chip only)
+      bullets: p.body.bullets ?? [],
       keyChanges: p.body.keyChanges ?? [],
       action: p.body.action ?? null,
       tags: p.body.tags ?? [],
@@ -271,6 +279,207 @@ changelogApi.get('/changelog/list', readRateLimit, async (c) => {
 });
 
 changelogApi.use('/changelog/post*', readRateLimit, requireServiceToken);
+
+/**
+ * S2-L10 — POST /api/v2/changelog/entry
+ *
+ * One change, one entry, one embed. The body is one entry in the STYLE.md
+ * schema (slug/sortKey/category/area/title/summary/bullets[1-3]/body?/
+ * action?/tags?/readHref?/correctionOf?) plus an explicit `notify` boolean.
+ * Server-side it validates against the closed vocabularies, upserts the
+ * canonical store row (id = slug — permalinks stay stable), and — ONLY when
+ * `notify` is true — posts the embed GENERATED from that same stored entry
+ * per EMBED-FORMAT.md. `notify` is false by default: the endpoint is a DRY
+ * RUN returning the exact embed JSON without touching Discord (the
+ * owner-approval flow — nothing posts to the live channel without an
+ * explicit flag).
+ *
+ * Failure modes: validation 400; an unconfigured channel on a notify post is
+ * 503 AFTER the upsert (the entry is site content and stays stored; the
+ * notify can be retried idempotently); a Discord failure is 502 with the
+ * same store-survives semantics; a store failure is an honest 502.
+ */
+changelogApi.use('/changelog/entry*', readRateLimit, requireServiceToken);
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,139}$/;
+const TAG_RE = /^[a-z0-9-]{1,60}$/;
+
+/** 'YYYY-MM-DD' that is also a real calendar day, or null. */
+function validDay(raw: string): string | null {
+  if (!DAY_RE.test(raw) || Number.isNaN(Date.parse(`${raw}T00:00:00.000Z`))) return null;
+  return raw;
+}
+
+/** string[] or null — not " coerced to string" garbage (an item must BE a string). */
+function stringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.every((v) => typeof v === 'string') ? (value as string[]) : null;
+}
+
+changelogApi.post('/changelog/entry', writeRateLimit, async (c) => {
+  let body: Record<string, unknown> = {};
+  try {
+    const raw = await c.req.json();
+    if (raw && typeof raw === 'object') body = raw as Record<string, unknown>;
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  // ── The closed vocabularies ──────────────────────────────────────────────
+  const category = typeof body.category === 'string' ? body.category : '';
+  if (!isChangelogCategory(category)) {
+    return c.json({ error: `category must be one of: ${CHANGELOG_CATEGORY_IDS.join(', ')}` }, 400);
+  }
+  const areaRaw = typeof body.area === 'string' && body.area !== '' ? body.area : typeof body.product === 'string' ? body.product : '';
+  if (!isChangelogProduct(areaRaw)) {
+    return c.json({ error: `area must be one of: ${CHANGELOG_PRODUCTS.join(', ')}` }, 400);
+  }
+  const area: ChangelogProduct = areaRaw;
+
+  // ── The STYLE.md shape caps (structural; voice rules stay author-side) ───
+  const slug = typeof body.slug === 'string' ? body.slug : (typeof body.id === 'string' ? body.id : '');
+  if (!SLUG_RE.test(slug)) {
+    return c.json({ error: 'slug must be 1-140 chars of [a-z0-9-] (it is the permalink)' }, 400);
+  }
+  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  if (title.length < 11 || title.length > 90) {
+    return c.json({ error: 'title must be 11-90 characters (the player benefit)' }, 400);
+  }
+  const summary = typeof body.summary === 'string' ? body.summary.trim() : '';
+  if (summary.length < 21 || summary.length > 300) {
+    return c.json({ error: 'summary must be 21-300 characters (1-2 sentences)' }, 400);
+  }
+  const bulletsRaw = body.bullets === undefined ? [] : stringArray(body.bullets);
+  if (bulletsRaw === null) {
+    return c.json({ error: 'bullets must be an array of strings' }, 400);
+  }
+  const bullets = bulletsRaw.map((b) => b.trim()).filter((b) => b !== '');
+  if (bullets.length > 3 || bullets.some((b) => b.length > 500)) {
+    return c.json({ error: 'bullets must be 1-3 items, each at most 500 characters' }, 400);
+  }
+  const paragraphs = body.body === undefined ? undefined : stringArray(body.body);
+  if (paragraphs === null || (paragraphs !== undefined && (paragraphs.length < 1 || paragraphs.length > 10 || paragraphs.some((p) => p.length > 4000)))) {
+    return c.json({ error: 'body must be 1-10 paragraphs, each at most 4000 characters' }, 400);
+  }
+  const action = body.action === undefined ? undefined : typeof body.action === 'string' ? body.action.trim() : '';
+  if (action !== undefined && (action.length < 1 || action.length > 300)) {
+    return c.json({ error: 'action must be 1-300 characters' }, 400);
+  }
+  const tagsRaw = body.tags === undefined ? [] : stringArray(body.tags);
+  if (tagsRaw === null || tagsRaw.length > 12 || tagsRaw.some((t) => !TAG_RE.test(t))) {
+    return c.json({ error: 'tags must be at most 12 lowercase kebab tags' }, 400);
+  }
+  const readHrefRaw = body.readHref ?? body.link;
+  const readHref = readHrefRaw === undefined ? undefined : typeof readHrefRaw === 'string' ? readHrefRaw : '';
+  if (readHref !== undefined && (readHref.length < 1 || readHref.length > 200 || !readHref.startsWith('/'))) {
+    return c.json({ error: 'readHref must be a site path starting with /' }, 400);
+  }
+  const correctionOfRaw = body.correctionOf === undefined ? undefined : typeof body.correctionOf === 'string' ? body.correctionOf.trim() : '';
+  // STYLE.md: correctionOf is required iff category === 'correction'.
+  if (category === 'correction' && (correctionOfRaw === undefined || correctionOfRaw === '')) {
+    return c.json({ error: 'correction entries must cite correctionOf (the corrected entry permalink)' }, 400);
+  }
+  if (category !== 'correction' && correctionOfRaw) {
+    return c.json({ error: 'correctionOf is for correction entries only' }, 400);
+  }
+  if (correctionOfRaw !== undefined && correctionOfRaw !== '' && correctionOfRaw.length > 500) {
+    return c.json({ error: 'correctionOf must be at most 500 characters' }, 400);
+  }
+  const notify = body.notify === undefined ? false : body.notify;
+  if (typeof notify !== 'boolean') {
+    return c.json({ error: 'notify must be a boolean (default false = dry-run)' }, 400);
+  }
+  const version = body.version === undefined ? null : typeof body.version === 'string' && /^[A-Za-z0-9._+-]{1,50}$/.test(body.version) ? body.version : null;
+  if (body.version !== undefined && version === null) {
+    return c.json({ error: 'version must be 1-50 chars of [A-Za-z0-9._+-]' }, 400);
+  }
+  // sortKey: the entry's own date ('YYYY-MM-DD', the embed timestamp source);
+  // `date` accepted as an alias when it carries the ISO form. Default: today UTC.
+  const sortKeyRaw = typeof body.sortKey === 'string' ? body.sortKey : typeof body.date === 'string' ? body.date : new Date().toISOString().slice(0, 10);
+  const sortKey = validDay(sortKeyRaw);
+  if (!sortKey) {
+    return c.json({ error: 'sortKey must be a YYYY-MM-DD date' }, 400);
+  }
+
+  // ── Notification policy guard (the owner rule, belt and braces) ──────────
+  if (notify && bullets.length === 0) {
+    return c.json({ error: 'notify requires player-visible content: at least one bullet' }, 400);
+  }
+
+  // ── Upsert the canonical store row (id = slug — the permalink contract) ──
+  const entryBody: Record<string, unknown> = {};
+  if (bullets.length > 0) entryBody.bullets = bullets;
+  if (paragraphs) entryBody.body = paragraphs;
+  if (action) entryBody.action = action;
+  if (tagsRaw.length > 0) entryBody.tags = tagsRaw;
+  if (readHref) entryBody.readHref = readHref;
+  if (correctionOfRaw) entryBody.correctionOf = correctionOfRaw;
+
+  let created: boolean;
+  try {
+    const result = await upsertChangelogEntry({
+      id: slug,
+      date: Date.parse(`${sortKey}T00:00:00.000Z`),
+      product: area,
+      version,
+      category: category as ChangelogCategory,
+      title,
+      summary,
+      body: entryBody,
+      links: {},
+      related: [],
+      syncedAt: null,
+    });
+    created = result.created;
+  } catch (err) {
+    logger.error({ err: String(err), slug }, 'changelog entry upsert failed');
+    return c.json({ error: 'Entry store failed' }, 502);
+  }
+
+  // ── The embed, GENERATED from the same stored entry (never hand-written) ─
+  const embedEntry: EmbedEntry = { slug, sortKey, category: category as ChangelogCategory, area, title, summary, bullets };
+  const message: DiscordEmbedMessage = buildChangelogEmbedMessage(embedEntry);
+
+  if (!notify) {
+    // DRY-RUN: the embed JSON is the response; Discord is never contacted.
+    return c.json({ upserted: true, id: slug, created, posted: false, notify: false, embed: message.embeds[0], message });
+  }
+
+  const channelId = env.changelogChannelId;
+  const botToken = env.discord.botToken;
+  if (!channelId || !botToken) {
+    return c.json({ error: 'Changelog channel not configured', upserted: true, id: slug }, 503);
+  }
+  try {
+    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bot ${botToken}` },
+      body: JSON.stringify(message),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      logger.error({ status: res.status, body: errBody.slice(0, 300), slug }, 'changelog entry notify failed');
+      return c.json({ error: `Discord returned ${res.status}`, upserted: true, id: slug }, 502);
+    }
+    try {
+      const actor = await resolveAuditActor(c);
+      await recordAction({
+        actor,
+        action: 'changelog.entry',
+        target: slug,
+        detail: `category=${category} area=${area} channel=${channelId}`,
+      });
+    } catch (err) {
+      logger.warn({ err: String(err), slug }, 'changelog entry audit write failed (post already delivered)');
+    }
+    return c.json({ upserted: true, id: slug, created, posted: true, notify: true, embed: message.embeds[0], message });
+  } catch (err) {
+    logger.error({ err: String(err), slug }, 'changelog entry notify crashed');
+    return c.json({ error: 'Post failed', upserted: true, id: slug }, 502);
+  }
+});
 
 /**
  * POST /api/v2/changelog/prune - service-token-gated on-demand dedup pass (the
@@ -346,27 +555,27 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
     return c.json({ error: 'Changelog channel not configured' }, 503);
   }
 
-  // Body: markdown bullets in the description. The old per-change '•' FIELDS
-  // rendered as a wall of one-line name/value rows on Discord — bold section
-  // headers over bullet lists reads like a changelog instead of a receipt.
-  const sectionText = sections
-    .map((sec) => `**${sec.name}**\n${sec.changes.map((c) => '- ' + asciify(c).slice(0, 500)).join('\n')}`)
-    .join('\n\n');
-  const flatText = changes.map((c) => '- ' + c.slice(0, 500)).join('\n');
-  const lead = description ? description + '\n\n' : '';
-  const embed = {
-    title: title,
-    description: (lead + (sectionText || flatText)).slice(0, 4000),
-    color: 0xcea464,
-    footer: { text: 'Romanica • romanica.net' },
-    timestamp: new Date().toISOString(),
-  };
+  // S2-L10 transition render: the old body still posts, but through the NEW
+  // embed template (category announcement, colour from the table, Area field,
+  // Romanica Changelog footer) so even old-style posts look like the new
+  // format. The id is pinned up front so the embed's permalink and the stored
+  // rows are the same URL the site serves.
+  const postId = newChangelogPostId();
+  const message = buildLegacyPostEmbed({
+    title,
+    description,
+    sections: sections.map((s) => ({ name: s.name, changes: s.changes })),
+    changes,
+    product,
+    slug: postId,
+    nowIso: new Date().toISOString(),
+  });
 
   try {
     const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${botToken}` },
-      body: JSON.stringify({ embeds: [embed], allowed_mentions: { parse: [] } }),
+      body: JSON.stringify(message),
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) {
@@ -390,6 +599,7 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
     // Dual-writes the legacy table AND the canonical changelog_entry store
     // (same id) — see db/changelogStore.ts.
     await recordChangelogPost({
+      id: postId,
       title,
       lead: description,
       sections: sections.map((s) => ({ name: s.name, changes: s.changes })),
@@ -397,7 +607,7 @@ changelogApi.post('/changelog/post', writeRateLimit, async (c) => {
       product,
       version,
     });
-    return c.json({ posted: true, actor: actor.id });
+    return c.json({ posted: true, id: postId, actor: actor.id });
   } catch (err) {
     logger.error({ err: String(err) }, 'changelog post crashed');
     return c.json({ error: 'Post failed' }, 502);

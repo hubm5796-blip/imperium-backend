@@ -155,16 +155,28 @@ beforeEach(() => {
 });
 
 describe('changelog_entry schema migration', () => {
-  it('creates exactly the target shape (#9): id, date, product, version, title, summary, body, links, related, synced_at', async () => {
+  it('creates exactly the target shape (#9 + S2-L10 category): id, date, product, version, title, summary, body, links, related, synced_at, category', async () => {
     await listChangelogEntries({ limit: 5 }); // triggers lazy ensure
     const cols = (
       db.prepare("SELECT name FROM pragma_table_info('changelog_entry') ORDER BY cid").all() as { name: string }[]
     ).map((c) => c.name);
-    expect(cols).toEqual(['id', 'date', 'product', 'version', 'title', 'summary', 'body', 'links', 'related', 'synced_at']);
+    // `category` is LAST in the fresh DDL so fresh creates and ALTERed
+    // deployments (d1_0009) keep an identical column order.
+    expect(cols).toEqual(['id', 'date', 'product', 'version', 'title', 'summary', 'body', 'links', 'related', 'synced_at', 'category']);
     const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='changelog_entry'").all() as { name: string }[];
     const idxNames = idx.map((i) => i.name);
     expect(idxNames).toContain('idx_changelog_entry_date');
     expect(idxNames).toContain('idx_changelog_entry_product');
+  });
+
+  it('the S2-L10 category add is idempotent (the ALTER on an already-migrated table is a no-op)', async () => {
+    await listChangelogEntries({ limit: 5 }); // fresh ensure already created the column
+    await __resetChangelogEntrySchemaForTests();
+    await listChangelogEntries({ limit: 5 }); // re-ensure runs the guarded ALTER against the existing column
+    const cols = (
+      db.prepare("SELECT name FROM pragma_table_info('changelog_entry') ORDER BY cid").all() as { name: string }[]
+    ).map((c) => c.name);
+    expect(cols.filter((c) => c === 'category')).toHaveLength(1);
   });
 
   it('backfills legacy changelog_post rows (they keep working), mapping seed-<slug> to <slug>', async () => {
@@ -360,6 +372,78 @@ describe('site import transformation (golden file)', () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as { count: number };
     expect(json.count).toBe(9);
+  });
+});
+
+describe('site import transformation v2 (S2-L10 schema)', () => {
+  const GOLDEN_V2 = JSON.parse(
+    readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts', 'data', 'site-changelog-v2-2026-10-28.json'),
+      'utf8',
+    ),
+  ) as SiteChangelogEntry[];
+
+  it('the v2 dump has 42 unique-slug entries with closed-vocabulary categories', () => {
+    expect(GOLDEN_V2.length).toBe(42);
+    expect(new Set(GOLDEN_V2.map((e) => e.slug)).size).toBe(42);
+    const byCategory: Record<string, number> = {};
+    for (const e of GOLDEN_V2) byCategory[e.category ?? ''] = (byCategory[e.category ?? ''] ?? 0) + 1;
+    expect(byCategory).toEqual({ correction: 1, new: 15, fix: 8, announcement: 6, improvement: 12 });
+  });
+
+  it('maps bullets -> body.bullets, body -> body.body, correctionOf -> body.correctionOf, category/area -> columns', () => {
+    const transformed = GOLDEN_V2.map(siteEntryToChangelogEntry);
+    expect(transformed).toHaveLength(42);
+    // Every v2 entry lands its category + 1-3 bullets; the reshape means no
+    // keyChanges remain (the three strongest became the bullets).
+    for (const e of transformed) {
+      expect(e.category).toBeDefined();
+      expect(e.body.bullets!.length).toBeGreaterThanOrEqual(1);
+      expect(e.body.bullets!.length).toBeLessThanOrEqual(3);
+      expect(e.body.keyChanges).toBeUndefined();
+    }
+    const correction = transformed.find((e) => e.id === 'ambient-crowd-removed')!;
+    expect(correction.category).toBe('correction');
+    expect(correction.body.correctionOf).toBe('https://romanica.net/changelog/post-mvs77hl0-jfjb78');
+    expect(correction.body.body!.length).toBeGreaterThanOrEqual(1); // overflow narrative preserved
+    // The v2 area is the honest per-entry product (it wins over the v1 slug map).
+    const launcher = transformed.find((e) => e.id === 'launcher-0-2-7')!;
+    expect(launcher.product).toBe('launcher');
+    expect(launcher.version).toBe('0.2.7');
+  });
+
+  it('rejects v2 entries with junk categories/areas or bad bullet counts at import time', () => {
+    expect(() => siteEntryToChangelogEntry({ ...GOLDEN_V2[0]!, category: 'hotfix' as never })).toThrow(/category/);
+    expect(() => siteEntryToChangelogEntry({ ...GOLDEN_V2[0]!, area: 'bot' as never })).toThrow(/area/);
+    expect(() => siteEntryToChangelogEntry({ ...GOLDEN_V2[0]!, bullets: [] })).toThrow(/bullets/);
+    expect(() => siteEntryToChangelogEntry({ ...GOLDEN_V2[0]!, bullets: ['b1', 'b2', 'b3', 'b4'] })).toThrow(/bullets/);
+  });
+
+  it('re-importing the v2 dump over the v1-imported rows is idempotent (42 upserts, no duplicates, permalinks stable)', async () => {
+    seedLegacyTable();
+    await listChangelogEntries({ limit: 5 }); // triggers the legacy backfill
+    for (const site of GOLDEN) await upsertChangelogEntry(siteEntryToChangelogEntry(site)); // the v1 import
+    let createdCount = 0;
+    for (const site of GOLDEN_V2) {
+      const r = await upsertChangelogEntry(siteEntryToChangelogEntry(site)); // the v2 re-import
+      if (r.created) createdCount += 1;
+    }
+    // 42 v2 upserts over the 39 v1 rows: only the 3 NEW entries create (the
+    // 39 shared slugs update in place — the permalink contract).
+    expect(createdCount).toBe(3);
+    const all = await listChangelogEntries({ limit: 200 });
+    expect(all).toHaveLength(43); // 42 v2 + 1 legacy post row
+    expect(new Set(all.map((e) => e.id)).size).toBe(43);
+    // A re-shaped shared slug now carries its v2 shape under the same id.
+    const mines = all.find((e) => e.id === 'last-two-frozen-mines-open')!;
+    expect(mines.category).toBeDefined();
+    expect(mines.body.bullets!.length).toBeGreaterThanOrEqual(1);
+    // The second pass creates nothing.
+    for (const site of GOLDEN_V2) {
+      const r = await upsertChangelogEntry(siteEntryToChangelogEntry(site));
+      expect(r.created).toBe(false);
+    }
+    expect((await listChangelogEntries({ limit: 200 })).length).toBe(43);
   });
 });
 

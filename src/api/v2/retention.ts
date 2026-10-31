@@ -23,6 +23,7 @@ import {
   loadActiveDays,
   loadFirstPurchases,
   listSeenRows,
+  listChurnReasons,
   addDays,
   dayKey,
 } from '../../analytics/retention.js';
@@ -88,6 +89,36 @@ retentionV2.get('/admin/retention/funnel', readRateLimit, requireStaffRole('admi
     });
   } catch (err) {
     console.error(`[analytics] retention funnel read failed: ${String(err)}`);
+    return c.json({ error: 'Retention data unavailable' }, 503);
+  }
+});
+
+/**
+ * S2-C13 — GET /api/v2/admin/retention/churn-reasons?from=&to=
+ *
+ * "Why sessions end": the daily fold of the game MySQL's churn_reason_events
+ * (one row per session end, the LAST meaningful event's type), grouped by
+ * reason over the window. `none` is included so the ratio is honest — the
+ * denominator is every session end, not just eventful ones. Unknown reason
+ * values pass through as data (a newer plugin vocabulary on an older
+ * backend is not a 500). Admin-gated + read-rate-limited like the other
+ * retention reads; D1 failure is a 503, never a hang.
+ */
+retentionV2.get('/admin/retention/churn-reasons', readRateLimit, requireStaffRole('admin'), async (c) => {
+  const from = parseDay(c.req.query('from'));
+  if (from === 'invalid') return c.json({ error: "Invalid 'from' (YYYY-MM-DD)" }, 400);
+  const to = parseDay(c.req.query('to'));
+  if (to === 'invalid') return c.json({ error: "Invalid 'to' (YYYY-MM-DD)" }, 400);
+
+  try {
+    const nowMs = Date.now();
+    // Default window: the fold's own lookback (30 days) — matching the data
+    // that exists rather than an arbitrary year.
+    const fromDay = from ?? dayKey(nowMs - 30 * 86_400_000);
+    const toDay = to ?? dayKey(nowMs);
+    return c.json(await listChurnReasons(fromDay, toDay));
+  } catch (err) {
+    console.error(`[analytics] churn-reasons read failed: ${String(err)}`);
     return c.json({ error: 'Retention data unavailable' }, 503);
   }
 });

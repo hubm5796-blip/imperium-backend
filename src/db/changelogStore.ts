@@ -170,10 +170,19 @@ export async function ensureChangelogSchema(): Promise<void> {
   }
 }
 
+/** The legacy post id scheme (S2-L10: generated in the route so the embed
+ *  permalink and the stored row share one id). */
+export function newChangelogPostId(): string {
+  return `post-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 /** Record a successful changelog post. Never throws (write-after-action doctrine).
  *  The optional product/version ride into the canonical store; the legacy
- *  changelog_post shape ignores them. */
+ *  changelog_post shape ignores them. The optional `id` lets the caller pin
+ *  the row to an id it already rendered into the embed (same scheme, one id
+ *  for the post + both store rows). */
 export async function recordChangelogPost(entry: {
+  id?: string;
   title: string;
   lead: string;
   sections?: { name: string; changes: string[] }[];
@@ -183,7 +192,7 @@ export async function recordChangelogPost(entry: {
 }): Promise<void> {
   // One id + one timestamp for both rows: the canonical backfill (INSERT OR
   // IGNORE) can then never re-import a row the dual-write already placed.
-  const id = `post-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const id = entry.id ?? newChangelogPostId();
   const ts = Date.now();
   try {
     await ensureChangelogSchema();

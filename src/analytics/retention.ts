@@ -47,10 +47,31 @@ CREATE TABLE IF NOT EXISTS retention_player_days (
   PRIMARY KEY (uuid, day)
 )`;
 
+/* ── Churn-reason fold (S2-C13, Option A — the syncRetention D1 fold) ─────── */
+
+/**
+ * One row per session end, folded daily from the game MySQL's
+ * churn_reason_events (written by the plugin on PlayerQuitEvent with the
+ * LAST meaningful event's type). PRIMARY KEY = the source table's
+ * AUTO_INCREMENT id, so the fold is an append-per-row upsert: re-folding a
+ * window never double-counts and late arrivals converge.
+ *
+ * Privacy: the plugin registers its table ANONYMIZE-side; the fold drops the
+ * player_uuid entirely — the grouping key is (day, reason) only, which the
+ * anonymization preserves by design.
+ */
+export const RETENTION_CHURN_SCHEMA = `
+CREATE TABLE IF NOT EXISTS retention_churn_reasons (
+  id     INTEGER PRIMARY KEY,
+  day    TEXT NOT NULL,
+  reason TEXT NOT NULL
+)`;
+
 const RETENTION_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_rps_first_seen ON retention_player_seen (first_seen_ms)',
   'CREATE INDEX IF NOT EXISTS idx_rps_source ON retention_player_seen (source)',
   'CREATE INDEX IF NOT EXISTS idx_rpd_day ON retention_player_days (day)',
+  'CREATE INDEX IF NOT EXISTS idx_rcr_day ON retention_churn_reasons (day)',
 ];
 
 let schemaEnsured = false;
@@ -59,6 +80,7 @@ export async function ensureRetentionSchema(): Promise<void> {
   const d1 = getD1();
   await d1.prepare(RETENTION_SCHEMA).run();
   await d1.prepare(RETENTION_DAYS_SCHEMA).run();
+  await d1.prepare(RETENTION_CHURN_SCHEMA).run();
   for (const idx of RETENTION_INDEXES) await d1.prepare(idx).run();
   schemaEnsured = true;
 }
@@ -267,6 +289,62 @@ export async function upsertActiveDays(days: Array<{ uuid: string; day: string }
     written += Number(res.meta?.changes ?? 0) > 0 ? 1 : 0;
   }
   return written;
+}
+
+/* ── Churn-reason rows (S2-C13) ───────────────────────────────────────────── */
+
+/** Idempotent fold write: INSERT OR IGNORE by the game-MySQL row id. Returns
+ *  the number of NEWLY folded rows (0 on a re-fold of the same window). */
+export async function upsertChurnRows(rows: Array<{ id: number; day: string; reason: string }>): Promise<number> {
+  await ensureRetentionSchema();
+  const d1 = getD1();
+  let written = 0;
+  for (const r of rows) {
+    const res = await d1
+      .prepare(`INSERT OR IGNORE INTO retention_churn_reasons (id, day, reason) VALUES (?, ?, ?)`)
+      .bind(r.id, r.day, String(r.reason))
+      .run();
+    written += Number(res.meta?.changes ?? 0) > 0 ? 1 : 0;
+  }
+  return written;
+}
+
+export interface ChurnReasonSummary {
+  /** Window totals, largest first (ties alphabetical) — `none` included so
+   *  the ratio is honest (the denominator is every session end). */
+  reasons: Array<{ reason: string; count: number }>;
+  /** Per-day breakdown for the dashboard's over-time view. */
+  days: Array<{ day: string; by_reason: Record<string, number> }>;
+}
+
+/** Group the folded churn rows over [fromDay, toDay] (inclusive). Unknown
+ *  reason values (a future plugin vocabulary on an older backend) pass
+ *  through as data — the S2-E09 vocabulary rule. */
+export async function listChurnReasons(fromDay: string, toDay: string): Promise<ChurnReasonSummary> {
+  await ensureRetentionSchema();
+  const d1 = getD1();
+  const byReason = await d1
+    .prepare(
+      `SELECT reason, COUNT(*) AS n FROM retention_churn_reasons WHERE day >= ? AND day <= ? GROUP BY reason ORDER BY n DESC, reason ASC`,
+    )
+    .bind(fromDay, toDay)
+    .all<{ reason: string; n: number }>();
+  const byDay = await d1
+    .prepare(
+      `SELECT day, reason, COUNT(*) AS n FROM retention_churn_reasons WHERE day >= ? AND day <= ? GROUP BY day, reason ORDER BY day ASC, reason ASC`,
+    )
+    .bind(fromDay, toDay)
+    .all<{ day: string; reason: string; n: number }>();
+  const days = new Map<string, Record<string, number>>();
+  for (const r of byDay.results ?? []) {
+    const bucket = days.get(r.day) ?? {};
+    bucket[r.reason] = Number(r.n);
+    days.set(r.day, bucket);
+  }
+  return {
+    reasons: (byReason.results ?? []).map((r) => ({ reason: r.reason, count: Number(r.n) })),
+    days: [...days.entries()].map(([day, by_reason]) => ({ day, by_reason })),
+  };
 }
 
 /* ── Cohorts ─────────────────────────────────────────────────────────────── */

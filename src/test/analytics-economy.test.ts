@@ -346,7 +346,7 @@ describe('S2-D05 cron leg — the day is aggregated ONCE into a stored row', () 
     const report = await runBotCron(new Date('2026-09-18T12:07:00Z'));
     expect(report.analytics).toEqual({
       economy: { ran: false, day: null },
-      retention: { ran: false, players: 0, days: 0 },
+      retention: { ran: false, players: 0, days: 0, churn_events: 0 }, // churn_events: S2-C13 rider field
     });
     expect(gameQueryMock.mock.calls).toHaveLength(0);
   });

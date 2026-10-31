@@ -21,6 +21,19 @@ export function isChangelogProduct(value: string): value is ChangelogProduct {
   return (CHANGELOG_PRODUCTS as readonly string[]).includes(value);
 }
 
+/*
+ * The five closed entry categories (S2-L10, STYLE.md), new to the store with
+ * the per-entry embed work: `changelog_entry.category` is NULL on legacy
+ * rows (the site renders those with the area chip only). The label/colour/
+ * emoji display metadata lives in src/changelog/embed.ts.
+ */
+export const CHANGELOG_CATEGORY_IDS = ['fix', 'new', 'improvement', 'announcement', 'correction'] as const;
+export type ChangelogCategory = (typeof CHANGELOG_CATEGORY_IDS)[number];
+
+export function isChangelogCategory(value: string): value is ChangelogCategory {
+  return (CHANGELOG_CATEGORY_IDS as readonly string[]).includes(value);
+}
+
 /**
  * Body payload, stored as JSON in `changelog_entry.body`. A union of the three
  * writer shapes, rendered best-effort by consumers:
@@ -43,6 +56,12 @@ export interface ChangelogBody {
   changes?: string[];
   /** GitHub release notes (markdown), from the release sync. */
   markdown?: string;
+  /** S2-L10 v2 entries: the 1-3 embed bullets (the embed body). */
+  bullets?: string[];
+  /** S2-L10 v2 entries: fuller paragraphs, entry page only. */
+  body?: string[];
+  /** S2-L10 correction entries: permalink of the corrected entry. */
+  correctionOf?: string;
 }
 
 export interface ChangelogLinks {
@@ -54,12 +73,15 @@ export interface ChangelogLinks {
   issue?: string;
 }
 
-/** A canonical changelog row as stored/served. `date`/`syncedAt` are ms epoch. */
+/** A canonical changelog row as stored/served. `date`/`syncedAt` are ms epoch.
+ *  `category` is NULL on legacy rows (pre-S2-L10) — the site renders those
+ *  with the area chip only. */
 export interface ChangelogEntryRecord {
   id: string;
   date: number;
   product: ChangelogProduct;
   version: string | null;
+  category: ChangelogCategory | null;
   title: string;
   summary: string;
   body: ChangelogBody;
@@ -74,6 +96,8 @@ export interface ChangelogEntryInput {
   date: number;
   product: ChangelogProduct;
   version?: string | null;
+  /** S2-L10 entry category; null/undefined = legacy-shaped row (no embed). */
+  category?: ChangelogCategory | null;
   title: string;
   summary: string;
   body: ChangelogBody;
@@ -89,6 +113,7 @@ export interface ChangelogEntryRow {
   date: number;
   product: string;
   version: string | null;
+  category: string | null;
   title: string;
   summary: string;
   body: string;
@@ -103,6 +128,7 @@ export function rowToRecord(row: ChangelogEntryRow): ChangelogEntryRecord {
     date: row.date,
     product: isChangelogProduct(row.product) ? row.product : 'server',
     version: row.version,
+    category: isChangelogCategory(row.category ?? '') ? (row.category as ChangelogCategory) : null,
     title: row.title,
     summary: row.summary,
     body: safeParse<ChangelogBody>(row.body, {}),

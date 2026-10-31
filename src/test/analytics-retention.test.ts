@@ -168,6 +168,7 @@ beforeEach(async () => {
   gameQueryMock.mockImplementation(async (sql: string) => {
     if (sql.includes('FROM player_stats ps')) return [];
     if (sql.includes('DISTINCT uuid, DATE')) return [];
+    if (sql.includes('FROM churn_reason_events')) return [];
     if (sql.includes('FROM currency_balances')) return [];
     if (sql.includes('GROUP BY reason')) return [];
     throw new Error(`unexpected gameQuery in retention test: ${sql.slice(0, 60)}`);
@@ -357,6 +358,7 @@ describe('retention sync leg', () => {
           { uuid: 'X'.repeat(8) + '-aaaa-bbbb-cccc-dddd-eeeeeeeeeeee', day: '2026-10-01' },
         ];
       }
+      if (sql.includes('FROM churn_reason_events')) return [];
       if (sql.includes('FROM currency_balances')) return [];
       if (sql.includes('GROUP BY reason')) return [];
       throw new Error(`unexpected gameQuery: ${sql.slice(0, 50)}`);

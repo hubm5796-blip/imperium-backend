@@ -52,20 +52,33 @@
  *     faster-website-honest-map             site performance + map
  *     site-speaks-three-languages           site i18n
  */
-import type { ChangelogEntryInput, ChangelogProduct } from './types.js';
+import type { ChangelogEntryInput, ChangelogProduct, ChangelogCategory } from './types.js';
+import { isChangelogCategory, isChangelogProduct } from './types.js';
 
-/** Shape of one entry in the site's src/lib/changelog.ts CHANGELOG array. */
+/**
+ * Shape of one entry in the site's src/lib/changelog.ts CHANGELOG array.
+ *
+ * v2 (S2-L10, 2026-10-30 reshape): category/area/bullets/body/correctionOf;
+ * the v1 fields (type/keyChanges) stay accepted so the pre-reshape golden
+ * dump keeps transforming. A v2 entry carries NO keyChanges — its three
+ * strongest changes ARE the bullets.
+ */
 export interface SiteChangelogEntry {
   slug: string;
   date: string; // display date, e.g. '27 October 2026'
   sortKey: string; // ISO date, e.g. '2026-10-27' — the authoritative sort date
-  type: 'Fix' | 'Update' | 'Announcement';
+  type?: 'Fix' | 'Update' | 'Announcement'; // v1 only
+  category?: ChangelogCategory; // v2: the five closed categories
+  area?: ChangelogProduct; // v2: the five-product vocabulary (honest per-entry)
   title: string;
   summary: string;
-  keyChanges: string[];
+  keyChanges?: string[]; // v1: narrative bullets
+  bullets?: string[]; // v2: the 1-3 embed bullets
+  body?: string[]; // v2: fuller paragraphs, entry page only
   action?: string;
   tags: string[];
   readHref?: string;
+  correctionOf?: string; // v2: correction entries cite the corrected permalink
 }
 
 /** Site slugs whose headline product is the client. */
@@ -135,20 +148,42 @@ export function siteEntryToChangelogEntry(site: SiteChangelogEntry): ChangelogEn
   if (!site.slug || !site.title || !site.summary) {
     throw new Error(`site entry missing slug/title/summary: ${JSON.stringify(site.slug ?? site)}`);
   }
-  if (!Array.isArray(site.keyChanges)) {
+  const isV2 = site.category !== undefined || site.bullets !== undefined;
+  if (isV2) {
+    // v2 guards: the closed vocabularies are validated at import time so a
+    // hand-edited dump can never land a junk category/area in the store.
+    if (!isChangelogCategory(String(site.category))) {
+      throw new Error(`site entry ${site.slug}: category '${site.category}' outside the closed vocabulary`);
+    }
+    if (site.area !== undefined && !isChangelogProduct(site.area)) {
+      throw new Error(`site entry ${site.slug}: area '${site.area}' outside the product vocabulary`);
+    }
+    if (!Array.isArray(site.bullets) || site.bullets.length < 1 || site.bullets.length > 3) {
+      throw new Error(`site entry ${site.slug}: v2 entries carry 1-3 bullets`);
+    }
+  } else if (!Array.isArray(site.keyChanges)) {
     throw new Error(`site entry ${site.slug}: keyChanges must be an array`);
   }
-  const body: ChangelogEntryInput['body'] = {
-    keyChanges: site.keyChanges,
-    tags: Array.isArray(site.tags) ? site.tags : [],
-  };
+  const body: ChangelogEntryInput['body'] = isV2
+    ? {
+        bullets: site.bullets!,
+        tags: Array.isArray(site.tags) ? site.tags : [],
+      }
+    : {
+        keyChanges: site.keyChanges!,
+        tags: Array.isArray(site.tags) ? site.tags : [],
+      };
+  if (isV2 && site.body) body.body = site.body;
+  if (isV2 && site.correctionOf) body.correctionOf = site.correctionOf;
   if (site.action) body.action = site.action;
   if (site.readHref) body.readHref = site.readHref;
   return {
     id: site.slug,
     date: siteEntryDateMs(site),
-    product: siteEntryProduct(site),
+    // v2 entries carry their own honest area — it wins over the v1 slug map.
+    product: (isV2 && site.area) || siteEntryProduct(site),
     version: siteEntryVersion(site),
+    category: isV2 ? (site.category as ChangelogCategory) : null,
     title: site.title,
     summary: site.summary,
     body,

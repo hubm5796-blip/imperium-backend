@@ -196,6 +196,8 @@ beforeEach(() => {
     if (sql.includes('FROM currency_balances')) return WHALE_BALANCES.map((balance) => ({ balance }));
     if (sql.includes('GROUP BY reason')) return [];
     if (sql.includes('FROM player_stats')) return []; // the retention fold has nothing to sync here
+    if (sql.includes('DISTINCT uuid, DATE')) return [];
+    if (sql.includes('FROM churn_reason_events')) return []; // the churn fold rider (S2-C13)
     throw new Error(`unexpected gameQuery in alerts test: ${sql.slice(0, 60)}`);
   });
   globalThis.fetch = (async (url: unknown, init?: { body?: string }) => {
