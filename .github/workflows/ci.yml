@@ -1,3 +1,6 @@
+# DISABLED ON PURPOSE (owner 2026-10-30): GitHub Actions is permanently off for this org
+# (free-plan minutes exhausted; not paying). All checks run LOCALLY via scripts/local-check.sh
+# before every merge/deploy — never re-enable this workflow, never add or trigger one.
 # V6 01-04 — backend CI. Deploys stay owner-gated (deploy.yml needs the
 # CLOUDFLARE_API_TOKEN secret); this workflow only proves the build+tests.
 name: CI
