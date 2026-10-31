@@ -70,7 +70,13 @@ export interface WorkerBindings {
   PAYNOW_BASE_URL: string;
 }
 
-const app = createApp();
+// LAZY on purpose (deploy-validation fix, 2026-10-31): createApp() reads `env`
+// at construction (app.ts D04 warning check), and `env` throws until
+// initEnvFromBindings runs inside fetch. A module-scope createApp() therefore
+// failed Workers' upload validation (error 10021) and made master undeployable
+// — the real root cause of the stale production Worker. Built once per warm
+// isolate on the first request, after env init.
+let app: ReturnType<typeof createApp> | null = null;
 
 export default {
   async fetch(
@@ -113,6 +119,7 @@ export default {
     // returns, killing any deferred command (deferReply + later editReply)
     // before the editReply ever runs. That's what left every data-backed
     // slash command stuck on Discord's "thinking..." forever.
+    app ??= createApp();
     return app.fetch(request, bindings, ctx);
   },
 
