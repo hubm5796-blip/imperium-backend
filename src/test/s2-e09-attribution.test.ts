@@ -145,6 +145,7 @@ beforeEach(async () => {
   gameQueryMock.mockImplementation(async (sql: string) => {
     if (sql.includes('FROM player_stats ps')) return [];
     if (sql.includes('DISTINCT uuid, DATE')) return [];
+    if (sql.includes('FROM churn_reason_events')) return [];
     if (sql.includes('FROM currency_balances')) return [];
     if (sql.includes('GROUP BY reason')) return [];
     throw new Error(`unexpected gameQuery in attribution test: ${sql.slice(0, 60)}`);
@@ -435,6 +436,7 @@ describe('S2-E09 round trip: intent -> claim -> cronSync fold -> dashboard row',
         }];
       }
       if (sql.includes('DISTINCT uuid, DATE')) return [{ uuid: UUID, day: '2026-10-30' }];
+      if (sql.includes('FROM churn_reason_events')) return [];
       if (sql.includes('FROM currency_balances')) return [];
       if (sql.includes('GROUP BY reason')) return [];
       throw new Error(`unexpected gameQuery: ${sql.slice(0, 50)}`);
@@ -488,6 +490,7 @@ describe('cronSync join_source fold semantics', () => {
         }];
       }
       if (sql.includes('DISTINCT uuid, DATE')) return [];
+      if (sql.includes('FROM churn_reason_events')) return [];
       if (sql.includes('FROM currency_balances')) return [];
       if (sql.includes('GROUP BY reason')) return [];
       throw new Error(`unexpected gameQuery: ${sql.slice(0, 50)}`);
@@ -504,6 +507,7 @@ describe('cronSync join_source fold semantics', () => {
     gameQueryMock.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM player_stats ps')) throw new Error('game-mysql unavailable: timeout');
       if (sql.includes('DISTINCT uuid, DATE')) return [];
+      if (sql.includes('FROM churn_reason_events')) return [];
       if (sql.includes('FROM currency_balances')) return [];
       if (sql.includes('GROUP BY reason')) return [];
       throw new Error(`unexpected gameQuery: ${sql.slice(0, 50)}`);

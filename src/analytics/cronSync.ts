@@ -34,11 +34,15 @@ import {
   saveEconomyDailyRow,
   type ReasonTotal,
 } from './economy.js';
-import { upsertSeenRows, upsertActiveDays, type SeenUpsert } from './retention.js';
+import { upsertSeenRows, upsertActiveDays, upsertChurnRows, type SeenUpsert } from './retention.js';
 
 export const ANALYTICS_ROLLUP_UTC_HOUR = 0;
 export const ANALYTICS_ROLLUP_UTC_MINUTE = 6; // after the bot-metrics rollup (00:05)
 export const ANALYTICS_CATCHUP_DAYS = 7;
+/** The churn fold's lookback (the same window as the player fold): a missed
+ *  day inside the window converges on the next pass; the id-keyed upsert
+ *  makes overlapping windows free. */
+export const CHURN_WINDOW_DAYS = 30;
 
 /** The denarius ledger — the primary economy the snapshot tracks. */
 export const PRIMARY_CURRENCY = 'denarius';
@@ -47,10 +51,20 @@ export const PRIMARY_CURRENCY = 'denarius';
 const MAX_BALANCE_ROWS = 200_000;
 const MAX_PLAYER_ROWS = 20_000;
 const MAX_DAY_ROWS = 100_000;
+const MAX_CHURN_ROWS = 200_000;
 
 export interface AnalyticsReport {
   economy: { ran: boolean; day: string | null; error?: string };
-  retention: { ran: boolean; players: number; days: number; error?: string };
+  retention: {
+    ran: boolean;
+    players: number;
+    days: number;
+    /** S2-C13: NEW rows folded this pass (0 on a re-fold of the same window). */
+    churn_events: number;
+    /** A non-table churn-fold failure (the leg still ran — see syncRetention). */
+    churn_error?: string;
+    error?: string;
+  };
 }
 
 /** MySQL 'YYYY-MM-DD HH:MM:SS' (UTC) for a day boundary. */
@@ -144,7 +158,9 @@ function playerSelectSql(withSource: boolean): string {
  * Fold the game MySQL's player state + recent presence into the retention
  * tables. Monotonic upserts; throws on upstream failure.
  */
-export async function syncRetention(nowMs: number): Promise<{ players: number; days: number }> {
+export async function syncRetention(
+  nowMs: number,
+): Promise<{ players: number; days: number; churn_events: number; churn_error?: string }> {
   const since = new Date(nowMs - 30 * 86_400_000);
   const sinceSql = since.toISOString().slice(0, 19).replace('T', ' ');
   let playerRows: Array<{
@@ -203,7 +219,43 @@ export async function syncRetention(nowMs: number): Promise<{ players: number; d
     [mysqlDay(from.toISOString().slice(0, 10)), mysqlDay(new Date(nowMs).toISOString().slice(0, 10))],
   );
   const days = dayRows.length > 0 ? await upsertActiveDays(dayRows.map((r) => ({ uuid: String(r.uuid), day: String(r.day) }))) : 0;
-  return { players, days };
+
+  // S2-C13 rider: fold churn_reason_events (one row per session end, the
+  // LAST meaningful event's type). Tolerance doctrine: the plugin half ships
+  // on its own schedule, so a MISSING table is the expected backend-first
+  // state (warn + skip, churn_error stays unset); any other failure is
+  // logged and surfaced as churn_error WITHOUT failing the retention leg —
+  // the player fold that already succeeded must not be rolled back over an
+  // analytics rider (plugin-side doctrine: a write failure costs one
+  // analytics row, logged — never the session).
+  let churnEvents = 0;
+  let churnError: string | undefined;
+  try {
+    const churnSince = new Date(nowMs - CHURN_WINDOW_DAYS * 86_400_000);
+    const churnSinceSql = churnSince.toISOString().slice(0, 19).replace('T', ' ');
+    const churnRows = await gameQuery<{ id: number; day: string; reason: string }>(
+      `SELECT id, DATE(session_end_at) AS day, last_event_type AS reason
+         FROM churn_reason_events
+        WHERE session_end_at >= ?
+        ORDER BY id
+        LIMIT ${MAX_CHURN_ROWS}`,
+      [churnSinceSql],
+    );
+    if (churnRows.length > 0) {
+      churnEvents = await upsertChurnRows(
+        churnRows.map((r) => ({ id: Number(r.id), day: String(r.day), reason: String(r.reason ?? 'unknown') })),
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/no such table|doesn't exist|unknown table/i.test(message)) {
+      logger.warn('cron: churn_reason_events not present yet — churn fold skipped (S2-C13 plugin half pending)');
+    } else {
+      logger.error({ err: message }, 'cron: churn fold failed (retention fold already committed)');
+      churnError = message;
+    }
+  }
+  return { players, days, churn_events: churnEvents, churn_error: churnError };
 }
 
 /**
@@ -213,7 +265,7 @@ export async function syncRetention(nowMs: number): Promise<{ players: number; d
 export async function runAnalyticsDaily(now: Date): Promise<AnalyticsReport> {
   const report: AnalyticsReport = {
     economy: { ran: false, day: null },
-    retention: { ran: false, players: 0, days: 0 },
+    retention: { ran: false, players: 0, days: 0, churn_events: 0 },
   };
   if (now.getUTCHours() !== ANALYTICS_ROLLUP_UTC_HOUR || now.getUTCMinutes() < ANALYTICS_ROLLUP_UTC_MINUTE) {
     return report;
@@ -254,7 +306,7 @@ export async function runAnalyticsDaily(now: Date): Promise<AnalyticsReport> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, 'cron: analytics retention sync failed');
-    report.retention = { ran: false, players: 0, days: 0, error: message };
+    report.retention = { ran: false, players: 0, days: 0, churn_events: 0, error: message };
     if (rClaimed) await release(rKey).catch(() => undefined);
   }
   return report;

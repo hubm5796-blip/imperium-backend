@@ -37,11 +37,17 @@ CREATE TABLE IF NOT EXISTS changelog_entry (
   body      TEXT NOT NULL DEFAULT '{}',
   links     TEXT NOT NULL DEFAULT '{}',
   related   TEXT NOT NULL DEFAULT '[]',
-  synced_at INTEGER
+  synced_at INTEGER,
+  category  TEXT
 )`;
 
 const IDX_DATE = `CREATE INDEX IF NOT EXISTS idx_changelog_entry_date ON changelog_entry(date DESC, id DESC)`;
 const IDX_PRODUCT = `CREATE INDEX IF NOT EXISTS idx_changelog_entry_product ON changelog_entry(product, date DESC, id DESC)`;
+
+/** S2-L10 column add for D1s deployed before the category existed. SQLite/D1
+ *  has no ADD COLUMN IF NOT EXISTS, so a duplicate-column error is the
+ *  already-deployed case and swallowed (the dm_queue claimed_at pattern). */
+const SCHEMA_CATEGORY = `ALTER TABLE changelog_entry ADD COLUMN category TEXT`;
 
 /**
  * Legacy backfill. Every historical changelog_post row keeps working:
@@ -87,6 +93,14 @@ export async function ensureChangelogEntrySchema(): Promise<void> {
   await d1.prepare(CHANGELOG_ENTRY_DDL).run();
   await d1.prepare(IDX_DATE).run();
   await d1.prepare(IDX_PRODUCT).run();
+  try {
+    await d1.prepare(SCHEMA_CATEGORY).run();
+  } catch (err) {
+    if (!/duplicate column/i.test(String(err))) {
+      logger.warn({ err: String(err) }, 'changelog_entry category column add skipped');
+    }
+    // "duplicate column name" = deployed before S2-L10 — the column is there.
+  }
   if (!backfillSettled) {
     try {
       await d1.prepare(BACKFILL_SQL).run();
@@ -120,8 +134,8 @@ export async function upsertChangelogEntry(entry: ChangelogEntryInput): Promise<
   if (created) {
     await d1
       .prepare(
-        'INSERT INTO changelog_entry (id, date, product, version, title, summary, body, links, related, synced_at) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO changelog_entry (id, date, product, version, title, summary, body, links, related, synced_at, category) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .bind(
         entry.id,
@@ -134,12 +148,13 @@ export async function upsertChangelogEntry(entry: ChangelogEntryInput): Promise<
         JSON.stringify(entry.links ?? {}),
         JSON.stringify(entry.related ?? []),
         entry.syncedAt ?? null,
+        entry.category ?? null,
       )
       .run();
   } else {
     await d1
       .prepare(
-        'UPDATE changelog_entry SET date = ?, product = ?, version = ?, title = ?, summary = ?, body = ?, links = ?, related = ?, synced_at = ? WHERE id = ?',
+        'UPDATE changelog_entry SET date = ?, product = ?, version = ?, title = ?, summary = ?, body = ?, links = ?, related = ?, synced_at = ?, category = ? WHERE id = ?',
       )
       .bind(
         entry.date,
@@ -151,6 +166,7 @@ export async function upsertChangelogEntry(entry: ChangelogEntryInput): Promise<
         JSON.stringify(entry.links ?? {}),
         JSON.stringify(entry.related ?? []),
         entry.syncedAt ?? null,
+        entry.category ?? null,
         entry.id,
       )
       .run();
@@ -169,11 +185,11 @@ export async function listChangelogEntries(options: {
     const d1 = getD1();
     const rows = options.product
       ? await d1
-          .prepare('SELECT id, date, product, version, title, summary, body, links, related, synced_at FROM changelog_entry WHERE product = ? ORDER BY date DESC, id DESC LIMIT ?')
+          .prepare('SELECT id, date, product, version, category, title, summary, body, links, related, synced_at FROM changelog_entry WHERE product = ? ORDER BY date DESC, id DESC LIMIT ?')
           .bind(options.product, limit)
           .all<ChangelogEntryRow>()
       : await d1
-          .prepare('SELECT id, date, product, version, title, summary, body, links, related, synced_at FROM changelog_entry ORDER BY date DESC, id DESC LIMIT ?')
+          .prepare('SELECT id, date, product, version, category, title, summary, body, links, related, synced_at FROM changelog_entry ORDER BY date DESC, id DESC LIMIT ?')
           .bind(limit)
           .all<ChangelogEntryRow>();
     return (rows.results ?? []).map(rowToRecord);

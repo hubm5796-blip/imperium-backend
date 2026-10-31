@@ -3,20 +3,26 @@
  * changelog_entry D1 store (issue Romanica-MC/romanica-frontend#9).
  *
  * Input: the JSON dump of the site's src/lib/changelog.ts array (generate or
- * refresh it with scripts/dump-site-changelog.mts — the golden file in repo is
- * scripts/data/site-changelog-2026-10-28.json, 39 entries).
+ * refresh it with scripts/dump-site-changelog.mts — the v2 golden file in repo
+ * is scripts/data/site-changelog-v2-2026-10-28.json, 42 entries in the S2-L10
+ * schema: category/area/bullets/body/correctionOf; the pre-reshape v1 dump
+ * scripts/data/site-changelog-2026-10-28.json still transforms too).
  *
  * What it preserves (the permalink trap from the issue): every slug becomes the
- * canonical id, so /changelog/<slug> never breaks; titles/summaries/keyChanges
- * move over verbatim; tags/action/readHref ride in the body JSON. Products are
- * assigned by the mapping documented in src/changelog/transform.ts (honest
- * per-entry judgment, server by default).
+ * canonical id, so /changelog/<slug> never breaks; titles/summaries move over
+ * verbatim; bullets -> body.bullets, body paragraphs -> body.body, correctionOf
+ * -> body.correctionOf, category/area -> the store columns (v2), while v1's
+ * keyChanges/tags/action/readHref ride in the body JSON. v2 entries carry
+ * their own honest area; v1 products come from the mapping documented in
+ * src/changelog/transform.ts (server by default).
  *
  * Idempotent: emits upserts (ON CONFLICT(id) DO UPDATE), so re-running or
- * replaying after a partial import converges. The legacy `seed-*` rows from
- * changelog_post never surface as duplicates: the canonical backfill maps
- * `seed-<slug>` -> `<slug>`, and these upserts overwrite those rows with the
- * site's fuller prose and the correct product.
+ * replaying after a partial import converges — re-running the v2 import
+ * upserts the 42 entries over the existing slug-keyed rows without creating
+ * duplicates. The legacy `seed-*` rows from changelog_post never surface as
+ * duplicates: the canonical backfill maps `seed-<slug>` -> `<slug>`, and
+ * these upserts overwrite those rows with the site's fuller prose and the
+ * correct product.
  *
  * Usage:
  *   npx tsx scripts/import-site-changelog.mts                     # summary + SQL to stdout
@@ -40,7 +46,7 @@ const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
 const inputIdx = args.indexOf('--input');
 const outIdx = args.indexOf('--out');
-const input = inputIdx >= 0 ? args[inputIdx + 1]! : `${root}/scripts/data/site-changelog-2026-10-28.json`;
+const input = inputIdx >= 0 ? args[inputIdx + 1]! : `${root}/scripts/data/site-changelog-v2-2026-10-28.json`;
 const out = outIdx >= 0 ? args[outIdx + 1]! : undefined;
 
 const siteEntries = JSON.parse(readFileSync(input, 'utf8')) as SiteChangelogEntry[];
@@ -60,10 +66,13 @@ for (const e of transformed) {
 
 const byProduct: Record<string, number> = {};
 for (const e of transformed) byProduct[e.product] = (byProduct[e.product] ?? 0) + 1;
+const byCategory: Record<string, number> = {};
+for (const e of transformed) if (e.category) byCategory[e.category] = (byCategory[e.category] ?? 0) + 1;
 
 console.log(`input: ${input}`);
 console.log(`entries: ${transformed.length} (unique ids: ${ids.size})`);
 for (const p of CHANGELOG_PRODUCTS) console.log(`  ${p}: ${byProduct[p] ?? 0}`);
+console.log(`categories (v2): ${JSON.stringify(byCategory)}`);
 console.log(`date range: ${new Date(Math.min(...transformed.map((e) => e.date))).toISOString()} .. ${new Date(Math.max(...transformed.map((e) => e.date))).toISOString()}`);
 const versioned = transformed.filter((e) => e.version);
 console.log(`versioned entries: ${versioned.length} (${versioned.map((e) => `${e.id}=${e.version}`).join(', ')})`);
@@ -86,6 +95,7 @@ for (const e of transformed) {
     String(e.date),
     sqlString(e.product),
     e.version ? sqlString(e.version) : 'NULL',
+    e.category ? sqlString(e.category) : 'NULL',
     sqlString(e.title),
     sqlString(e.summary),
     sqlString(JSON.stringify(e.body)),
@@ -94,11 +104,11 @@ for (const e of transformed) {
     e.syncedAt ? String(e.syncedAt) : 'NULL',
   ].join(', ');
   statements.push(
-    `INSERT INTO changelog_entry (id, date, product, version, title, summary, body, links, related, synced_at)\n` +
+    `INSERT INTO changelog_entry (id, date, product, version, category, title, summary, body, links, related, synced_at)\n` +
       `VALUES (${values})\n` +
       `ON CONFLICT(id) DO UPDATE SET date=excluded.date, product=excluded.product, version=excluded.version,\n` +
-      `  title=excluded.title, summary=excluded.summary, body=excluded.body, links=excluded.links,\n` +
-      `  related=excluded.related, synced_at=excluded.synced_at;`,
+      `  category=excluded.category, title=excluded.title, summary=excluded.summary, body=excluded.body,\n` +
+      `  links=excluded.links, related=excluded.related, synced_at=excluded.synced_at;`,
   );
 }
 statements.push('COMMIT;');

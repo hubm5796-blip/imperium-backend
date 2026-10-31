@@ -1,0 +1,17 @@
+-- S2-L10 (per-entry embeds): the entry category column.
+--
+-- changelog_entry.category is NULL on every legacy row (site-curated imports,
+-- Discord post dual-writes, GitHub release syncs written before this packet);
+-- the site renders legacy rows with the area chip only (already implemented
+-- and test-pinned frontend-side). New rows carry one of the five closed
+-- categories (fix|new|improvement|announcement|correction — the vocabulary
+-- lives in src/changelog/types.ts CHANGELOG_CATEGORY_IDS, mirrored from the
+-- frontend src/lib/changelog.ts).
+--
+-- As with d1_0005: deploys are git-push autobuilds and nothing runs
+-- `wrangler d1 migrations apply` — the store's lazy ensure
+-- (ensureChangelogEntrySchema in src/changelog/store.ts) applies the same
+-- ALTER guarded on duplicate-column (the dm_queue claimed_at pattern), and
+-- fresh D1s get the column straight from the CREATE TABLE. This file
+-- documents the canonical shape for anyone applying migrations by hand.
+ALTER TABLE changelog_entry ADD COLUMN category TEXT;
