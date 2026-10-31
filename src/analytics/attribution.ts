@@ -173,3 +173,85 @@ export async function lookupIntentSource(ipHash: string, nowMs: number): Promise
     .first<{ source: string }>();
   return row?.source ?? 'direct';
 }
+
+/* ── Read path (the launch-day staff surface) ────────────────────────────── */
+
+/** One source's total over the requested window. */
+export interface AttributionSourceCount {
+  source: string;
+  count: number;
+}
+
+/** One UTC day's per-source bucket (the churn-reasons `by_reason` shape). */
+export interface AttributionDayCounts {
+  day: string;
+  by_source: Record<string, number>;
+}
+
+/**
+ * The grouped read behind GET /api/v2/admin/attribution/intents — the same
+ * envelope family as listChurnReasons, over BOTH attribution tables:
+ *
+ *   intents — copy-path interest per source (deduped by construction: the
+ *     table is one row per visitor IP hash, latest tag wins — counts are
+ *     "distinct visitor IPs whose latest in-window tag was X", never raw
+ *     beacon volume). Rows live 48h, so older days in a long range simply
+ *     read empty — the durable history is `claims` (and the retention fold).
+ *   claims  — the one-shot join outcomes per source (persisted forever,
+ *     `direct` included so the denominator is every first join, not just
+ *     attributable ones).
+ *
+ * Sources pass through verbatim (unknown-but-well-formed tags are data, the
+ * S2-E09 rule); day buckets are UTC via strftime, matching dayKey.
+ */
+export interface AttributionReadSummary {
+  intents: { sources: AttributionSourceCount[]; days: AttributionDayCounts[] };
+  claims: { sources: AttributionSourceCount[]; days: AttributionDayCounts[] };
+}
+
+const READ_DAY_MS = 86_400_000;
+
+/** Grouped counts for one table over [fromDay 00:00Z, toDay+1 00:00Z). The
+ *  table/column names are literal members of the union — never user input. */
+async function countsBySourceAndDay(
+  table: 'attribution_intent' | 'attribution_claim',
+  tsColumn: 'ts' | 'claimed_at',
+  fromDay: string,
+  toDay: string,
+): Promise<{ sources: AttributionSourceCount[]; days: AttributionDayCounts[] }> {
+  await ensureAttributionSchema();
+  const d1 = getD1();
+  const fromMs = Date.parse(`${fromDay}T00:00:00.000Z`);
+  const toMs = Date.parse(`${toDay}T00:00:00.000Z`) + READ_DAY_MS; // `to` is inclusive
+  const totals = await d1
+    .prepare(
+      `SELECT source, COUNT(*) AS n FROM ${table} WHERE ${tsColumn} >= ? AND ${tsColumn} < ? GROUP BY source ORDER BY n DESC, source ASC`,
+    )
+    .bind(fromMs, toMs)
+    .all<{ source: string; n: number }>();
+  const byDay = await d1
+    .prepare(
+      `SELECT strftime('%Y-%m-%d', ${tsColumn} / 1000, 'unixepoch') AS day, source, COUNT(*) AS n
+       FROM ${table} WHERE ${tsColumn} >= ? AND ${tsColumn} < ? GROUP BY day, source ORDER BY day ASC, source ASC`,
+    )
+    .bind(fromMs, toMs)
+    .all<{ day: string; source: string; n: number }>();
+  const days = new Map<string, Record<string, number>>();
+  for (const r of byDay.results ?? []) {
+    const bucket = days.get(r.day) ?? {};
+    bucket[r.source] = Number(r.n);
+    days.set(r.day, bucket);
+  }
+  return {
+    sources: (totals.results ?? []).map((r) => ({ source: r.source, count: Number(r.n) })),
+    days: [...days.entries()].map(([day, by_source]) => ({ day, by_source })),
+  };
+}
+
+/** Intent + claim counts by source for a UTC date range (admin launch-day read). */
+export async function listAttributionIntents(fromDay: string, toDay: string): Promise<AttributionReadSummary> {
+  return {
+    intents: await countsBySourceAndDay('attribution_intent', 'ts', fromDay, toDay),
+    claims: await countsBySourceAndDay('attribution_claim', 'claimed_at', fromDay, toDay),
+  };
+}

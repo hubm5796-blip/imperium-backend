@@ -410,6 +410,145 @@ describe('POST /api/v2/attribution/claim', () => {
   });
 });
 
+/* ── GET /api/v2/admin/attribution/intents (the launch-day read) ──────────── */
+
+describe('GET /api/v2/admin/attribution/intents', () => {
+  const ADMIN = { ...BOT, 'X-Staff-Role': 'admin' };
+  const HELPER = { ...BOT, 'X-Staff-Role': 'helper' };
+  const DAY = 86_400_000;
+
+  /** UTC-midnight-anchored ms for today+offsetDays at `hour` — deterministic
+   *  day buckets independent of when the suite runs. */
+  function dayMs(offsetDays: number, hour = 12): number {
+    const midnight = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+    return midnight + offsetDays * DAY + hour * HOUR;
+  }
+
+  interface ReadJson {
+    intents: { sources: Array<{ source: string; count: number }>; days: Array<{ day: string; by_source: Record<string, number> }> };
+    claims: { sources: Array<{ source: string; count: number }>; days: Array<{ day: string; by_source: Record<string, number> }> };
+  }
+
+  beforeEach(() => {
+    // Intents: today (site x2 distinct IPs, vote-minecraftservers x1) and
+    // yesterday (page-e09walk x1, vote-futuresite x1 — unknown-but-well-formed
+    // tag: data, not a gate). Inserted directly for deterministic day buckets.
+    const rows: Array<[string, string, number]> = [
+      [hashIp('203.0.113.51'), 'site', dayMs(0, 1)],
+      [hashIp('203.0.113.52'), 'site', dayMs(0, 2)],
+      [hashIp('203.0.113.53'), 'vote-minecraftservers', dayMs(0, 3)],
+      [hashIp('203.0.113.61'), 'page-e09walk', dayMs(-1, 1)],
+      [hashIp('203.0.113.62'), 'vote-futuresite', dayMs(-1, 23)],
+    ];
+    for (const [ipHash, source, ts] of rows) {
+      db.prepare('INSERT INTO attribution_intent (ip_hash, source, ts) VALUES (?, ?, ?)').run(ipHash, source, ts);
+    }
+    // Claims (the durable one-shot outcomes): today site x1 + vote x2,
+    // yesterday direct x1.
+    const claims: Array<[string, string, number]> = [
+      ['aaaaaaaa-0000-0000-0000-000000000001', 'site', dayMs(0, 4)],
+      ['aaaaaaaa-0000-0000-0000-000000000002', 'vote-minecraftservers', dayMs(0, 5)],
+      ['aaaaaaaa-0000-0000-0000-000000000003', 'vote-minecraftservers', dayMs(0, 6)],
+      ['aaaaaaaa-0000-0000-0000-000000000004', 'direct', dayMs(-1, 7)],
+    ];
+    for (const [uuid, source, claimedAt] of claims) {
+      db.prepare('INSERT INTO attribution_claim (uuid, source, claimed_at) VALUES (?, ?, ?)').run(uuid, source, claimedAt);
+    }
+  });
+
+  it('the fail-closed admin gate: anonymous 401, helper 403, admin 200', async () => {
+    expect((await app.request('/api/v2/admin/attribution/intents')).status).toBe(401);
+    expect((await app.request('/api/v2/admin/attribution/intents', { headers: HELPER })).status).toBe(403);
+    expect((await app.request('/api/v2/admin/attribution/intents', { headers: ADMIN })).status).toBe(200);
+  });
+
+  it('serves intent AND claim counts by source and by day for the window', async () => {
+    const from = new Date(Date.now() - DAY).toISOString().slice(0, 10);
+    const to = new Date().toISOString().slice(0, 10);
+    const res = await app.request(`/api/v2/admin/attribution/intents?from=${from}&to=${to}`, { headers: ADMIN });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as ReadJson;
+    // Totals: count DESC then source ASC — vote x1 ties break alphabetically.
+    expect(json.intents.sources).toEqual([
+      { source: 'site', count: 2 },
+      { source: 'page-e09walk', count: 1 },
+      { source: 'vote-futuresite', count: 1 },
+      { source: 'vote-minecraftservers', count: 1 },
+    ]);
+    expect(json.intents.days).toHaveLength(2);
+    expect(json.intents.days[1]).toEqual({
+      day: new Date().toISOString().slice(0, 10),
+      by_source: { site: 2, 'vote-minecraftservers': 1 },
+    });
+    expect(json.intents.days[0]).toEqual({
+      day: new Date(Date.now() - DAY).toISOString().slice(0, 10),
+      by_source: { 'page-e09walk': 1, 'vote-futuresite': 1 },
+    });
+    // The durable side: claim outcomes, same shape.
+    expect(json.claims.sources).toEqual([
+      { source: 'vote-minecraftservers', count: 2 },
+      { source: 'direct', count: 1 },
+      { source: 'site', count: 1 },
+    ]);
+    expect(json.claims.days).toHaveLength(2);
+  });
+
+  it('default window (no params) covers at least the seeded days and is date-bounded', async () => {
+    const res = await app.request('/api/v2/admin/attribution/intents', { headers: ADMIN });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as ReadJson;
+    const days = json.intents.days.map((d) => d.day);
+    expect(days).toContain(new Date().toISOString().slice(0, 10));
+    // The 30-day default window cannot reach back into ancient history.
+    expect(days.every((d) => d >= new Date(Date.now() - 31 * DAY).toISOString().slice(0, 10))).toBe(true);
+  });
+
+  it('a narrower window drops the days outside it', async () => {
+    const to = new Date(Date.now() - DAY).toISOString().slice(0, 10);
+    const res = await app.request(`/api/v2/admin/attribution/intents?from=${to}&to=${to}`, { headers: ADMIN });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as ReadJson;
+    expect(json.intents.days).toEqual([
+      { day: to, by_source: { 'page-e09walk': 1, 'vote-futuresite': 1 } },
+    ]);
+    expect(json.claims.days).toEqual([{ day: to, by_source: { direct: 1 } }]);
+  });
+
+  it('counts are per visitor IP (latest wins), never raw beacon volume', async () => {
+    // One visitor beacons site, then vote-other: the read shows ONE intent,
+    // the latest source — the upsert's dedupe, visible in the read.
+    await postIntent('site', '198.51.100.77');
+    await postIntent('vote-other', '198.51.100.77');
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await app.request(`/api/v2/admin/attribution/intents?from=${today}&to=${today}`, { headers: ADMIN });
+    const json = (await res.json()) as ReadJson;
+    const mine = json.intents.days[0]!.by_source;
+    expect(mine['vote-other']).toBe(1);
+    expect(mine.site).toBe(2); // the two seeded IPs only — this IP's stale 'site' beacon was overwritten, NOT counted twice
+  });
+
+  it('junk from/to dates are 400 exactly like the other retention reads', async () => {
+    expect((await app.request('/api/v2/admin/attribution/intents?from=nonsense', { headers: ADMIN })).status).toBe(400);
+    expect((await app.request('/api/v2/admin/attribution/intents?to=2026-13-99', { headers: ADMIN })).status).toBe(400);
+  });
+
+  it('an empty window answers empty arrays, not an error', async () => {
+    const res = await app.request('/api/v2/admin/attribution/intents?from=2020-01-01&to=2020-01-02', { headers: ADMIN });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      intents: { sources: [], days: [] },
+      claims: { sources: [], days: [] },
+    });
+  });
+
+  it('a D1 outage answers 503, never a hang', async () => {
+    getD1Mock.mockImplementation(() => {
+      throw new Error('d1 down');
+    });
+    expect((await app.request('/api/v2/admin/attribution/intents', { headers: ADMIN })).status).toBe(503);
+  });
+});
+
 /* ── The full round trip the request file pins (intent -> claim -> fold) ───── */
 
 describe('S2-E09 round trip: intent -> claim -> cronSync fold -> dashboard row', () => {

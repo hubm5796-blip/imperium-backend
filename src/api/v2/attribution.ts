@@ -1,6 +1,7 @@
 /**
  * S2-E09 (Lane D backend half) — POST /api/v2/attribution/intent (public,
- * rate-limited) + POST /api/v2/attribution/claim (service-token gated).
+ * rate-limited) + POST /api/v2/attribution/claim (service-token gated) +
+ * GET /api/v2/admin/attribution/intents (admin read, launch-day surface).
  *
  * Wire contract (docs/season-2/requests/S2-E09.md Ask 1):
  *   intent — body { "source": "<tag>" } from the site proxy
@@ -32,10 +33,13 @@ import { Hono } from 'hono';
 import {
   claimSource,
   hashIp,
+  listAttributionIntents,
   parseSourceTag,
   storeIntent,
 } from '../../analytics/attribution.js';
-import { clientIp, rateLimit } from '../../middleware/rateLimit.js';
+import { dayKey } from '../../analytics/retention.js';
+import { clientIp, rateLimit, readRateLimit } from '../../middleware/rateLimit.js';
+import { requireStaffRole } from '../../middleware/gates.js';
 import { requireServiceToken } from '../../middleware/serviceToken.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
@@ -77,6 +81,16 @@ export const attributionIntentLimit = rateLimit(10, 60_000, 'attribution-intent'
 );
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 'YYYY-MM-DD' or 400 — junk dates never silently become "all time" (the
+ *  retention reads' rule, mirrored). */
+function parseDay(raw: string | undefined): string | undefined | 'invalid' {
+  if (raw === undefined || raw === '') return undefined;
+  if (!DAY_RE.test(raw) || Number.isNaN(Date.parse(`${raw}T00:00:00.000Z`))) return 'invalid';
+  return raw;
+}
 
 export const attributionV2 = new Hono<ApiEnv>();
 
@@ -131,5 +145,35 @@ attributionV2.post('/attribution/claim', requireServiceToken, async (c) => {
     // The plugin half treats any non-200 as 'direct' locally (it never
     // blocks a join) — 503 keeps the failure observable, not silent.
     return c.json({ error: 'Attribution unavailable' }, 503);
+  }
+});
+
+/**
+ * S2-E09 launch-day read — GET /api/v2/admin/attribution/intents?from=&to=
+ *
+ * Intent + claim counts by source for a UTC date range (the churn-reasons
+ * pattern: read-rate-limited, admin-gated, junk dates 400, D1 failure 503 —
+ * never a hang). Intent counts are per visitor IP (the table dedupes by
+ * construction, latest tag wins); claims are the durable one-shot join
+ * outcomes with 'direct' included so the denominator is every first join.
+ * Unknown-but-well-formed sources pass through as data (the S2-E09 rule).
+ */
+attributionV2.get('/admin/attribution/intents', readRateLimit, requireStaffRole('admin'), async (c) => {
+  const from = parseDay(c.req.query('from'));
+  if (from === 'invalid') return c.json({ error: "Invalid 'from' (YYYY-MM-DD)" }, 400);
+  const to = parseDay(c.req.query('to'));
+  if (to === 'invalid') return c.json({ error: "Invalid 'to' (YYYY-MM-DD)" }, 400);
+
+  try {
+    const nowMs = Date.now();
+    // Default window: 30 days, matching churn-reasons. Intent rows only
+    // live 48h (pruned on write), so older days read empty by design; the
+    // durable history is `claims` (and the retention fold).
+    const fromDay = from ?? dayKey(nowMs - 30 * 86_400_000);
+    const toDay = to ?? dayKey(nowMs);
+    return c.json(await listAttributionIntents(fromDay, toDay));
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'attribution: intents read failed');
+    return c.json({ error: 'Attribution data unavailable' }, 503);
   }
 });
