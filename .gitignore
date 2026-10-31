@@ -15,3 +15,4 @@ backend.log
 
 # Vercel CLI link for the Mojang relay
 relay/.vercel
+dist-worker/
