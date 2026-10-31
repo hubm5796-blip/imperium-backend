@@ -12,6 +12,7 @@
 
 import { initEnvFromBindings } from './env.js';
 import { initPool, initD1 } from './db/pool.js';
+import { ensureBootMigrations } from './db/migrations.js';
 import { initGamePool } from './db/gameMysql.js';
 import { createApp } from './app.js';
 import { setCronBindings } from './bot/cronConfig.js';
@@ -98,6 +99,12 @@ export default {
         database: bindings.GAME_MYSQL_DATABASE,
       });
     }
+    // BOOT MIGRATION ENSURE (Lane D, 2026-10-31): once per warm isolate,
+    // off the request path — the worker applies every migration mounted in
+    // migrations/ (idempotent DDL; the drift pin lives in
+    // src/test/migrations-drift.test.ts). Failures log loudly and never
+    // fail the request; the per-module lazy ensures remain the net behind it.
+    ctx.waitUntil(ensureBootMigrations());
     // Forwarding bindings+ctx is required, not cosmetic: without a real
     // ExecutionContext, c.executionCtx.waitUntil() in interactions.ts has
     // nothing to attach to. Its catch block assumes that means "running
@@ -123,6 +130,9 @@ export default {
     initPool(bindings.DATABASE_URL || bindings.HYPERDRIVE.connectionString);
     initD1(bindings.CACHE_DB);
     setCronBindings(bindings as unknown as Record<string, unknown>);
+    // Same boot ensure as fetch — a cron-only isolate (no requests yet) still
+    // converges the schema; legs with their own lazy ensures race it safely.
+    ctx.waitUntil(ensureBootMigrations());
     ctx.waitUntil(
       runBotCron()
         .then((report) => {
