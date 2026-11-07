@@ -185,3 +185,36 @@ Plumbing:
   and `/funnel` slice on it (S2-D07's `source` query parameter).
 - Unknown values pass through as-is (they are data, not a gate) but the
   vocabulary above is what the site/launcher/client may emit.
+
+---
+
+## Growth (S2-D12) — the §6 weekly table, one call
+
+### `GET /admin/growth/overview`
+Consumer: owner/panel · Packet: S2-D12
+
+Query: `from`, `to` (inclusive UTC days, `YYYY-MM-DD`; default 30-day window;
+§6's cadence is weekly — pass the week's bounds).
+
+One payload shaped like 06-MARKETING-AND-GROWTH.md §6's table, every cell
+stating its derivation; a cell the backend cannot see is null/zero with a
+`sources` marker, never fabricated:
+
+- `connect_attempts` — attribution intents by source (distinct visitor IP
+  hashes). **48h TTL disclosed in the payload** — intent rows are pruned on
+  write, so older windows read empty by design; durable history is claims +
+  the retention fold.
+- `joins` — `by_source` from the retention fold (every first join, `direct`
+  included — the full denominator) + `claims_by_source` from the E09 one-shot
+  claim table (exists only for joins after the plugin half shipped).
+- `server_lists` — the `vote-<list>` slices of the above, prefix stripped.
+- `discord_bridge` — `discord_links` rows created in the window (Postgres).
+  GUILD join counts are `null` + `not tracked` marker: no backend table
+  carries guild-join timestamps, so guild→game conversion is not derivable.
+- `retention_by_source` — d1/d7/d30 per source over the join window
+  (`computeSourceRetention`, the pinned D07 definition; null while a window
+  is open).
+- `cac_vs_arppu` — `null`: §6 lists it as a manual monthly metric.
+
+Degradation: per-section (the launchday doctrine) — a dead source nulls its
+own cells with `sources.<name> = 'unavailable'`; the page loads whole.

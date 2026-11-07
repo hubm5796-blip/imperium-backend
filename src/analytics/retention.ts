@@ -433,6 +433,38 @@ export function computeCohorts(
   return cohorts;
 }
 
+/**
+ * S2-D12 — whole-window per-source cohort slices for the growth-metrics
+ * surface: ONE slice per acquisition source over the entire join window
+ * (not per ISO week like computeCohorts — that endpoint stays the weekly
+ * drill-down). Same pinned retention definition and the same ratesFor math:
+ * dN null while any member's window is open, never a partial number.
+ */
+export interface SourceRetention {
+  overall: CohortSlice;
+  by_source: Record<string, CohortSlice>;
+}
+
+export function computeSourceRetention(
+  players: SeenRow[],
+  active: Map<string, Set<string>>,
+  opts: { from: string; to: string; nowMs: number },
+): SourceRetention {
+  const inWindow = players.filter((p) => {
+    const joinDay = dayKey(p.first_seen_ms);
+    return joinDay >= opts.from && joinDay <= opts.to;
+  });
+  const bySource: Record<string, CohortSlice> = {};
+  for (const src of [...new Set(inWindow.map((p) => p.source))].sort()) {
+    bySource[src] = ratesFor(
+      inWindow.filter((p) => p.source === src),
+      active,
+      opts.nowMs,
+    );
+  }
+  return { overall: ratesFor(inWindow, active, opts.nowMs), by_source: bySource };
+}
+
 /* ── Funnel ──────────────────────────────────────────────────────────────── */
 
 export const FUNNEL_STAGES = ['joined', 'rank_ii', 'rank_v', 'first_purchase', 'd7_return'] as const;
