@@ -463,7 +463,11 @@ describe('GET /api/v2/admin/retention/funnel', () => {
         totalPlaytimeS: 100,
         rankLevel: i < 3 ? 5 : i < 6 ? 2 : 1,
       })).concat([{
-        uuid: 'new', firstSeenMs: ms('2026-10-28T12:00:00Z'), lastSeenMs: ms('2026-10-28T13:00:00Z'),
+        // Joined "now" on the REAL clock (the route reads Date.now(), not
+        // this file's fixed NOW): the d7 window always closes 7 days out, so
+        // pending_d7 is 1 any day the suite runs — the previous absolute
+        // date (2026-10-28, window closing 11-04) made the suite expire.
+        uuid: 'new', firstSeenMs: Date.now(), lastSeenMs: Date.now(),
         sessionCount: 1, totalPlaytimeS: 10, rankLevel: 6,
       }]),
       NOW,
@@ -471,7 +475,7 @@ describe('GET /api/v2/admin/retention/funnel', () => {
     const days: Array<{ uuid: string; day: string }> = [];
     for (let i = 1; i <= 10; i += 1) days.push({ uuid: `p${i}`, day: '2026-09-14' });
     days.push({ uuid: 'p2', day: '2026-09-21' }); // the one day-7 returner
-    days.push({ uuid: 'new', day: '2026-10-28' });
+    days.push({ uuid: 'new', day: dayKey(Date.now()) });
     await upsertActiveDays(days);
     // Purchases: the delivery ledger's own customer evidence (D1 truth).
     db.exec(`CREATE TABLE IF NOT EXISTS store_delivery_ledger (
@@ -480,7 +484,7 @@ describe('GET /api/v2/admin/retention/funnel', () => {
     const ins = db.prepare('INSERT INTO store_delivery_ledger (order_id, line_key, customer_uuid, queued_at) VALUES (?, ?, ?, ?)');
     ins.run('o1', '0:x:1:p2', 'p2', ms('2026-09-16T12:00:00Z'));
     ins.run('o2', '0:x:1:p3', 'p3', ms('2026-09-17T12:00:00Z'));
-    ins.run('o3', '0:x:1:new', 'new', ms('2026-10-29T00:00:00Z'));
+    ins.run('o3', '0:x:1:new', 'new', Date.now());
     ins.run('o4', '0:x:1:np', 'p7', 0); // a rank-I player bought — below rank_v, must NOT count
   });
 
@@ -508,7 +512,7 @@ describe('GET /api/v2/admin/retention/funnel', () => {
     expect(purchase!.conversion).toBeCloseTo(3 / 4, 6);
     expect(d7!.count).toBe(1); // p2 only
     expect(d7!.conversion).toBeCloseTo(1 / 3, 6);
-    expect(json.pending_d7).toBe(1); // 'new' (window closes 11-04)
+    expect(json.pending_d7).toBe(1); // 'new' (joined "now" — d7 window still open)
   });
 
   it('?source= slices, junk dates 400, and a D1 outage 503s', async () => {
