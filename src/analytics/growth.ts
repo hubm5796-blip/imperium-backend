@@ -37,6 +37,7 @@
  * `sources` while the page still loads whole.
  */
 import { listAttributionIntents, ATTRIBUTION_INTENT_WINDOW_MS, type AttributionSourceCount } from './attribution.js';
+import { readCcuNow, readCcuPeak7d } from './ccu.js';
 import {
   addDays,
   computeSourceRetention,
@@ -45,6 +46,7 @@ import {
   listSeenRows,
   loadActiveDays,
   type CohortSlice,
+  type SourceRetention,
 } from './retention.js';
 import { query } from '../db/pool.js';
 import { logger } from '../utils/logger.js';
@@ -131,22 +133,23 @@ function voteSlices(counts: AttributionSourceCount[] | null): GrowthServerListSl
 }
 
 /**
- * The §6 stitch. `fromDay`/`toDay` are inclusive UTC days; `nowMs` is
- * injectable so tests pin cohort windows exactly.
+ * S2-G02 — the ONE fold read both growth surfaces share: players + presence
+ * days → joins-by-source for the window + the whole-window per-source
+ * retention slices. Extracted verbatim from buildGrowthOverview when the
+ * public snapshot needed the same numbers, so the two surfaces can never
+ * drift (the overview's pins are the behavior proof of this refactor).
+ * Section-isolated: a fold failure reads as null, never a thrown page.
  */
-export async function buildGrowthOverview(fromDay: string, toDay: string, nowMs: number): Promise<GrowthOverview> {
-  const toMs = dayStartMs(toDay) + DAY_MS; // `to` is inclusive
-  const windowDays = Math.round((toMs - dayStartMs(fromDay)) / DAY_MS);
+export interface FoldStats {
+  joins: {
+    total: number;
+    by_source: GrowthSourceCount[];
+  };
+  retention: SourceRetention;
+}
 
-  // Attribution read (D1): intents + claims in one pass — they share the
-  // table family and the window, so they fail together if D1 is down.
-  const attribution = await section('connect_attempts+claims', () => listAttributionIntents(fromDay, toDay));
-
-  // Retention fold read (D1): players + presence days → joins by source +
-  // the d1/d7/d30-by-source cell. The day window extends past `to` so a d30
-  // window that closes after `to` can still be evaluated (the cohorts
-  // route's own headroom).
-  const fold = await section('joins+retention', async () => {
+export async function readFoldStats(fromDay: string, toDay: string, nowMs: number): Promise<FoldStats | null> {
+  return section('joins+retention', async () => {
     const players = await listSeenRows();
     const active = await loadActiveDays(dayKey(dayStartMs(fromDay) - 365 * DAY_MS), addDays(toDay, 35));
     const inWindow = players.filter((p) => {
@@ -164,6 +167,25 @@ export async function buildGrowthOverview(fromDay: string, toDay: string, nowMs:
     const retention = computeSourceRetention(players, active, { from: fromDay, to: toDay, nowMs });
     return { joins, retention };
   });
+}
+
+/**
+ * The §6 stitch. `fromDay`/`toDay` are inclusive UTC days; `nowMs` is
+ * injectable so tests pin cohort windows exactly.
+ */
+export async function buildGrowthOverview(fromDay: string, toDay: string, nowMs: number): Promise<GrowthOverview> {
+  const toMs = dayStartMs(toDay) + DAY_MS; // `to` is inclusive
+  const windowDays = Math.round((toMs - dayStartMs(fromDay)) / DAY_MS);
+
+  // Attribution read (D1): intents + claims in one pass — they share the
+  // table family and the window, so they fail together if D1 is down.
+  const attribution = await section('connect_attempts+claims', () => listAttributionIntents(fromDay, toDay));
+
+  // Retention fold read (D1): players + presence days → joins by source +
+  // the d1/d7/d30-by-source cell. The day window extends past `to` so a d30
+  // window that closes after `to` can still be evaluated (the cohorts
+  // route's own headroom).
+  const fold = await readFoldStats(fromDay, toDay, nowMs);
 
   // Discord bridge (Postgres): independent store, independent failure.
   const discordLinks = await section('discord_links', () => countDiscordLinks(dayStartMs(fromDay), toMs));
@@ -240,5 +262,115 @@ export async function buildGrowthOverview(fromDay: string, toDay: string, nowMs:
       : null,
     cac_vs_arppu: null,
     sources,
+  };
+}
+
+/* ── S2-G02: the public compact snapshot ─────────────────────────────────── */
+
+/**
+ * The season clock anchor: the plugin's seasons.calendar start-at
+ * (config.yml, owner decisions #17/#19 — relaunch 2026-11-07, the Season 1
+ * window opens 2026-11-14T20:00:00Z with the drops at weeks 2/6/10). The
+ * calendar values are the owner's to shift; if they move start-at, this
+ * constant moves with it in the same season (one line, stated in the payload
+ * as season_starts_at so a mismatch is visible, never silent).
+ */
+export const SEASON_2_START_AT_MS = Date.parse('2026-11-14T20:00:00Z');
+
+/** The snapshot's by-source list is capped at 5 (the task's own shape). */
+export const SNAPSHOT_TOP_SOURCES = 5;
+
+export interface GrowthSnapshotSourceCount {
+  source: string;
+  joins: number;
+}
+
+export interface GrowthSnapshot {
+  /** UTC day the snapshot was generated (joins_7d includes this day). */
+  date: string;
+  generated_at: string;
+  /** Whole UTC days since the season window opened; 0 before it. */
+  season_days_elapsed: number;
+  /** The anchor season_days_elapsed counts from — stated, not implied. */
+  season_starts_at: string;
+  /** Live concurrent players, or null when every status source failed. */
+  ccu_now: number | null;
+  /** Highest sampled daily peak over the 7 UTC days ending `date`; null
+   * until the sampler (S2-G02 cron leg) has at least one answered sample. */
+  ccu_peak_7d: number | null;
+  joins_7d: {
+    window: { from: string; to: string };
+    total: number | null;
+    by_source: GrowthSnapshotSourceCount[];
+  };
+  /** D1 of the join cohort over the 7 COMPLETE days ending yesterday (every
+   * member's day-1 window has closed — the pinned D07 definition). null
+   * pre-launch (no joins yet) or when the fold source is unavailable. */
+  d1_cohort: { window: { from: string; to: string }; cohort_size: number; d1: number | null } | null;
+  /** Per-cell honesty markers (the C13 rule: every cell states its source). */
+  sources: Record<string, string>;
+}
+
+/**
+ * S2-G02 — the PUBLIC compact snapshot the transparency posts cite. Same
+ * D1 fold, same attribution-free join counts, same honest-empty rules as the
+ * staff overview, projected down to counts/rates ONLY: no uuids, no names,
+ * no per-player rows exist anywhere in this payload (test-pinned).
+ *
+ * Windows:
+ *   joins_7d — the 7 UTC days ending TODAY (inclusive): the fresh number a
+ *     weekly post wants, today's joins included.
+ *   d1_cohort — the 7 COMPLETE days ending YESTERDAY: by construction every
+ *     member's day-1 window has closed, so the pinned "null while the window
+ *     is open, never a partial number" definition yields a real rate (or an
+ *     honest null when there is no cohort at all — pre-launch).
+ */
+export async function buildGrowthSnapshot(nowMs: number): Promise<GrowthSnapshot> {
+  const today = dayKey(nowMs);
+  const joinsFrom = dayKey(nowMs - 6 * DAY_MS);
+  const cohortFrom = dayKey(nowMs - 7 * DAY_MS);
+  const cohortTo = dayKey(nowMs - 1 * DAY_MS);
+
+  const joinsFold = await readFoldStats(joinsFrom, today, nowMs);
+  const cohortFold = await readFoldStats(cohortFrom, cohortTo, nowMs);
+
+  // CCU: live read + the stored peak series, isolated independently.
+  const ccuNow = await section('ccu_now', () => readCcuNow());
+  const ccuPeak = await section('ccu_peak_7d', () => readCcuPeak7d(nowMs));
+
+  const overall = cohortFold?.retention.overall ?? null;
+  const seasonDays = Math.max(0, Math.floor((nowMs - SEASON_2_START_AT_MS) / DAY_MS));
+
+  return {
+    date: today,
+    generated_at: new Date(nowMs).toISOString(),
+    season_days_elapsed: seasonDays,
+    season_starts_at: new Date(SEASON_2_START_AT_MS).toISOString(),
+    ccu_now: ccuNow?.count ?? null,
+    ccu_peak_7d: ccuPeak,
+    joins_7d: {
+      window: { from: joinsFrom, to: today },
+      total: joinsFold?.joins.total ?? null,
+      by_source: (joinsFold?.joins.by_source ?? [])
+        .slice(0, SNAPSHOT_TOP_SOURCES)
+        .map((c) => ({ source: c.source, joins: c.count })),
+    },
+    d1_cohort:
+      overall && overall.size > 0
+        ? { window: { from: cohortFrom, to: cohortTo }, cohort_size: overall.size, d1: overall.d1 }
+        : null,
+    sources: {
+      ccu_now: ccuNow
+        ? `live: ${ccuNow.source}`
+        : 'unavailable — every online-count source (Redis heartbeat, Postgres snapshot, game-MySQL snapshot) failed or timed out',
+      ccu_peak_7d: ccuPeak === null ? 'no answered sample in the 7-day window yet (series starts with the S2-G02 deploy)' : 'ccu_daily_peak (D1) — MAX of per-minute sampled daily peaks',
+      joins_7d: joinsFold
+        ? 'retention_player_seen (daily fold from the game MySQL) — counts only, no player rows in this payload'
+        : 'unavailable — retention fold failed',
+      d1_cohort: overall
+        ? 'retention fold: share of the join cohort active on join-day+1; window bounded to closed days'
+        : 'null — no join cohort in the window (pre-launch) or the fold source is unavailable',
+      season_days_elapsed: `whole UTC days since season_starts_at (the plugin seasons.calendar start-at)`,
+    },
   };
 }

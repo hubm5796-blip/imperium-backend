@@ -11,10 +11,11 @@
  * a hang). §6's cadence is weekly: pass ?from=<week start>&to=<week end>.
  */
 import { Hono } from 'hono';
-import { buildGrowthOverview } from '../../analytics/growth.js';
+import { buildGrowthOverview, buildGrowthSnapshot } from '../../analytics/growth.js';
 import { dayKey } from '../../analytics/retention.js';
 import { requireStaffRole } from '../../middleware/gates.js';
 import { readRateLimit } from '../../middleware/rateLimit.js';
+import { swrJson } from '../expansion/cache.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
 
@@ -52,5 +53,27 @@ growthV2.get('/admin/growth/overview', readRateLimit, requireStaffRole('admin'),
     // the last-resort bound (a non-source bug must 503, never hang).
     logger.warn({ err: String(err) }, 'growth: overview build failed');
     return c.json({ error: 'Growth data unavailable' }, 503);
+  }
+});
+
+/**
+ * S2-G02 — GET /api/v2/growth/snapshot.json: the PUBLIC compact snapshot the
+ * transparency posts cite (and screenshot via the frontend /growth page).
+ * Deliberately NOT staff-gated: every cell is a count or a rate — the fold's
+ * per-player rows never cross this boundary (test-pinned). Anonymous-safe by
+ * the same reasoning as the status page: concurrent/join counts are public
+ * in-game facts. Served through the repo's public SWR cache (60s fresh /
+ * 5min stale-while-revalidate / 24h serve-stale-on-error bridge + edge
+ * cache + Cache-Control) — the leaderboards pattern, so a post going viral
+ * cannot stampede the fold reads.
+ */
+growthV2.get('/growth/snapshot.json', readRateLimit, async (c) => {
+  try {
+    return await swrJson(c, 'growth-snapshot:v1', async () => buildGrowthSnapshot(Date.now()));
+  } catch (err) {
+    // buildGrowthSnapshot is per-section isolated; reaching this catch means
+    // a non-source bug AND an empty cache — bound it, never hang.
+    logger.warn({ err: String(err) }, 'growth: snapshot build failed');
+    return c.json({ error: 'Growth snapshot unavailable' }, 503);
   }
 });

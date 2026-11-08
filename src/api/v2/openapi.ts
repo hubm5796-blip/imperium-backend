@@ -69,6 +69,20 @@ const SPEC = {
         responses: { '200': { description: 'Pong envelope' } },
       },
     },
+    '/api/v2/growth/snapshot.json': {
+      get: {
+        summary: 'Public growth snapshot (counts/rates only)',
+        description:
+          'S2-G02: the compact transparency-post snapshot — date, ccu_now, ccu_peak_7d, ' +
+          'joins_7d by source (top 5), d1_cohort (null pre-launch), season_days_elapsed. ' +
+          'Anonymous (no auth): every cell is a count or rate; no player rows exist in the ' +
+          'payload. Served stale-while-revalidate (60s fresh / 5min stale / 24h outage bridge).',
+        responses: {
+          '200': { description: 'Snapshot object (honest nulls for unmeasured cells)' },
+          '503': { description: 'Snapshot build failed with an empty cache' },
+        },
+      },
+    },
     '/api/v2/leaderboards/{board}': {
       get: {
         summary: 'Leaderboard page (keyset cursor)',

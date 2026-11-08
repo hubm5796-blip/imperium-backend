@@ -39,8 +39,11 @@ export interface CronReport {
  /** S2-D06: economy breach alerting (gini / weekly supply delta / faucet
   * concentration — deduped per breach-window in D1, resolve on recovery). */
  economyAlerts: { evaluated: boolean; day: string | null; alerted: number; resolved: number; open: string[]; errors: number };
+ /** S2-G02: the concurrent-player peak sample — one bounded count read folded
+  * into ccu_daily_peak's running MAX (the growth snapshot's ccu_peak_7d). */
+ ccu: { sampled: boolean; peak: number | null; pruned: boolean; error?: string };
  /** B-39: true when another isolate already ran this minute's pass — every
- * leg stayed untouched (the report is all-zero). */
+  * leg stayed untouched (the report is all-zero). */
  skipped?: boolean;
 }
 /** One full cron pass. Never throws — every leg catches its own errors and
@@ -68,6 +71,7 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
   retention: { ran: false, players: 0, days: 0 },
  },
  economyAlerts: { evaluated: false, day: null, alerted: 0, resolved: 0, open: [], errors: 0 },
+ ccu: { sampled: false, peak: null, pruned: false },
  };
  // Minute-granular claim: one pass per wall-clock minute, fleet-wide.
  try {
@@ -159,13 +163,24 @@ export async function runBotCron(now: Date = new Date()): Promise<CronReport> {
  // but silent while STAFF_ALERT_WEBHOOK_URL is unset. A failed hour
  // self-heals on the next (the evaluation is idempotent).
  try {
- const { runEconomyAlertEvaluation } = await import('../analytics/alerts.js');
- const hourKey = `analytics-econ-alerts:${now.toISOString().slice(0, 13)}`; // YYYY-MM-DDTHH
- if (await claim(hourKey)) {
- report.economyAlerts = await runEconomyAlertEvaluation(now);
- }
+  const { runEconomyAlertEvaluation } = await import('../analytics/alerts.js');
+  const hourKey = `analytics-econ-alerts:${now.toISOString().slice(0, 13)}`; // YYYY-MM-DDTHH
+  if (await claim(hourKey)) {
+   report.economyAlerts = await runEconomyAlertEvaluation(now);
+  }
  } catch (err) {
- logger.error({ err: String(err) }, 'cron: economy alert leg crashed');
+  logger.error({ err: String(err) }, 'cron: economy alert leg crashed');
+ }
+ // S2-G02: the CCU peak sample — rides the every-minute cadence this pass
+ // already owns (fleet-claimed per minute, so sample rate == cron rate).
+ // Never throws: a failed read records nothing and the day's peak simply
+ // keeps whatever earlier ticks saw (null until one does).
+ try {
+  const { sampleCcuPeak } = await import('../analytics/ccu.js');
+  report.ccu = await sampleCcuPeak(now);
+  if (report.ccu.error) logger.warn({ err: report.ccu.error }, 'cron: ccu sample tick failed');
+ } catch (err) {
+  logger.error({ err: String(err) }, 'cron: ccu sample leg crashed');
  }
  return report;
 }
