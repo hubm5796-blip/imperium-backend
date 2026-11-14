@@ -10,14 +10,12 @@
 // added in a later migration stage) using Discord's HTTP Interactions
 // Endpoint instead.
 
-import { initEnvFromBindings } from './env.js';
-import { initPool, initD1 } from './db/pool.js';
 import { ensureBootMigrations } from './db/migrations.js';
-import { initGamePool } from './db/gameMysql.js';
 import { createApp } from './app.js';
 import { setCronBindings } from './bot/cronConfig.js';
 import { runBotCron } from './bot/cron.js';
 import { handleUnhandledRejection } from './utils/unhandledRejection.js';
+import { initWorkerState } from './workerInit.js';
 
 // CRASH GUARD (2026-08-25): workerd fails a request with a raw 1101 the moment ANY
 // promise rejection goes unhandled — detached Promise.race losers, socket teardown
@@ -86,25 +84,10 @@ export default {
   ): Promise<Response> {
     // Idempotent per warm isolate — only the first request on a given
     // isolate actually builds env/opens the pool; later ones reuse both.
-    initEnvFromBindings(bindings as unknown as Record<string, unknown>);
-    // Hyperdrive is the connection path (TLS terminates inside Cloudflare —
-    // direct pg/TLS from workerd cannot reach Supabase: node:tls shims are
-    // broken and cloudflare:sockets startTls rejects the pooler cert chain).
-    // A plain DATABASE_URL var is accepted as a Node-dev/local override only.
-    initPool(bindings.DATABASE_URL || bindings.HYPERDRIVE.connectionString);
-    initD1(bindings.CACHE_DB);
-    // GAME MYSQL (hybrid, 2026-08-22): real-time reads of game data (profiles,
-    // balances, stats) from the live birdflop MySQL — the same DB the plugin
-    // writes. No more 5-minute WebSync staleness.
-    if (bindings.GAME_MYSQL_HOST && bindings.GAME_MYSQL_USER && bindings.GAME_MYSQL_PASSWORD && bindings.GAME_MYSQL_DATABASE) {
-      initGamePool({
-        host: bindings.GAME_MYSQL_HOST,
-        port: bindings.GAME_MYSQL_PORT ?? 3306,
-        user: bindings.GAME_MYSQL_USER,
-        password: bindings.GAME_MYSQL_PASSWORD,
-        database: bindings.GAME_MYSQL_DATABASE,
-      });
-    }
+    // Shared with scheduled() (workerInit.ts) so cron isolates get the
+    // game-MySQL pool too (L15 2026-11-14: the cron's CCU sampler and its
+    // in-process route calls 503'd/errored without it).
+    initWorkerState(bindings);
     // BOOT MIGRATION ENSURE (Lane D, 2026-10-31): once per warm isolate,
     // off the request path — the worker applies every migration mounted in
     // migrations/ (idempotent DDL; the drift pin lives in
@@ -133,9 +116,11 @@ export default {
     bindings: WorkerBindings,
     ctx: ExecutionContext,
   ): Promise<void> {
-    initEnvFromBindings(bindings as unknown as Record<string, unknown>);
-    initPool(bindings.DATABASE_URL || bindings.HYPERDRIVE.connectionString);
-    initD1(bindings.CACHE_DB);
+    // L15 (2026-11-14): the SAME init as fetch (workerInit.ts). The cron
+    // isolate previously never built the game-MySQL pool, so every bus-kv /
+    // game read in runBotCron (CCU sampling, swr caches for its in-process
+    // route calls) failed with "Game MySQL pool not initialized" every minute.
+    initWorkerState(bindings);
     setCronBindings(bindings as unknown as Record<string, unknown>);
     // Same boot ensure as fetch — a cron-only isolate (no requests yet) still
     // converges the schema; legs with their own lazy ensures race it safely.
