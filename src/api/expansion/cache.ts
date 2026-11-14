@@ -155,11 +155,26 @@ export async function swrJson<T>(
   // Layer 1: edge cache — PUBLIC payloads only (B-43). A hit is at most 60s
   // old by its own Cache-Control policy, so serve it without touching Redis
   // or Postgres at all.
+  //
+  // L15 (2026-11-14): the hit is REBUILT, never mutated. Responses returned by
+  // caches.default have IMMUTABLE headers in workerd — `hit.headers.set(...)`
+  // throws TypeError "Can't modify immutable headers", which escaped swrJson
+  // (the edge path predates its try/catch) and 503'd the route's outer catch.
+  // Under real traffic this meant every public SWR route (seasons, growth
+  // snapshot, leaderboards, shop catalog, legion cards) intermittently 503'd
+  // exactly when the edge cache HELPED — the cold request 200'd and every
+  // edge-served request within the 60s TTL failed. Rebuilding via
+  // new Response(body, { headers: new Headers(hit.headers) }) copies the
+  // headers into a fresh mutable bag, which is also where X-Cache goes.
   const edgeHit = isPrivate ? null : await edgeMatch(c);
   if (edgeHit) {
-    const res = edgeHit.clone();
-    res.headers.set('X-Cache', 'EDGE');
-    return res;
+    const headers = new Headers(edgeHit.headers);
+    headers.set('X-Cache', 'EDGE');
+    return new Response(edgeHit.body, {
+      status: edgeHit.status,
+      statusText: edgeHit.statusText,
+      headers,
+    });
   }
 
   // Layer 2: Redis SWR.
