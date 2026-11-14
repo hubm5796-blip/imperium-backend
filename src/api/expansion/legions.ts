@@ -35,20 +35,26 @@ legionsApi.get('/:id', readRateLimit, async (c) => {
   const lookup = name.toLowerCase();
   try {
     return await swrJson(c, `legion:card:${lookup}:v1`, async () => {
+      // L15 (2026-11-14): motd is NOT in the main SELECT. The live legions
+      // table was created by a plugin older than SchemaInitializer's motd
+      // column, and CREATE TABLE IF NOT EXISTS never ALTERs an existing table
+      // — so `l.motd` errored 42703 on every card and the route 503'd for
+      // EVERY legion. The main query now uses only columns the live schema
+      // guarantees; motd is fetched separately and degrades to null (the
+      // warRecord pattern) until the plugin migrates the column in.
       const legion = await query<{
         name: string;
         display_name: string | null;
         level: number;
         max_members: number;
         owner_uuid: string;
-        motd: string | null;
         created_at: string;
         xp: string;
         member_count: string;
         bank_balance: string | null;
         owner_name: string | null;
       }>(
-        `SELECT l.name, l.display_name, l.level, l.max_members, l.owner_uuid, l.motd, l.created_at,
+        `SELECT l.name, l.display_name, l.level, l.max_members, l.owner_uuid, l.created_at,
                 l.xp::text,
                 (SELECT COUNT(*) FROM legion_members m WHERE LOWER(m.legion_name) = LOWER(l.name))::text AS member_count,
                 b.balance::text AS bank_balance,
@@ -64,6 +70,19 @@ legionsApi.get('/:id', readRateLimit, async (c) => {
       if (!row) {
         // swrJson translates undefined into a 404 (uncached).
         return undefined;
+      }
+
+      // motd: optional column (plugin schema drift) — null until the column
+      // exists, never a failed card.
+      let motd: string | null = null;
+      try {
+        const motdRow = await query<{ motd: string | null }>(
+          'SELECT motd FROM legions WHERE LOWER(name) = LOWER($1)',
+          [lookup],
+        );
+        motd = motdRow.rows[0]?.motd ?? null;
+      } catch {
+        // Column not created yet on this deployment.
       }
 
       // Roster (public — same shape /player/legion serves the member themself).
@@ -104,7 +123,7 @@ legionsApi.get('/:id', readRateLimit, async (c) => {
         displayName: row.display_name,
         level: Number(row.level ?? 1),
         xp: Number(row.xp ?? 0),
-        motd: row.motd,
+        motd,
         createdAt: row.created_at,
         memberCount: Number(row.member_count ?? 0),
         maxMembers: Number(row.max_members ?? 10),
