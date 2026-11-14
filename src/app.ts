@@ -3,8 +3,14 @@
 // should duplicate middleware/route wiring; they only differ in how env/DB
 // get initialized and how the app is actually served.
 // Build-time deploy stamp (FIX: /health previously returned now() as deploy time).
-const DEPLOY_VERSION = process.env.DEPLOY_VERSION ?? 'dev';
-const DEPLOYED_AT = process.env.DEPLOYED_AT ?? new Date().toISOString();
+// L15 (2026-11-14): the 'dev'/'now()' fallbacks meant /health reported
+// version "dev" + deployedAt 1970-01-01 in production — stale deploys were
+// invisible. scripts/stamp-deploy.mjs (wired into `npm run deploy`) writes
+// the git SHA + UTC time into src/generated/deployStamp.ts before each
+// wrangler deploy; the process-env escape hatch stays for Node dev runs.
+import { DEPLOY_STAMP_VERSION, DEPLOY_STAMP_AT } from './generated/deployStamp.js';
+const DEPLOY_VERSION = process.env.DEPLOY_VERSION ?? DEPLOY_STAMP_VERSION;
+const DEPLOYED_AT = process.env.DEPLOYED_AT ?? DEPLOY_STAMP_AT;
 
 import { Hono } from 'hono';
 import { query } from './db/pool.js';

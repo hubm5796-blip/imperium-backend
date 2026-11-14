@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "deploy": "wrangler deploy",
+    "deploy": "node scripts/stamp-deploy.mjs && wrangler deploy",
     "register-commands": "tsx src/bot/registerCommands.ts",
     "register-commands:guild": "tsx src/bot/registerCommands.ts --guild",
     "test": "vitest run"
