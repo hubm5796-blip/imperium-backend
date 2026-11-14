@@ -110,8 +110,21 @@ async function consumeBuckets(asks: BucketAsk[], cost: number, now: number): Pro
     const stmts = asks.map((a) =>
       getD1()
         .prepare(
+          // L15 (2026-11-14): the upsert must ROLL THE WINDOW. The old
+          // `ON CONFLICT DO UPDATE SET cost = cost + excluded.cost` kept the
+          // row's ORIGINAL window_start forever, so cost accumulated across
+          // windows and never reset — a busy (or CGNAT-shared) IP that crossed
+          // its budget once stayed falsely 429'd until the 2% janitor DELETE
+          // happened to reap the row (observed live: an IP bucket pinned over
+          // budget for 40+ minutes while its window was seconds old). When the
+          // incoming window differs, the charge REPLACES the stale one and
+          // window_start advances.
           `INSERT INTO ${D1_TABLE} (key, window_start, cost) VALUES (?, ?, ?)
-           ON CONFLICT(key) DO UPDATE SET cost = cost + excluded.cost
+           ON CONFLICT(key) DO UPDATE SET
+             cost = CASE WHEN ${D1_TABLE}.window_start = excluded.window_start
+                         THEN ${D1_TABLE}.cost + excluded.cost
+                         ELSE excluded.cost END,
+             window_start = excluded.window_start
            RETURNING cost`,
         )
         .bind(a.key, windowStart, cost),

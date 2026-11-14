@@ -33,8 +33,23 @@ function exec(sql: string, params: unknown[]): boolean {
   if (insert) {
     const [key, windowStart, cost] = params as [string, number, number];
     const existing = table.get(key);
-    const newCost = (existing?.cost ?? 0) + Number(cost);
-    table.set(key, { window_start: Number(windowStart), cost: newCost });
+    // SQL-faithful: the L15 rolling-window upsert resets the charge when the
+    // incoming window differs; the pre-L15 `cost = cost + excluded.cost`
+    // accumulated across windows forever. The fake emulates whichever form
+    // the real SQL carries, so a regression in the SQL text fails the
+    // rolling-window test below rather than passing silently.
+    const rolls = sql.includes('CASE WHEN');
+    let newCost: number;
+    let newWindow: number;
+    if (rolls) {
+      const sameWindow = existing !== undefined && existing.window_start === Number(windowStart);
+      newCost = sameWindow ? existing.cost + Number(cost) : Number(cost);
+      newWindow = Number(windowStart);
+    } else {
+      newCost = (existing?.cost ?? 0) + Number(cost);
+      newWindow = existing?.window_start ?? Number(windowStart);
+    }
+    table.set(key, { window_start: newWindow, cost: newCost });
     (exec as unknown as { lastReturn?: unknown }).lastReturn = [{ cost: newCost }];
     return true;
   }
@@ -207,6 +222,41 @@ describe('B-25 D1-shared counters across isolates', () => {
       headers: { 'cf-connecting-ip': '198.51.100.11', 'content-type': 'application/json' },
     });
     expect(res.status).toBe(200);
+  });
+
+  // L15 regression pin (root-caused 2026-11-14, observed live): the upsert
+  // used to be `ON CONFLICT DO UPDATE SET cost = cost + excluded.cost` — the
+  // row kept its ORIGINAL window_start forever, so a busy (or CGNAT-shared)
+  // IP that crossed its budget once stayed falsely 429'd for as long as
+  // traffic kept touching the key; only the 2% janitor DELETE ever reset it
+  // (live evidence: an IP bucket at cost 370 with a 40-minute-old window).
+  // The window must ROLL: in a new aligned 60s window the charge starts over.
+  it('L15: the charge ROLLS with the window — a new window resets the budget', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000); // an arbitrary aligned-window base
+    try {
+      const app = makeApp();
+      const headers = { 'cf-connecting-ip': '198.51.100.77', 'content-type': 'application/json' };
+
+      // Window 1: first write passes (cost 10 <= budget 10), second 429s.
+      const w1a = await app.request('/api/v2/thing', { method: 'POST', headers });
+      expect(w1a.status).toBe(200);
+      const w1b = await app.request('/api/v2/thing', { method: 'POST', headers });
+      expect(w1b.status).toBe(429);
+
+      // Window 2 (61s later): the charge must have RESET — not accumulated.
+      vi.setSystemTime(1_700_000_000_000 + 61_000);
+      const w2a = await app.request('/api/v2/thing', { method: 'POST', headers });
+      expect(w2a.status).toBe(200);
+
+      // And the stored row carries window 2's start + only window 2's cost.
+      const row = table.get('rl2:ip:198.51.100.77:write');
+      expect(row).toBeDefined();
+      expect(row!.window_start).toBe(1_700_000_040_000); // floor((base+61s)/60k)*60k
+      expect(row!.cost).toBe(10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // S2-D10 regression pin (root-caused 2026-10-29): the opportunistic-cleanup
