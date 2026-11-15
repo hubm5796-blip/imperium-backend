@@ -24,6 +24,7 @@ import { sessionsV2 } from './sessions.js';
 import { revenueV2 } from './revenue.js';
 import { attributionV2 } from './attribution.js';
 import { growthV2 } from './growth.js';
+import { suggestionsV2 } from './suggestions.js';
 import type { AppContextVariables } from '../../types/index.js';
 
 type ApiEnv = { Variables: AppContextVariables };
@@ -54,3 +55,4 @@ v2Api.route('/', sessionsV2); // S2-D04/E04 session revocation admin surface (La
 v2Api.route('/', revenueV2); // S2-D09 revenue summary (Lane D) — append-only
 v2Api.route('/', attributionV2); // S2-E09 attribution intent + claim (Lane D) — append-only
 v2Api.route('/', growthV2); // S2-D12 growth-metrics §6 composite (Lane D) — append-only
+v2Api.route('/', suggestionsV2); // Q9 season suggestion board — list/create/upvote + staff hide/show
