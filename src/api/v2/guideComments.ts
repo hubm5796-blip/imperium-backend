@@ -7,11 +7,19 @@
  * Identity rule (same as guides): comments attach to a linked Minecraft account —
  * no anonymous UGC. D1-backed (web-only). Body is ≤ 2,000 chars; a player can
  * delete their own comment; guide authors can delete any comment on their guide.
+ *
+ * Q9 gate fix: the route now gates on requireMcIdentity, not requireLinked.
+ * The frontend's same-origin comment proxy authenticates as a DELEGATED
+ * service call (X-Bot-Token INTERNAL_SERVICE_TOKEN + X-Mc-Uuid —
+ * storeAuth.storeBackendHeaders); requireLinked only sees cookie/bearer
+ * identities, so every proxied comment POST was 401'd before the handler
+ * ran. requireMcIdentity accepts exactly the two legitimate identities
+ * (linked session, delegated service call) and normalizes the uuid (B-06).
  */
 import { Hono } from 'hono';
 import { randomBytes } from 'node:crypto';
 import { getD1 } from '../../db/pool.js';
-import { requireLinked } from '../../middleware/auth.js';
+import { requireMcIdentity } from '../../middleware/gates.js';
 import { readRateLimit, writeRateLimit } from '../../middleware/rateLimit.js';
 import { logger } from '../../utils/logger.js';
 import type { AppContextVariables } from '../../types/index.js';
@@ -53,7 +61,7 @@ guideCommentsV2.get('/community/guides/:id/comments', async (c) => {
   }
 });
 
-guideCommentsV2.post('/community/guides/:id/comments', writeRateLimit, requireLinked, async (c) => {
+guideCommentsV2.post('/community/guides/:id/comments', writeRateLimit, requireMcIdentity, async (c) => {
   const uuid = c.get('mcUuid');
   if (!uuid) return c.json({ error: 'Unauthorized' }, 401);
   const guideId = c.req.param('id');
@@ -93,7 +101,7 @@ guideCommentsV2.post('/community/guides/:id/comments', writeRateLimit, requireLi
   }
 });
 
-guideCommentsV2.delete('/community/guides/:id/comments/:commentId', writeRateLimit, requireLinked, async (c) => {
+guideCommentsV2.delete('/community/guides/:id/comments/:commentId', writeRateLimit, requireMcIdentity, async (c) => {
   const uuid = c.get('mcUuid');
   if (!uuid) return c.json({ error: 'Unauthorized' }, 401);
   const guideId = c.req.param('id');

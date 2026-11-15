@@ -23,7 +23,10 @@ import { Hono } from 'hono';
 import { randomBytes } from 'node:crypto';
 import { getD1 } from '../../db/pool.js';
 import { query } from '../../db/pool.js';
-import { requireLinked } from '../../middleware/auth.js';
+// Q9 gate fix: delegated-capable identity gate (linked session OR the
+// frontend proxy's X-Bot-Token + X-Mc-Uuid service call). requireLinked
+// 401'd every delegated upload/moderate call before the handler ran.
+import { requireMcIdentity } from '../../middleware/gates.js';
 import { writeRateLimit } from '../../middleware/rateLimit.js';
 import { recordAction } from '../../db/actionLog.js';
 import { logger } from '../../utils/logger.js';
@@ -146,7 +149,7 @@ galleryV2.get('/community/gallery', async (c) => {
 
 // ── Linked: upload ──────────────────────────────────────────────────────────
 
-galleryV2.post('/community/gallery', requireLinked, writeRateLimit, async (c) => {
+galleryV2.post('/community/gallery', requireMcIdentity, writeRateLimit, async (c) => {
   const bucket = r2Bucket(c);
   if (!bucket) return fail(c, 503, 'REGISTRY_UNAVAILABLE', 'Gallery storage is not configured (missing R2 binding).');
 
@@ -230,7 +233,7 @@ galleryV2.get('/community/gallery/img/:key{.+}', async (c) => {
 
 // ── Staff: moderation ───────────────────────────────────────────────────────
 
-galleryV2.post('/community/gallery/:id/moderate', requireLinked, writeRateLimit, async (c) => {
+galleryV2.post('/community/gallery/:id/moderate', requireMcIdentity, writeRateLimit, async (c) => {
   const uuid = c.get('mcUuid');
   if (!uuid) return fail(c, 401, 'UNAUTHORIZED', 'Unauthorized.');
   if (!(await isModerator(uuid))) return fail(c, 403, 'FORBIDDEN', 'Staff only.');
